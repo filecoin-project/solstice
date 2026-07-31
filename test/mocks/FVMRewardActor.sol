@@ -278,6 +278,10 @@ contract FVMRewardActor {
             if (!_streams[ids[i]].exists) return (USR_NOT_FOUND, 0, "");
             if (!_sane(records[i])) return (USR_ILLEGAL_ARGUMENT, 0, "");
             if (_pendingExists[ids[i]][op]) return (USR_ILLEGAL_ARGUMENT, 0, "");
+            // Reject repeats: they'd queue two PendingKeys for one (id, op) slot.
+            for (uint256 j = 0; j < i; j++) {
+                if (ids[j] == ids[i]) return (USR_ILLEGAL_ARGUMENT, 0, "");
+            }
         }
         // Guardrail: sum of every stream's weight, including the proposed ones, must not exceed 1.
         int256 sum = _sumWeightsExcluding(ids, effectiveEpoch);

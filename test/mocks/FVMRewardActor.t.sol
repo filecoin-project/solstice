@@ -412,6 +412,21 @@ contract FVMRewardActorTest is MockRewardTest {
         assertEq(exitCode, USR_ILLEGAL_ARGUMENT);
     }
 
+    function test_SetWeightRecords_DuplicateIdInBatch_IllegalArgument() public {
+        assertEq(_registerStream(SERVICE_ID, _constantRecord(0.1e18), DistributionKind.IMPLICIT, address(0)), 0);
+        _warpPastTimelockAndSettle();
+
+        uint64[] memory ids = new uint64[](2);
+        ids[0] = SERVICE_ID;
+        ids[1] = SERVICE_ID;
+        WeightRecord[] memory records = new WeightRecord[](2);
+        records[0] = _constantRecord(0.5e18);
+        records[1] = _constantRecord(0.5e18);
+
+        (uint32 exitCode,) = swaCaller.call(SET_WEIGHT_RECORDS, abi.encode(ids, records));
+        assertEq(exitCode, USR_ILLEGAL_ARGUMENT, "a repeated id queues two PendingKeys for one slot");
+    }
+
     function test_SetWeightRecords_InsaneRecord_IllegalArgument() public {
         assertEq(_registerStream(SERVICE_ID, _constantRecord(0.1e18), DistributionKind.IMPLICIT, address(0)), 0);
         _warpPastTimelockAndSettle();
