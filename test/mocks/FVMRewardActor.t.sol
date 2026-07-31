@@ -944,6 +944,15 @@ contract FVMRewardActorTest is MockRewardTest {
         assertFalse(ok);
     }
 
+    // None of the reward actor's methods accept a value; the mock must not silently drop it.
+    function test_NonzeroValue_IllegalArgument() public {
+        bytes memory callData = abi.encode(GET_STATE, uint256(1), NO_FLAGS, uint64(0), bytes(""), REWARD_ACTOR_ID);
+        (bool ok, bytes memory ret) = CALL_ACTOR_BY_ID.delegatecall(callData);
+        assertTrue(ok);
+        (uint32 exitCode,,) = abi.decode(ret, (uint32, uint64, bytes));
+        assertEq(exitCode, USR_ILLEGAL_ARGUMENT);
+    }
+
     // -------------------------------------------------------------------------
     // Regression: FVMCallActorByIdWithReward must not break existing actor mocks
     // -------------------------------------------------------------------------

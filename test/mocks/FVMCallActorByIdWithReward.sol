@@ -6,6 +6,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {CALL_ACTOR_BY_ID} from "fvm-solidity/FVMPrecompiles.sol";
 import {REWARD_ACTOR_ID} from "fvm-solidity/FVMActors.sol";
 import {NO_FLAGS, READONLY_FLAG} from "fvm-solidity/FVMFlags.sol";
+import {USR_ILLEGAL_ARGUMENT} from "fvm-solidity/FVMErrors.sol";
 import {FVMCallActorById} from "fvm-solidity/mocks/FVMCallActorById.sol";
 
 import {FVMRewardActor} from "./FVMRewardActor.sol";
@@ -39,14 +40,20 @@ contract FVMCallActorByIdWithReward {
             }
         }
 
-        (uint64 method,, uint64 flags, uint64 codec, bytes memory params, uint64 actorId) =
+        (uint64 method, uint256 value, uint64 flags, uint64 codec, bytes memory params, uint64 actorId) =
             abi.decode(msg.data, (uint64, uint256, uint64, uint64, bytes, uint64));
 
         if (actorId == REWARD_ACTOR_ID) {
             require(flags == READONLY_FLAG || flags == NO_FLAGS, "FVMCallActorByIdWithReward: invalid flags");
-            (uint32 exitCode, uint64 outCodec, bytes memory rewardRet) =
-                REWARD.handle_filecoin_method(method, codec, params);
-            bytes memory response = abi.encode(exitCode, outCodec, rewardRet);
+            bytes memory response;
+            if (value != 0) {
+                // None of the reward actor's methods accept a value; reject rather than drop it.
+                response = abi.encode(USR_ILLEGAL_ARGUMENT, uint64(0), bytes(""));
+            } else {
+                (uint32 exitCode, uint64 outCodec, bytes memory rewardRet) =
+                    REWARD.handle_filecoin_method(method, codec, params);
+                response = abi.encode(exitCode, outCodec, rewardRet);
+            }
             assembly ("memory-safe") {
                 return(add(response, 0x20), mload(response))
             }
