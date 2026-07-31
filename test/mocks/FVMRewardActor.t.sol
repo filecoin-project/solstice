@@ -444,6 +444,23 @@ contract FVMRewardActorTest is MockRewardTest {
         assertEq(exitCode, USR_ILLEGAL_ARGUMENT);
     }
 
+    function test_SetWeightRecords_SumWouldExceedOne_WithPendingWrite_IllegalArgument() public {
+        assertEq(_registerStream(SERVICE_ID, _constantRecord(0.4e18), DistributionKind.IMPLICIT, address(0)), 0);
+        assertEq(_registerStream(CONSENSUS_ID, _constantRecord(0.4e18), DistributionKind.IMPLICIT, address(0)), 0);
+        _warpPastTimelockAndSettle();
+
+        (uint32 firstExit,) = swaCaller.call(SET_WEIGHT_RECORDS, _setWeightParams(SERVICE_ID, _constantRecord(0.6e18)));
+        assertEq(firstExit, 0);
+
+        (uint32 secondExit,) =
+            swaCaller.call(SET_WEIGHT_RECORDS, _setWeightParams(CONSENSUS_ID, _constantRecord(0.6e18)));
+        assertEq(
+            secondExit,
+            USR_ILLEGAL_ARGUMENT,
+            "guardrail must count SERVICE_ID's still-pending 0.6e18, not its stale 0.4e18"
+        );
+    }
+
     function test_SetWeightRecords_QueuedUntilTimelockElapses() public {
         assertEq(_registerStream(SERVICE_ID, _constantRecord(0.1e18), DistributionKind.IMPLICIT, address(0)), 0);
         _warpPastTimelockAndSettle();

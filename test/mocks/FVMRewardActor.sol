@@ -545,8 +545,7 @@ contract FVMRewardActor {
         return w.floor >= 0 && w.floor <= w.cap && w.cap <= WAD;
     }
 
-    /// @dev Sum of every registered stream's weight at `atEpoch`, excluding `excludeIds`; a
-    /// not-yet-settled pending write still counts at its currently stored record.
+    /// @dev Sum of every registered stream's weight at `atEpoch`, excluding `excludeIds`.
     function _sumWeightsExcluding(uint64[] memory excludeIds, uint64 atEpoch) internal view returns (int256 sum) {
         for (uint256 i = 0; i < _streamIds.length; i++) {
             uint64 id = _streamIds[i];
@@ -557,7 +556,22 @@ contract FVMRewardActor {
                     break;
                 }
             }
-            if (!excluded) sum += _clampWeight(_streams[id].weightRecord, atEpoch);
+            if (!excluded) sum += _effectiveWeight(id, atEpoch);
+        }
+    }
+
+    /// @dev A stream's weight at `atEpoch`, using a still-pending SET_WEIGHT/STEP_WEIGHT write's
+    /// record instead of the stale settled one when queued (the larger of the two if both are
+    /// queued), so the WAD guardrail can't be bypassed by splitting increases across batches.
+    function _effectiveWeight(uint64 id, uint64 atEpoch) internal view returns (int256 w) {
+        w = _clampWeight(_streams[id].weightRecord, atEpoch);
+        if (_pendingExists[id][PendingOp.SET_WEIGHT]) {
+            int256 pw = _clampWeight(_pending[id][PendingOp.SET_WEIGHT].weightRecord, atEpoch);
+            if (pw > w) w = pw;
+        }
+        if (_pendingExists[id][PendingOp.STEP_WEIGHT]) {
+            int256 pw = _clampWeight(_pending[id][PendingOp.STEP_WEIGHT].weightRecord, atEpoch);
+            if (pw > w) w = pw;
         }
     }
 
