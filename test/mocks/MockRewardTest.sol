@@ -13,7 +13,7 @@ import {FVMRewardActor} from "./FVMRewardActor.sol";
 contract MockRewardTest is MockFVMTest {
     function setUp() public virtual override {
         super.setUp();
-        vm.etch(REWARD_ACTOR_ADDRESS, address(new FVMRewardActor()).code);
+        vm.etch(REWARD_ACTOR_ADDRESS, address(new FVMRewardActor(vm)).code);
         FVMRewardActor(REWARD_ACTOR_ADDRESS).mockInit();
         vm.etch(
             CALL_ACTOR_BY_ID, address(new FVMCallActorByIdWithReward(vm, FVMRewardActor(REWARD_ACTOR_ADDRESS))).code

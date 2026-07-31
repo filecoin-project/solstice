@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 pragma solidity ^0.8.36;
 
+import {Vm} from "forge-std/Vm.sol";
+
 import {USR_FORBIDDEN, USR_ILLEGAL_ARGUMENT, USR_NOT_FOUND, USR_UNHANDLED_MESSAGE} from "fvm-solidity/FVMErrors.sol";
 import {FVMPay} from "fvm-solidity/FVMPay.sol";
 
@@ -134,6 +136,13 @@ struct PendingView {
 /// @dev GetState persists due writes rather than only projecting them; behaviorally identical
 ///      once `effectiveEpoch` has passed.
 contract FVMRewardActor {
+    /// @dev Survives vm.etch: immutables are baked into runtime bytecode at deploy time.
+    Vm private immutable VM;
+
+    constructor(Vm vm_) {
+        VM = vm_;
+    }
+
     /// @notice Address authorized to call the SWA-only methods.
     address public swa;
 
@@ -185,12 +194,13 @@ contract FVMRewardActor {
     /// @notice Test helper: simulates AwardBlockReward, splitting `br` by clamped weight into a
     /// miner portion (IMPLICIT; the actual payout is the unmocked ApplyRewards path), a service
     /// portion (EXPLICIT, accrues for Claim/SetShares), and a burn residual.
-    /// @dev Caller must vm.deal this contract's balance up by `br` first -- a block reward is
-    /// newly minted, not moved from an existing balance.
+    /// @dev Mints `br` into this contract's own balance via vm.deal -- a block reward is newly
+    /// issued, not moved from an existing balance, so callers don't pre-fund it themselves.
     function mockAwardBlockReward(uint256 br)
         external
         returns (uint256 minerPortion, uint256 servicePortion, uint256 burnAmount)
     {
+        VM.deal(address(this), address(this).balance + br);
         _settle();
         uint64 nowEpoch = uint64(block.number);
         for (uint256 i = 0; i < _streamIds.length; i++) {

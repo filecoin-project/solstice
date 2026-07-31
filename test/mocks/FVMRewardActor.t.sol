@@ -366,7 +366,6 @@ contract FVMRewardActorTest is MockRewardTest {
         (uint32 setSharesExit,) =
             writerCaller.call(SET_SHARES, _setSharesParams(SERVICE_ID, _shares(RECIPIENT_A, SHARE_TOTAL)));
         assertEq(setSharesExit, 0);
-        vm.deal(address(rewardActor()), 1 ether);
         rewardActor().mockAwardBlockReward(1 ether); // 0.1 ether accrues, never claimed
 
         (uint32 removeExit,) = swaCaller.call(REMOVE_STREAM, abi.encode(SERVICE_ID));
@@ -584,7 +583,6 @@ contract FVMRewardActorTest is MockRewardTest {
             writerCaller.call(SET_SHARES, _setSharesParams(SERVICE_ID, _shares(RECIPIENT_A, SHARE_TOTAL)));
         assertEq(firstSetExit, 0);
 
-        vm.deal(address(rewardActor()), 1 ether);
         rewardActor().mockAwardBlockReward(1 ether); // service accrues 0.1 ether
 
         uint256 burnBefore = BURN_ADDRESS.balance;
@@ -644,7 +642,6 @@ contract FVMRewardActorTest is MockRewardTest {
             writerCaller.call(SET_SHARES, _setSharesParams(SERVICE_ID, _shares(RECIPIENT_A, SHARE_TOTAL)));
         assertEq(setSharesExit, 0);
 
-        vm.deal(address(rewardActor()), 1 ether);
         rewardActor().mockAwardBlockReward(1 ether); // 0.1 ether accrues, never claimed
 
         (uint32 removeExit,) = swaCaller.call(REMOVE_STREAM, abi.encode(SERVICE_ID));
@@ -727,7 +724,6 @@ contract FVMRewardActorTest is MockRewardTest {
             writerCaller.call(SET_SHARES, _setSharesParams(SERVICE_ID, _shares(RECIPIENT_A, SHARE_TOTAL)));
         assertEq(setSharesExit, 0);
 
-        vm.deal(address(rewardActor()), 1 ether);
         rewardActor().mockAwardBlockReward(1 ether); // 0.1 ether accrues under RECIPIENT_A
 
         (uint32 distExit,) = swaCaller.call(
@@ -846,7 +842,6 @@ contract FVMRewardActorTest is MockRewardTest {
             writerCaller.call(SET_SHARES, _setSharesParams(SERVICE_ID, _shares(RECIPIENT_A, SHARE_TOTAL)));
         assertEq(setSharesExit, 0);
 
-        vm.deal(address(rewardActor()), 1 ether);
         rewardActor().mockAwardBlockReward(1 ether); // service accrues 0.1 ether
 
         (uint32 exitCode, uint256[] memory amounts) = _claim(SERVICE_ID, _wallets(RECIPIENT_A));
@@ -867,7 +862,6 @@ contract FVMRewardActorTest is MockRewardTest {
             writerCaller.call(SET_SHARES, _setSharesParams(SERVICE_ID, _shares(RECIPIENT_A, SHARE_TOTAL)));
         assertEq(firstSetExit, 0);
 
-        vm.deal(address(rewardActor()), 2 ether);
         rewardActor().mockAwardBlockReward(1 ether); // 0.1 ether accrues, never claimed
 
         // Fold the period (via a new SetShares) so the 0.1 ether moves into payable.
@@ -892,7 +886,6 @@ contract FVMRewardActorTest is MockRewardTest {
         );
         _warpPastTimelockAndSettle();
 
-        vm.deal(address(rewardActor()), 1 ether);
         (uint256 minerPortion, uint256 servicePortion, uint256 burnAmount) = rewardActor().mockAwardBlockReward(1 ether);
 
         assertEq(minerPortion, 0.85 ether);
@@ -912,12 +905,25 @@ contract FVMRewardActorTest is MockRewardTest {
     }
 
     function test_AwardBlockReward_NoStreams_AllBurn() public {
-        vm.deal(address(rewardActor()), 1 ether);
         (uint256 minerPortion, uint256 servicePortion, uint256 burnAmount) = rewardActor().mockAwardBlockReward(1 ether);
         assertEq(minerPortion, 0);
         assertEq(servicePortion, 0);
         assertEq(burnAmount, 1 ether);
         assertEq(BURN_ADDRESS.balance, 1 ether);
+    }
+
+    function test_AwardBlockReward_SelfIssues_ClaimPaysWithoutPreDeal() public {
+        _registerExplicit(SERVICE_ID, address(writerCaller));
+        (uint32 setExit,) =
+            writerCaller.call(SET_SHARES, _setSharesParams(SERVICE_ID, _shares(RECIPIENT_A, SHARE_TOTAL)));
+        assertEq(setExit, 0);
+
+        rewardActor().mockAwardBlockReward(1 ether); // no vm.deal beforehand
+
+        (uint32 exitCode, uint256[] memory amounts) = _claim(SERVICE_ID, _wallets(RECIPIENT_A));
+        assertEq(exitCode, 0);
+        assertEq(amounts[0], 0.1 ether);
+        assertEq(RECIPIENT_A.balance, 0.1 ether, "claim must actually move funds, not just report bookkeeping");
     }
 
     // -------------------------------------------------------------------------
