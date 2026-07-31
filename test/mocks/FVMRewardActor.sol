@@ -632,11 +632,22 @@ contract FVMRewardActor {
     function _removePendingKey(uint64 id, PendingOp op) internal {
         for (uint256 i = 0; i < _pendingKeys.length; i++) {
             if (_pendingKeys[i].id == id && _pendingKeys[i].op == op) {
-                _pendingKeys[i] = _pendingKeys[_pendingKeys.length - 1];
-                _pendingKeys.pop();
+                _swapRemove(_pendingKeys, i);
                 return;
             }
         }
+    }
+
+    /// @dev Remove index `i` by swapping in the last element; order is not preserved.
+    function _swapRemove(PendingKey[] storage arr, uint256 i) internal {
+        arr[i] = arr[arr.length - 1];
+        arr.pop();
+    }
+
+    /// @dev Remove index `i` by swapping in the last element; order is not preserved.
+    function _swapRemove(uint64[] storage arr, uint256 i) internal {
+        arr[i] = arr[arr.length - 1];
+        arr.pop();
     }
 
     function _recomputeNextTransition() internal {
@@ -651,8 +662,16 @@ contract FVMRewardActor {
     function _removeTombstoneId(uint64 id) internal {
         for (uint256 i = 0; i < _tombstoneIds.length; i++) {
             if (_tombstoneIds[i] == id) {
-                _tombstoneIds[i] = _tombstoneIds[_tombstoneIds.length - 1];
-                _tombstoneIds.pop();
+                _swapRemove(_tombstoneIds, i);
+                return;
+            }
+        }
+    }
+
+    function _removeStreamId(uint64 id) internal {
+        for (uint256 i = 0; i < _streamIds.length; i++) {
+            if (_streamIds[i] == id) {
+                _swapRemove(_streamIds, i);
                 return;
             }
         }
@@ -767,12 +786,6 @@ contract FVMRewardActor {
         _ledgerClearAll(s.payableLedger);
 
         delete _streams[id];
-        for (uint256 i = 0; i < _streamIds.length; i++) {
-            if (_streamIds[i] == id) {
-                _streamIds[i] = _streamIds[_streamIds.length - 1];
-                _streamIds.pop();
-                break;
-            }
-        }
+        _removeStreamId(id);
     }
 }
