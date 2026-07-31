@@ -2,33 +2,32 @@
 pragma solidity ^0.8.36;
 
 import {USR_FORBIDDEN, USR_ILLEGAL_ARGUMENT, USR_NOT_FOUND, USR_UNHANDLED_MESSAGE} from "fvm-solidity/FVMErrors.sol";
+import {FVMPay} from "fvm-solidity/FVMPay.sol";
 
 import {
     SET_WEIGHT_RECORDS,
+    STEP_WEIGHT_RECORDS,
     SET_SHARES,
     GET_STATE,
     REGISTER_STREAM,
     REMOVE_STREAM,
     SET_DISTRIBUTION,
     CANCEL_PENDING,
-    COMPUTE_WEIGHT,
+    CLAIM,
     SWA_TIMELOCK
 } from "./FVMRewardMethod.sol";
 
 /// @dev Weights, and per-orchestrator shares, are WAD-scaled: 1e18 == 1.0 == 100%.
 int256 constant WAD = 1e18;
 
-/// @dev Mock-only caps; FIP-0118 requires MAX_STREAMS/MAX_RECIPIENTS limits exist but does
-/// not fix their values, so these are placeholders sized for testing, not consensus values.
+/// @dev Mock-only caps; f02 requires these limits to exist but never fixes their values.
 uint256 constant MAX_STREAMS = 8;
-uint256 constant MAX_RECIPIENTS = 32;
+uint256 constant MAX_RECIPIENTS = 64;
 
-/// @dev Same value as WAD, typed uint256: shares (always non-negative) are stored unsigned,
-/// so comparing their sum against this avoids a signed-to-unsigned cast of WAD.
+/// @dev Same value as WAD, typed uint256, so summing shares needs no signed-to-unsigned cast.
 uint256 constant SHARE_TOTAL = 1e18;
 
-/// @notice FIP-0118 section 2.4: the bundle of scheduler parameters for one stream's weight.
-/// @dev vStart/slope/floor/cap are WAD-scaled Rationals; slope may be negative (w1's ramp).
+/// @notice Per-stream weight schedule; WAD-scaled, slope may be negative.
 struct WeightRecord {
     int256 vStart;
     int256 slope;
@@ -37,88 +36,207 @@ struct WeightRecord {
     int256 cap;
 }
 
-/// @notice A stream's Distribution: IMPLICIT (consensus stream only, f02-resolved recipient)
-/// or EXPLICIT (a wallet-to-share map maintained by the stream's designated writer).
+/// @notice IMPLICIT is the consensus stream (f02-resolved); EXPLICIT uses a writer-owned share map.
 enum DistributionKind {
     IMPLICIT,
     EXPLICIT
 }
 
-/// @notice One entry in an EXPLICIT stream's wallet-to-share map.
 struct Share {
     address wallet;
     uint256 share;
 }
 
-/// @notice FIP-0118 section 2.4: `Stream = { id, WeightRecord, Distribution }`. `id` is the
-/// mapping key rather than a field here; `shares` is the EXPLICIT distribution's
-/// wallet-to-share map (unused when `kind == IMPLICIT`).
+struct LedgerRow {
+    address wallet;
+    uint256 amount;
+}
+
+/// @notice The five queueable SWA write kinds; SetShares and Claim never queue.
+enum PendingOp {
+    SET_WEIGHT,
+    STEP_WEIGHT,
+    REGISTER,
+    REMOVE,
+    SET_DISTRIBUTION
+}
+
+/// @dev Enumerable, prunable address->uint256 balance -- plain mappings-plus-array, not the
+/// builtin-actor's CBOR-behind-a-CID shape (fine: nothing implements that wire format yet).
+struct Ledger {
+    mapping(address => uint256) amount;
+    mapping(address => uint256) indexPlusOne; // 0 == not tracked
+    address[] wallets;
+}
+
+/// @notice A registered stream (`id` is the mapping key) plus its per-stream ledgers;
+/// `shares`/`writer`/`accrued`/the ledgers are unused for IMPLICIT streams.
 struct Stream {
     bool exists;
     WeightRecord weightRecord;
     DistributionKind kind;
     address writer;
     Share[] shares;
+    uint256 accrued;
+    Ledger payableLedger;
+    Ledger claimedPeriod;
 }
 
-enum PendingKind {
-    NONE,
-    REGISTER,
-    SET_WEIGHT,
-    SET_DISTRIBUTION,
-    REMOVE
+/// @notice A removed stream's outstanding liabilities; a drained tombstone deletes itself.
+struct Tombstone {
+    bool exists;
+    Ledger payableLedger;
 }
 
-/// @dev A queued SWA write, held until `effectiveEpoch` per SWA_TIMELOCK. Only one pending
-/// write per stream id at a time -- a second SWA write for the same id simply replaces it,
-/// matching CancelPending's premise that there is a single queued write to discard.
+/// @dev A queued SWA write. Keyed by (streamId, op); an occupied slot rejects, so revising a
+/// pending write means cancel + requeue.
 struct Pending {
-    PendingKind kind;
+    uint64 effectiveEpoch;
+    WeightRecord weightRecord; // SET_WEIGHT / STEP_WEIGHT / REGISTER payload
+    DistributionKind distributionKind; // REGISTER / SET_DISTRIBUTION payload
+    address writer; // REGISTER / SET_DISTRIBUTION payload
+}
+
+struct PendingKey {
+    uint64 id;
+    PendingOp op;
+}
+
+struct StreamView {
+    uint64 id;
+    WeightRecord weightRecord;
+    int256 weight; // clamped weight at the current epoch
+    DistributionKind kind;
+    address writer;
+    uint256 accrued;
+    Share[] shares;
+    LedgerRow[] payableRows;
+    LedgerRow[] claimedPeriodRows;
+}
+
+struct TombstoneView {
+    uint64 id;
+    LedgerRow[] payableRows;
+}
+
+struct PendingView {
+    uint64 id;
+    PendingOp op;
     uint64 effectiveEpoch;
     WeightRecord weightRecord;
     DistributionKind distributionKind;
     address writer;
 }
 
-/// @notice Mock for the Filecoin Reward actor (f02) covering the stream-splitting methods
-///         proposed by draft FIP-0118 (https://github.com/filecoin-project/FIPs/pull/1270,
-///         tracked in https://github.com/filecoin-project/builtin-actors/issues/1764):
-///         SetWeightRecords, SetShares, GetState, RegisterStream, RemoveStream,
-///         SetDistribution, CancelPending, and ComputeWeight.
-/// @dev These mocks live in solstice, not fvm-solidity, because they mock methods that don't
-///      exist in builtin-actors yet and will only ever be called by solstice's own contracts
-///      (the future Stream Weights Actor and Service Rewards Actor).
-/// @dev Etch this at REWARD_ACTOR_ADDRESS via MockRewardTest, which also re-etches
-///      CALL_ACTOR_BY_ID with FVMCallActorByIdWithReward so that
-///      CALL_ACTOR_BY_ID(actorId=REWARD_ACTOR_ID) reaches handle_filecoin_method below.
-/// @dev Params/returns use plain abi.encode/abi.decode rather than CBOR: the real wire format
-///      doesn't exist yet since builtin-actors hasn't implemented these methods, so there is
-///      nothing to match. Revisit the encoding once the real actor ships.
+/// @notice Mock for the Filecoin Reward actor (f02), covering its stream-splitting methods.
+/// @dev Etch at REWARD_ACTOR_ADDRESS via MockRewardTest, which also re-etches CALL_ACTOR_BY_ID
+///      to reach handle_filecoin_method below.
+/// @dev GetState persists due writes rather than only projecting them; behaviorally identical
+///      once `effectiveEpoch` has passed.
 contract FVMRewardActor {
-    /// @notice The address authorized to call the SWA-only methods (SetWeightRecords,
-    /// RegisterStream, RemoveStream, SetDistribution, CancelPending).
+    /// @notice Address authorized to call the SWA-only methods.
     address public swa;
+
+    /// @notice Per-network SWA write hold, in epochs; mutable via mockSwaTimelockEpochs.
+    /// @dev Left uninitialized inline (vm.etch copies bytecode, not storage -- an inline
+    /// initializer would never apply); mockInit() sets it after etching.
+    uint64 public swaTimelockEpochs;
+
+    /// @notice Cumulative FIL minted through f02, all streams (T = position 9 / FilMined).
+    uint256 public totalMintedReward;
+    /// @notice Cumulative burn: w0 residual plus period-fold rounding dust (B).
+    uint256 public totalBurnMinted;
+    /// @notice Cumulative gross accrual to EXPLICIT streams (S); miner's share T-B-S is derived, never stored.
+    uint256 public totalServiceMinted;
+
+    /// @notice Minimum effectiveEpoch over pending writes; type(uint64).max sentinel when empty.
+    uint64 public nextTransitionEpoch;
 
     mapping(uint64 streamId => Stream) internal _streams;
     uint64[] internal _streamIds;
 
-    mapping(uint64 streamId => Pending) internal _pending;
-    uint64[] internal _pendingIds;
+    mapping(uint64 streamId => Tombstone) internal _tombstones;
+    uint64[] internal _tombstoneIds;
+
+    mapping(uint64 streamId => mapping(PendingOp => Pending)) internal _pending;
+    mapping(uint64 streamId => mapping(PendingOp => bool)) internal _pendingExists;
+    PendingKey[] internal _pendingKeys;
+
+    event Claimed(uint64 indexed streamId, address indexed wallet, uint256 amount);
+    /// @dev Fires only when an occupied slot is actually removed; cancelling an empty slot is a no-op.
+    event PendingCancelled(uint64 indexed streamId, PendingOp op);
+    event BlockRewardAwarded(uint256 br, uint256 minerPortion, uint256 servicePortion, uint256 burnAmount);
+
+    /// @notice Test helper: sets the defaults an inline initializer would give this contract; call once, right after etching.
+    function mockInit() external {
+        swaTimelockEpochs = SWA_TIMELOCK;
+        nextTransitionEpoch = type(uint64).max;
+    }
 
     /// @notice Test helper: set the address authorized to call SWA-only methods.
     function mockSwa(address swa_) external {
         swa = swa_;
     }
 
-    /// @notice Test helper: read back an EXPLICIT stream's wallet-to-share map directly,
-    /// without going through the CALL_ACTOR_BY_ID/CBOR-shaped GetState round trip.
+    function mockSwaTimelockEpochs(uint64 epochs) external {
+        swaTimelockEpochs = epochs;
+    }
+
+    /// @notice Test helper: simulates AwardBlockReward, splitting `br` by clamped weight into a
+    /// miner portion (IMPLICIT; the actual payout is the unmocked ApplyRewards path), a service
+    /// portion (EXPLICIT, accrues for Claim/SetShares), and a burn residual.
+    /// @dev Caller must vm.deal this contract's balance up by `br` first -- a block reward is
+    /// newly minted, not moved from an existing balance.
+    function mockAwardBlockReward(uint256 br)
+        external
+        returns (uint256 minerPortion, uint256 servicePortion, uint256 burnAmount)
+    {
+        _settle();
+        uint64 nowEpoch = uint64(block.number);
+        for (uint256 i = 0; i < _streamIds.length; i++) {
+            uint64 id = _streamIds[i];
+            Stream storage s = _streams[id];
+            int256 w = _clampWeight(s.weightRecord, nowEpoch);
+            uint256 amount = (uint256(w) * br) / uint256(WAD);
+            if (s.kind == DistributionKind.IMPLICIT) {
+                minerPortion += amount;
+            } else {
+                servicePortion += amount;
+                s.accrued += amount;
+            }
+        }
+        burnAmount = br - minerPortion - servicePortion;
+
+        totalMintedReward += br;
+        totalBurnMinted += burnAmount;
+        totalServiceMinted += servicePortion;
+
+        if (burnAmount > 0) FVMPay.burn(burnAmount);
+        emit BlockRewardAwarded(br, minerPortion, servicePortion, burnAmount);
+    }
+
+    /// @notice Test helper: an EXPLICIT stream's wallet-to-share map, without the GetState round trip.
     function getShares(uint64 streamId) external view returns (Share[] memory) {
         return _streams[streamId].shares;
     }
 
-    /// @notice Fallback for unknown ABI selectors, matching the real reward actor's behavior
-    /// for direct EVM CALL (InvokeContract): it's a native actor, so this returns
-    /// USR_UNHANDLED_MESSAGE rather than reverting.
+    /// @notice Test helper: read back a live stream's payable ledger directly.
+    function getPayable(uint64 streamId) external view returns (LedgerRow[] memory) {
+        return _ledgerView(_streams[streamId].payableLedger);
+    }
+
+    /// @notice Test helper: read back a tombstone's payable ledger directly.
+    function getTombstonePayable(uint64 streamId) external view returns (LedgerRow[] memory) {
+        return _ledgerView(_tombstones[streamId].payableLedger);
+    }
+
+    /// @notice Test helper: the clamp(v_start + slope*(e-t_start), floor, cap) math, exposed
+    /// directly since it isn't a dispatched method (GetState already projects each weight).
+    function clampWeight(WeightRecord memory record, uint64 epoch) external pure returns (int256) {
+        return _clampWeight(record, epoch);
+    }
+
+    /// @notice A native actor: direct EVM CALL returns USR_UNHANDLED_MESSAGE rather than reverting.
     fallback() external {
         bytes memory response = abi.encode(uint32(USR_UNHANDLED_MESSAGE), uint64(0), bytes(""));
         assembly ("memory-safe") {
@@ -126,42 +244,42 @@ contract FVMRewardActor {
         }
     }
 
-    /// @dev Receives calls routed from FVMCallActorByIdWithReward's REWARD_ACTOR_ID branch.
-    /// Returns (exitCode, codec, data); never reverts for actor-level errors, matching real
-    /// FVM behavior where CALL_ACTOR_BY_ID returns success=true with a non-zero exit code.
+    /// @dev Routed here from FVMCallActorByIdWithReward's REWARD_ACTOR_ID branch. Never reverts
+    /// for actor-level errors -- returns a non-zero exit code instead, per CALL_ACTOR_BY_ID.
     // forge-lint: disable-next-line(mixed-case-function)
     function handle_filecoin_method(uint64 method, uint64, bytes calldata params)
         external
         returns (uint32, uint64, bytes memory)
     {
         _settle();
-        if (method == SET_WEIGHT_RECORDS) return _setWeightRecords(params);
+        if (method == SET_WEIGHT_RECORDS) return _queueWeightWrite(PendingOp.SET_WEIGHT, params);
+        if (method == STEP_WEIGHT_RECORDS) return _queueWeightWrite(PendingOp.STEP_WEIGHT, params);
         if (method == SET_SHARES) return _setShares(params);
         if (method == GET_STATE) return _getState();
         if (method == REGISTER_STREAM) return _registerStream(params);
         if (method == REMOVE_STREAM) return _removeStream(params);
         if (method == SET_DISTRIBUTION) return _setDistribution(params);
         if (method == CANCEL_PENDING) return _cancelPending(params);
-        if (method == COMPUTE_WEIGHT) return _computeWeight(params);
+        if (method == CLAIM) return _claim(params);
         return (USR_UNHANDLED_MESSAGE, 0, "");
     }
 
     // -------------------------------------------------------------------------
-    // SetWeightRecords(ids, records) -- SWA only, queued under SWA_TIMELOCK
+    // SetWeightRecords / StepWeightRecords -- SWA only, queued under separate ops.
     // -------------------------------------------------------------------------
 
-    function _setWeightRecords(bytes calldata params) internal returns (uint32, uint64, bytes memory) {
+    function _queueWeightWrite(PendingOp op, bytes calldata params) internal returns (uint32, uint64, bytes memory) {
         if (msg.sender != swa) return (USR_FORBIDDEN, 0, "");
         (uint64[] memory ids, WeightRecord[] memory records) = abi.decode(params, (uint64[], WeightRecord[]));
         if (ids.length != records.length) return (USR_ILLEGAL_ARGUMENT, 0, "");
 
-        uint64 effectiveEpoch = uint64(block.number) + SWA_TIMELOCK;
+        uint64 effectiveEpoch = uint64(block.number) + swaTimelockEpochs;
         for (uint256 i = 0; i < ids.length; i++) {
             if (!_streams[ids[i]].exists) return (USR_NOT_FOUND, 0, "");
             if (!_sane(records[i])) return (USR_ILLEGAL_ARGUMENT, 0, "");
+            if (_pendingExists[ids[i]][op]) return (USR_ILLEGAL_ARGUMENT, 0, "");
         }
-        // Guardrail (FIP-0118 2.4): sum of all *other* streams' current weight, plus the
-        // newly proposed weights, must not exceed 1 at the activation epoch.
+        // Guardrail: sum of every stream's weight, including the proposed ones, must not exceed 1.
         int256 sum = _sumWeightsExcluding(ids, effectiveEpoch);
         for (uint256 i = 0; i < records.length; i++) {
             sum += _clampWeight(records[i], effectiveEpoch);
@@ -169,10 +287,10 @@ contract FVMRewardActor {
         if (sum > WAD) return (USR_ILLEGAL_ARGUMENT, 0, "");
 
         for (uint256 i = 0; i < ids.length; i++) {
-            _queue(
+            _queueWrite(
                 ids[i],
+                op,
                 Pending({
-                    kind: PendingKind.SET_WEIGHT,
                     effectiveEpoch: effectiveEpoch,
                     weightRecord: records[i],
                     distributionKind: DistributionKind.IMPLICIT,
@@ -184,70 +302,100 @@ contract FVMRewardActor {
     }
 
     // -------------------------------------------------------------------------
-    // SetShares(id, shares) -- the stream's designated writer only, applied immediately
+    // SetShares -- designated writer only, applied immediately; folds the closing period into
+    // `payable` under the OLD map before installing the new one.
     // -------------------------------------------------------------------------
 
     function _setShares(bytes calldata params) internal returns (uint32, uint64, bytes memory) {
-        (uint64 id, Share[] memory shares) = abi.decode(params, (uint64, Share[]));
+        (uint64 id, Share[] memory newShares) = abi.decode(params, (uint64, Share[]));
         Stream storage s = _streams[id];
         if (!s.exists) return (USR_NOT_FOUND, 0, "");
         if (s.kind != DistributionKind.EXPLICIT) return (USR_ILLEGAL_ARGUMENT, 0, "");
         if (msg.sender != s.writer) return (USR_FORBIDDEN, 0, "");
-        if (shares.length > MAX_RECIPIENTS) return (USR_ILLEGAL_ARGUMENT, 0, "");
+        if (newShares.length > MAX_RECIPIENTS) return (USR_ILLEGAL_ARGUMENT, 0, "");
 
         uint256 total;
-        for (uint256 i = 0; i < shares.length; i++) {
-            total += shares[i].share;
+        for (uint256 i = 0; i < newShares.length; i++) {
+            total += newShares[i].share;
         }
         if (total != SHARE_TOTAL) return (USR_ILLEGAL_ARGUMENT, 0, "");
 
+        _foldAndBurnResidue(s);
+
         delete s.shares;
-        for (uint256 i = 0; i < shares.length; i++) {
-            s.shares.push(shares[i]);
+        for (uint256 i = 0; i < newShares.length; i++) {
+            s.shares.push(newShares[i]);
         }
         return (0, 0, "");
     }
 
-    // -------------------------------------------------------------------------
-    // GetState() -- read-only
-    // -------------------------------------------------------------------------
-
     function _getState() internal view returns (uint32, uint64, bytes memory) {
-        uint256 n = _streamIds.length;
-        uint64[] memory ids = new uint64[](n);
-        WeightRecord[] memory records = new WeightRecord[](n);
-        DistributionKind[] memory kinds = new DistributionKind[](n);
-        address[] memory writers = new address[](n);
-        int256[] memory weights = new int256[](n);
-
         uint64 nowEpoch = uint64(block.number);
-        for (uint256 i = 0; i < n; i++) {
+
+        StreamView[] memory streams = new StreamView[](_streamIds.length);
+        for (uint256 i = 0; i < _streamIds.length; i++) {
             uint64 id = _streamIds[i];
             Stream storage s = _streams[id];
-            ids[i] = id;
-            records[i] = s.weightRecord;
-            kinds[i] = s.kind;
-            writers[i] = s.writer;
-            weights[i] = _clampWeight(s.weightRecord, nowEpoch);
+            streams[i] = StreamView({
+                id: id,
+                weightRecord: s.weightRecord,
+                weight: _clampWeight(s.weightRecord, nowEpoch),
+                kind: s.kind,
+                writer: s.writer,
+                accrued: s.accrued,
+                shares: s.shares,
+                payableRows: _ledgerView(s.payableLedger),
+                claimedPeriodRows: _ledgerView(s.claimedPeriod)
+            });
         }
-        return (0, 0, abi.encode(ids, records, kinds, writers, weights));
-    }
 
-    // -------------------------------------------------------------------------
-    // RegisterStream(id, weightRecord, kind, writer, activationEpoch) -- SWA only
-    // -------------------------------------------------------------------------
+        TombstoneView[] memory tombstones = new TombstoneView[](_tombstoneIds.length);
+        for (uint256 i = 0; i < _tombstoneIds.length; i++) {
+            uint64 id = _tombstoneIds[i];
+            tombstones[i] = TombstoneView({id: id, payableRows: _ledgerView(_tombstones[id].payableLedger)});
+        }
+
+        PendingView[] memory pendingWrites = new PendingView[](_pendingKeys.length);
+        for (uint256 i = 0; i < _pendingKeys.length; i++) {
+            PendingKey memory k = _pendingKeys[i];
+            Pending storage p = _pending[k.id][k.op];
+            pendingWrites[i] = PendingView({
+                id: k.id,
+                op: k.op,
+                effectiveEpoch: p.effectiveEpoch,
+                weightRecord: p.weightRecord,
+                distributionKind: p.distributionKind,
+                writer: p.writer
+            });
+        }
+
+        return (
+            0,
+            0,
+            abi.encode(
+                totalMintedReward,
+                totalBurnMinted,
+                totalServiceMinted,
+                nextTransitionEpoch,
+                swaTimelockEpochs,
+                streams,
+                tombstones,
+                pendingWrites
+            )
+        );
+    }
 
     function _registerStream(bytes calldata params) internal returns (uint32, uint64, bytes memory) {
         if (msg.sender != swa) return (USR_FORBIDDEN, 0, "");
         (uint64 id, WeightRecord memory record, DistributionKind kind, address writer, uint64 activationEpoch) =
             abi.decode(params, (uint64, WeightRecord, DistributionKind, address, uint64));
 
-        if (_streams[id].exists || _pending[id].kind == PendingKind.REGISTER) {
+        // Rejects any id collision it can see: a live stream, an undrained tombstone, or an
+        // already-queued registration. Reuse after a tombstone fully drains is SWA discipline.
+        if (_streams[id].exists || _tombstones[id].exists || _pendingExists[id][PendingOp.REGISTER]) {
             return (USR_ILLEGAL_ARGUMENT, 0, "");
         }
-        // Count queued-but-not-yet-settled registrations too: otherwise a burst of
-        // RegisterStream calls within one SWA_TIMELOCK window could blow past the cap, since
-        // none of them would be in _streamIds yet.
+        // Count queued registrations too, or a burst of calls could blow past the cap.
         if (_streamIds.length + _pendingRegistrationCount() >= MAX_STREAMS) {
             return (USR_ILLEGAL_ARGUMENT, 0, "");
         }
@@ -256,38 +404,34 @@ contract FVMRewardActor {
         if (kind == DistributionKind.IMPLICIT ? writer != address(0) : writer == address(0)) {
             return (USR_ILLEGAL_ARGUMENT, 0, "");
         }
-        if (activationEpoch < uint64(block.number) + SWA_TIMELOCK) return (USR_ILLEGAL_ARGUMENT, 0, "");
+        if (activationEpoch < uint64(block.number) + swaTimelockEpochs) return (USR_ILLEGAL_ARGUMENT, 0, "");
 
         int256 sum = _sumWeightsExcluding(new uint64[](0), activationEpoch) + _clampWeight(record, activationEpoch);
         if (sum > WAD) return (USR_ILLEGAL_ARGUMENT, 0, "");
 
-        _queue(
+        _queueWrite(
             id,
-            Pending({
-                kind: PendingKind.REGISTER,
-                effectiveEpoch: activationEpoch,
-                weightRecord: record,
-                distributionKind: kind,
-                writer: writer
-            })
+            PendingOp.REGISTER,
+            Pending({effectiveEpoch: activationEpoch, weightRecord: record, distributionKind: kind, writer: writer})
         );
         return (0, 0, "");
     }
 
     // -------------------------------------------------------------------------
-    // RemoveStream(id) -- SWA only, queued under SWA_TIMELOCK
+    // RemoveStream -- SWA only, queued; applying it folds the period then tombstones the rest.
     // -------------------------------------------------------------------------
 
     function _removeStream(bytes calldata params) internal returns (uint32, uint64, bytes memory) {
         if (msg.sender != swa) return (USR_FORBIDDEN, 0, "");
         uint64 id = abi.decode(params, (uint64));
         if (!_streams[id].exists) return (USR_NOT_FOUND, 0, "");
+        if (_pendingExists[id][PendingOp.REMOVE]) return (USR_ILLEGAL_ARGUMENT, 0, "");
 
-        _queue(
+        _queueWrite(
             id,
+            PendingOp.REMOVE,
             Pending({
-                kind: PendingKind.REMOVE,
-                effectiveEpoch: uint64(block.number) + SWA_TIMELOCK,
+                effectiveEpoch: uint64(block.number) + swaTimelockEpochs,
                 weightRecord: WeightRecord({vStart: 0, slope: 0, tStart: 0, floor: 0, cap: 0}),
                 distributionKind: DistributionKind.IMPLICIT,
                 writer: address(0)
@@ -297,21 +441,22 @@ contract FVMRewardActor {
     }
 
     // -------------------------------------------------------------------------
-    // SetDistribution(id, kind, writer) -- SWA only, queued under SWA_TIMELOCK
+    // SetDistribution -- SWA only, queued; changes only the writer, folding the period first.
     // -------------------------------------------------------------------------
 
     function _setDistribution(bytes calldata params) internal returns (uint32, uint64, bytes memory) {
         if (msg.sender != swa) return (USR_FORBIDDEN, 0, "");
         (uint64 id, DistributionKind kind, address writer) = abi.decode(params, (uint64, DistributionKind, address));
         if (!_streams[id].exists) return (USR_NOT_FOUND, 0, "");
-        // "Converting a stream to IMPLICIT is not permitted (IMPLICIT is consensus-only)."
+        // Converting a stream to IMPLICIT is not permitted (IMPLICIT is consensus-only).
         if (kind == DistributionKind.IMPLICIT || writer == address(0)) return (USR_ILLEGAL_ARGUMENT, 0, "");
+        if (_pendingExists[id][PendingOp.SET_DISTRIBUTION]) return (USR_ILLEGAL_ARGUMENT, 0, "");
 
-        _queue(
+        _queueWrite(
             id,
+            PendingOp.SET_DISTRIBUTION,
             Pending({
-                kind: PendingKind.SET_DISTRIBUTION,
-                effectiveEpoch: uint64(block.number) + SWA_TIMELOCK,
+                effectiveEpoch: uint64(block.number) + swaTimelockEpochs,
                 weightRecord: WeightRecord({vStart: 0, slope: 0, tStart: 0, floor: 0, cap: 0}),
                 distributionKind: kind,
                 writer: writer
@@ -321,33 +466,71 @@ contract FVMRewardActor {
     }
 
     // -------------------------------------------------------------------------
-    // CancelPending(id) -- SWA only
+    // CancelPending -- SWA only; cancelling an empty slot is a benign no-op.
     // -------------------------------------------------------------------------
 
     function _cancelPending(bytes calldata params) internal returns (uint32, uint64, bytes memory) {
         if (msg.sender != swa) return (USR_FORBIDDEN, 0, "");
-        uint64 id = abi.decode(params, (uint64));
-        if (_pending[id].kind == PendingKind.NONE) return (USR_NOT_FOUND, 0, "");
-
-        delete _pending[id];
-        _removePendingId(id);
+        (uint64 id, PendingOp op) = abi.decode(params, (uint64, PendingOp));
+        if (_pendingExists[id][op]) {
+            delete _pending[id][op];
+            _pendingExists[id][op] = false;
+            _removePendingKey(id, op);
+            _recomputeNextTransition();
+            emit PendingCancelled(id, op);
+        }
         return (0, 0, "");
     }
 
     // -------------------------------------------------------------------------
-    // ComputeWeight(record, epoch) -- pure
+    // Claim -- permissionless, batched; zero-entitlement entries pay nothing, no revert.
     // -------------------------------------------------------------------------
 
-    function _computeWeight(bytes calldata params) internal pure returns (uint32, uint64, bytes memory) {
-        (WeightRecord memory record, uint64 epoch) = abi.decode(params, (WeightRecord, uint64));
-        return (0, 0, abi.encode(_clampWeight(record, epoch)));
+    function _claim(bytes calldata params) internal returns (uint32, uint64, bytes memory) {
+        (uint64 id, address[] memory wallets) = abi.decode(params, (uint64, address[]));
+
+        bool tombstoned = _tombstones[id].exists;
+        Stream storage s = _streams[id];
+        if (!tombstoned) {
+            if (!s.exists) return (USR_NOT_FOUND, 0, "");
+            if (s.kind != DistributionKind.EXPLICIT) return (USR_ILLEGAL_ARGUMENT, 0, "");
+        }
+
+        uint256[] memory amounts = new uint256[](wallets.length);
+        for (uint256 i = 0; i < wallets.length; i++) {
+            address wallet = wallets[i];
+            uint256 entitlement;
+            if (tombstoned) {
+                entitlement = _tombstones[id].payableLedger.amount[wallet];
+                if (entitlement == 0) continue;
+                _ledgerRemove(_tombstones[id].payableLedger, wallet);
+                if (_tombstones[id].payableLedger.wallets.length == 0) {
+                    _tombstones[id].exists = false;
+                    _removeTombstoneId(id);
+                }
+            } else {
+                uint256 share = _shareOf(s, wallet);
+                uint256 claimed = s.claimedPeriod.amount[wallet];
+                uint256 grossLive = (share * s.accrued) / SHARE_TOTAL;
+                uint256 live = grossLive > claimed ? grossLive - claimed : 0;
+                uint256 payableAmount = s.payableLedger.amount[wallet];
+                entitlement = live + payableAmount;
+                if (entitlement == 0) continue;
+                if (live > 0) _ledgerIncrement(s.claimedPeriod, wallet, live);
+                if (payableAmount > 0) _ledgerRemove(s.payableLedger, wallet);
+            }
+            FVMPay.pay(wallet, entitlement); // method 0/SEND; cannot fail here
+            emit Claimed(id, wallet, entitlement);
+            amounts[i] = entitlement;
+        }
+        return (0, 0, abi.encode(amounts));
     }
 
     // -------------------------------------------------------------------------
     // Internals
     // -------------------------------------------------------------------------
 
-    /// @dev FIP-0118 2.4: `clamp(v_start + slope * (e - t_start), floor, cap)`.
+    /// @dev clamp(v_start + slope * (e - t_start), floor, cap).
     function _clampWeight(WeightRecord memory w, uint64 e) internal pure returns (int256 weight) {
         int256 raw = w.vStart + w.slope * (int256(uint256(e)) - int256(uint256(w.tStart)));
         weight = raw < w.floor ? w.floor : (raw > w.cap ? w.cap : raw);
@@ -358,10 +541,8 @@ contract FVMRewardActor {
         return w.floor >= 0 && w.floor <= w.cap && w.cap <= WAD;
     }
 
-    /// @dev Sum of every *registered* stream's weight at `atEpoch`, excluding `excludeIds`.
-    /// Streams with a not-yet-settled pending write still count at their currently stored
-    /// (pre-write) record -- the invariant check is against what is live today, matching
-    /// f02's "validates ... at the activation epoch" rule for the write being proposed now.
+    /// @dev Sum of every registered stream's weight at `atEpoch`, excluding `excludeIds`; a
+    /// not-yet-settled pending write still counts at its currently stored record.
     function _sumWeightsExcluding(uint64[] memory excludeIds, uint64 atEpoch) internal view returns (int256 sum) {
         for (uint256 i = 0; i < _streamIds.length; i++) {
             uint64 id = _streamIds[i];
@@ -377,66 +558,192 @@ contract FVMRewardActor {
     }
 
     function _pendingRegistrationCount() internal view returns (uint256 count) {
-        for (uint256 i = 0; i < _pendingIds.length; i++) {
-            if (_pending[_pendingIds[i]].kind == PendingKind.REGISTER) count++;
+        for (uint256 i = 0; i < _pendingKeys.length; i++) {
+            if (_pendingKeys[i].op == PendingOp.REGISTER) count++;
         }
     }
 
-    function _queue(uint64 id, Pending memory p) internal {
-        if (_pending[id].kind == PendingKind.NONE) _pendingIds.push(id);
-        _pending[id] = p;
+    function _shareOf(Stream storage s, address wallet) internal view returns (uint256) {
+        for (uint256 i = 0; i < s.shares.length; i++) {
+            if (s.shares[i].wallet == wallet) return s.shares[i].share;
+        }
+        return 0;
     }
 
-    function _removePendingId(uint64 id) internal {
-        for (uint256 i = 0; i < _pendingIds.length; i++) {
-            if (_pendingIds[i] == id) {
-                _pendingIds[i] = _pendingIds[_pendingIds.length - 1];
-                _pendingIds.pop();
+    /// @dev Closes out the current period: each recipient's earned-minus-claimed amount moves
+    /// into `payable` under the OLD map, the rounding residue burns, and accrual state resets.
+    function _foldAndBurnResidue(Stream storage s) internal {
+        uint256 pool = s.accrued;
+        uint256 earnedSum;
+        for (uint256 i = 0; i < s.shares.length; i++) {
+            address wallet = s.shares[i].wallet;
+            uint256 earned = (s.shares[i].share * pool) / SHARE_TOTAL;
+            earnedSum += earned;
+            uint256 claimed = s.claimedPeriod.amount[wallet];
+            if (earned > claimed) {
+                _ledgerIncrement(s.payableLedger, wallet, earned - claimed);
+            }
+        }
+        uint256 residue = pool - earnedSum;
+        s.accrued = 0;
+        _ledgerClearAll(s.claimedPeriod);
+
+        if (residue > 0) {
+            FVMPay.burn(residue);
+            totalBurnMinted += residue;
+        }
+    }
+
+    function _queueWrite(uint64 id, PendingOp op, Pending memory p) internal {
+        _pending[id][op] = p;
+        _pendingExists[id][op] = true;
+        _pendingKeys.push(PendingKey({id: id, op: op}));
+        if (p.effectiveEpoch < nextTransitionEpoch) nextTransitionEpoch = p.effectiveEpoch;
+    }
+
+    function _removePendingKey(uint64 id, PendingOp op) internal {
+        for (uint256 i = 0; i < _pendingKeys.length; i++) {
+            if (_pendingKeys[i].id == id && _pendingKeys[i].op == op) {
+                _pendingKeys[i] = _pendingKeys[_pendingKeys.length - 1];
+                _pendingKeys.pop();
                 return;
             }
         }
     }
 
-    /// @dev Applies every queued write whose effectiveEpoch has arrived. Called at the top
-    /// of every dispatched method so stored state is always current before it's read or
-    /// validated against.
-    function _settle() internal {
-        uint64 nowEpoch = uint64(block.number);
-        for (uint256 i = 0; i < _pendingIds.length;) {
-            uint64 id = _pendingIds[i];
-            Pending storage p = _pending[id];
-            if (nowEpoch >= p.effectiveEpoch) {
-                _apply(id, p);
-                delete _pending[id];
-                _pendingIds[i] = _pendingIds[_pendingIds.length - 1];
-                _pendingIds.pop();
-                continue;
+    function _recomputeNextTransition() internal {
+        uint64 best = type(uint64).max;
+        for (uint256 i = 0; i < _pendingKeys.length; i++) {
+            uint64 e = _pending[_pendingKeys[i].id][_pendingKeys[i].op].effectiveEpoch;
+            if (e < best) best = e;
+        }
+        nextTransitionEpoch = best;
+    }
+
+    function _removeTombstoneId(uint64 id) internal {
+        for (uint256 i = 0; i < _tombstoneIds.length; i++) {
+            if (_tombstoneIds[i] == id) {
+                _tombstoneIds[i] = _tombstoneIds[_tombstoneIds.length - 1];
+                _tombstoneIds.pop();
+                return;
             }
-            i++;
         }
     }
 
-    function _apply(uint64 id, Pending storage p) internal {
-        if (p.kind == PendingKind.REGISTER) {
+    function _ledgerIncrement(Ledger storage l, address wallet, uint256 delta) internal {
+        if (delta == 0) return;
+        if (l.indexPlusOne[wallet] == 0) {
+            l.wallets.push(wallet);
+            l.indexPlusOne[wallet] = l.wallets.length;
+        }
+        l.amount[wallet] += delta;
+    }
+
+    function _ledgerRemove(Ledger storage l, address wallet) internal {
+        uint256 idx1 = l.indexPlusOne[wallet];
+        if (idx1 == 0) return;
+        uint256 lastIdx = l.wallets.length - 1;
+        address lastWallet = l.wallets[lastIdx];
+        l.wallets[idx1 - 1] = lastWallet;
+        l.indexPlusOne[lastWallet] = idx1;
+        l.wallets.pop();
+        delete l.indexPlusOne[wallet];
+        delete l.amount[wallet];
+    }
+
+    /// @dev Explicit teardown of both mappings: `delete` on a struct doesn't recurse into
+    /// mapping members, so a later id-reuse could otherwise resurface stale entries.
+    function _ledgerClearAll(Ledger storage l) internal {
+        uint256 n = l.wallets.length;
+        for (uint256 i = 0; i < n; i++) {
+            address wallet = l.wallets[i];
+            delete l.amount[wallet];
+            delete l.indexPlusOne[wallet];
+        }
+        delete l.wallets;
+    }
+
+    function _ledgerView(Ledger storage l) internal view returns (LedgerRow[] memory rows) {
+        rows = new LedgerRow[](l.wallets.length);
+        for (uint256 i = 0; i < l.wallets.length; i++) {
+            rows[i] = LedgerRow({wallet: l.wallets[i], amount: l.amount[l.wallets[i]]});
+        }
+    }
+
+    /// @dev Applies every queued write whose effectiveEpoch has arrived, in (effectiveEpoch, id) order.
+    function _settle() internal {
+        uint64 nowEpoch = uint64(block.number);
+        while (true) {
+            bool found = false;
+            uint256 bestIdx = 0;
+            uint64 bestEpoch = 0;
+            uint64 bestId = 0;
+            for (uint256 i = 0; i < _pendingKeys.length; i++) {
+                PendingKey memory k = _pendingKeys[i];
+                uint64 e = _pending[k.id][k.op].effectiveEpoch;
+                if (e > nowEpoch) continue;
+                if (!found || e < bestEpoch || (e == bestEpoch && k.id < bestId)) {
+                    found = true;
+                    bestIdx = i;
+                    bestEpoch = e;
+                    bestId = k.id;
+                }
+            }
+            if (!found) break;
+
+            PendingKey memory key = _pendingKeys[bestIdx];
+            _apply(key.id, key.op);
+            delete _pending[key.id][key.op];
+            _pendingExists[key.id][key.op] = false;
+            _pendingKeys[bestIdx] = _pendingKeys[_pendingKeys.length - 1];
+            _pendingKeys.pop();
+        }
+        _recomputeNextTransition();
+    }
+
+    function _apply(uint64 id, PendingOp op) internal {
+        Pending storage p = _pending[id][op];
+        if (op == PendingOp.REGISTER) {
             Stream storage s = _streams[id];
             s.exists = true;
             s.weightRecord = p.weightRecord;
             s.kind = p.distributionKind;
             s.writer = p.writer;
             _streamIds.push(id);
-        } else if (p.kind == PendingKind.SET_WEIGHT) {
+        } else if (op == PendingOp.SET_WEIGHT || op == PendingOp.STEP_WEIGHT) {
             _streams[id].weightRecord = p.weightRecord;
-        } else if (p.kind == PendingKind.SET_DISTRIBUTION) {
-            _streams[id].kind = p.distributionKind;
-            _streams[id].writer = p.writer;
-        } else if (p.kind == PendingKind.REMOVE) {
-            delete _streams[id];
-            for (uint256 j = 0; j < _streamIds.length; j++) {
-                if (_streamIds[j] == id) {
-                    _streamIds[j] = _streamIds[_streamIds.length - 1];
-                    _streamIds.pop();
-                    break;
-                }
+        } else if (op == PendingOp.SET_DISTRIBUTION) {
+            Stream storage s = _streams[id];
+            _foldAndBurnResidue(s);
+            s.kind = p.distributionKind;
+            s.writer = p.writer;
+        } else if (op == PendingOp.REMOVE) {
+            _applyRemove(id);
+        }
+    }
+
+    function _applyRemove(uint64 id) internal {
+        Stream storage s = _streams[id];
+        _foldAndBurnResidue(s);
+
+        if (s.payableLedger.wallets.length > 0) {
+            Tombstone storage t = _tombstones[id];
+            t.exists = true;
+            uint256 n = s.payableLedger.wallets.length;
+            for (uint256 i = 0; i < n; i++) {
+                address wallet = s.payableLedger.wallets[i];
+                _ledgerIncrement(t.payableLedger, wallet, s.payableLedger.amount[wallet]);
+            }
+            _tombstoneIds.push(id);
+        }
+        _ledgerClearAll(s.payableLedger);
+
+        delete _streams[id];
+        for (uint256 i = 0; i < _streamIds.length; i++) {
+            if (_streamIds[i] == id) {
+                _streamIds[i] = _streamIds[_streamIds.length - 1];
+                _streamIds.pop();
+                break;
             }
         }
     }

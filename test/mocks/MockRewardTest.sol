@@ -8,14 +8,13 @@ import {REWARD_ACTOR_ADDRESS} from "fvm-solidity/FVMActors.sol";
 import {FVMCallActorByIdWithReward} from "./FVMCallActorByIdWithReward.sol";
 import {FVMRewardActor} from "./FVMRewardActor.sol";
 
-/// @notice Extends fvm-solidity's MockFVMTest with a mock f02 (Reward actor) covering the
-///         stream-splitting methods proposed in FIP-0118
-///         (https://github.com/filecoin-project/FIPs/pull/1270, tracked in
-///         https://github.com/filecoin-project/builtin-actors/issues/1764).
+/// @notice Extends fvm-solidity's MockFVMTest with a mock f02 (Reward actor) covering its
+///         stream-splitting methods.
 contract MockRewardTest is MockFVMTest {
     function setUp() public virtual override {
         super.setUp();
         vm.etch(REWARD_ACTOR_ADDRESS, address(new FVMRewardActor()).code);
+        FVMRewardActor(REWARD_ACTOR_ADDRESS).mockInit();
         vm.etch(
             CALL_ACTOR_BY_ID, address(new FVMCallActorByIdWithReward(vm, FVMRewardActor(REWARD_ACTOR_ADDRESS))).code
         );
