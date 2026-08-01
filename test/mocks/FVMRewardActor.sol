@@ -23,7 +23,7 @@ import {
 int256 constant WAD = 1e18;
 
 /// @dev Mock-only caps; f02 requires these limits to exist but never fixes their values.
-uint256 constant MAX_STREAMS = 8;
+uint64 constant MAX_STREAMS = 8;
 uint256 constant MAX_RECIPIENTS = 64;
 
 /// @dev Same value as WAD, typed uint256, so summing shares needs no signed-to-unsigned cast.

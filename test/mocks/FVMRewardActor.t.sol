@@ -336,7 +336,7 @@ contract FVMRewardActorTest is MockRewardTest {
         for (uint64 i = 0; i < MAX_STREAMS; i++) {
             assertEq(_registerStream(i, _constantRecord(0), DistributionKind.IMPLICIT, address(0)), 0);
         }
-        uint64 oneMoreId = uint64(MAX_STREAMS);
+        uint64 oneMoreId = MAX_STREAMS;
         assertEq(
             _registerStream(oneMoreId, _constantRecord(0), DistributionKind.IMPLICIT, address(0)), USR_ILLEGAL_ARGUMENT
         );
