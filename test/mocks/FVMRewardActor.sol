@@ -4,6 +4,7 @@ pragma solidity ^0.8.36;
 import {Vm} from "forge-std/Vm.sol";
 
 import {USR_FORBIDDEN, USR_ILLEGAL_ARGUMENT, USR_NOT_FOUND, USR_UNHANDLED_MESSAGE} from "fvm-solidity/FVMErrors.sol";
+import {CBOR_CODEC} from "fvm-solidity/FVMCodec.sol";
 import {FVMPay} from "fvm-solidity/FVMPay.sol";
 
 import {
@@ -17,7 +18,8 @@ import {
     CANCEL_PENDING,
     CLAIM,
     SWA_TIMELOCK
-} from "./FVMRewardMethod.sol";
+} from "../../src/lib/FVMRewardMethod.sol";
+import {WeightRecord, DistributionKind, Share, PendingOp} from "../../src/lib/FVMRewardTypes.sol";
 
 /// @dev Weights, and per-orchestrator shares, are WAD-scaled: 1e18 == 1.0 == 100%.
 int256 constant WAD = 1e18;
@@ -29,38 +31,9 @@ uint256 constant MAX_RECIPIENTS = 64;
 /// @dev Same value as WAD, typed uint256, so summing shares needs no signed-to-unsigned cast.
 uint256 constant SHARE_TOTAL = 1e18;
 
-/// @notice Per-stream weight schedule; WAD-scaled, slope may be negative.
-struct WeightRecord {
-    int256 vStart;
-    int256 slope;
-    uint64 tStart;
-    int256 floor;
-    int256 cap;
-}
-
-/// @notice IMPLICIT is the consensus stream (f02-resolved); EXPLICIT uses a writer-owned share map.
-enum DistributionKind {
-    IMPLICIT,
-    EXPLICIT
-}
-
-struct Share {
-    address wallet;
-    uint256 share;
-}
-
 struct LedgerRow {
     address wallet;
     uint256 amount;
-}
-
-/// @notice The five queueable SWA write kinds; SetShares and Claim never queue.
-enum PendingOp {
-    SET_WEIGHT,
-    STEP_WEIGHT,
-    REGISTER,
-    REMOVE,
-    SET_DISTRIBUTION
 }
 
 /// @dev Enumerable, prunable address->uint256 balance -- plain mappings-plus-array, not the
@@ -280,7 +253,8 @@ contract FVMRewardActor {
 
     function _queueWeightWrite(PendingOp op, bytes calldata params) internal returns (uint32, uint64, bytes memory) {
         if (msg.sender != swa) return (USR_FORBIDDEN, 0, "");
-        (uint64[] memory ids, WeightRecord[] memory records) = abi.decode(params, (uint64[], WeightRecord[]));
+        // Params CBOR: [[id...], [[vStart,slope,tStart,floor,cap]...]]
+        (uint64[] memory ids, WeightRecord[] memory records) = _decodeSetWeightRecordsParams(params);
         if (ids.length != records.length) return (USR_ILLEGAL_ARGUMENT, 0, "");
 
         uint64 effectiveEpoch = uint64(block.number) + swaTimelockEpochs;
@@ -321,7 +295,8 @@ contract FVMRewardActor {
     // -------------------------------------------------------------------------
 
     function _setShares(bytes calldata params) internal returns (uint32, uint64, bytes memory) {
-        (uint64 id, Share[] memory newShares) = abi.decode(params, (uint64, Share[]));
+        // Params CBOR: [id, [[walletBytes, share]...]]
+        (uint64 id, Share[] memory newShares) = _decodeSetSharesParams(params);
         Stream storage s = _streams[id];
         if (!s.exists) return (USR_NOT_FOUND, 0, "");
         if (s.kind != DistributionKind.EXPLICIT) return (USR_ILLEGAL_ARGUMENT, 0, "");
@@ -401,8 +376,9 @@ contract FVMRewardActor {
 
     function _registerStream(bytes calldata params) internal returns (uint32, uint64, bytes memory) {
         if (msg.sender != swa) return (USR_FORBIDDEN, 0, "");
+        // Params CBOR: [id, [vStart,slope,tStart,floor,cap], kind, writerOrNull, activationEpoch]
         (uint64 id, WeightRecord memory record, DistributionKind kind, address writer, uint64 activationEpoch) =
-            abi.decode(params, (uint64, WeightRecord, DistributionKind, address, uint64));
+            _decodeRegisterStreamParams(params);
 
         // Rejects any id collision it can see: a live stream, an undrained tombstone, or an
         // already-queued registration. Reuse after a tombstone fully drains is SWA discipline.
@@ -437,7 +413,8 @@ contract FVMRewardActor {
 
     function _removeStream(bytes calldata params) internal returns (uint32, uint64, bytes memory) {
         if (msg.sender != swa) return (USR_FORBIDDEN, 0, "");
-        uint64 id = abi.decode(params, (uint64));
+        // Params CBOR: a bare uint64 (streamId), no array wrapper
+        uint64 id = _decodeBareUint64(params);
         if (!_streams[id].exists) return (USR_NOT_FOUND, 0, "");
         if (_pendingExists[id][PendingOp.REMOVE]) return (USR_ILLEGAL_ARGUMENT, 0, "");
 
@@ -460,7 +437,8 @@ contract FVMRewardActor {
 
     function _setDistribution(bytes calldata params) internal returns (uint32, uint64, bytes memory) {
         if (msg.sender != swa) return (USR_FORBIDDEN, 0, "");
-        (uint64 id, DistributionKind kind, address writer) = abi.decode(params, (uint64, DistributionKind, address));
+        // Params CBOR: [id, kind, writerOrNull]
+        (uint64 id, DistributionKind kind, address writer) = _decodeSetDistributionParams(params);
         if (!_streams[id].exists) return (USR_NOT_FOUND, 0, "");
         // Converting a stream to IMPLICIT is not permitted (IMPLICIT is consensus-only).
         if (kind == DistributionKind.IMPLICIT || writer == address(0)) return (USR_ILLEGAL_ARGUMENT, 0, "");
@@ -485,7 +463,8 @@ contract FVMRewardActor {
 
     function _cancelPending(bytes calldata params) internal returns (uint32, uint64, bytes memory) {
         if (msg.sender != swa) return (USR_FORBIDDEN, 0, "");
-        (uint64 id, PendingOp op) = abi.decode(params, (uint64, PendingOp));
+        // Params CBOR: [id, op]
+        (uint64 id, PendingOp op) = _decodeCancelPendingParams(params);
         if (_pendingExists[id][op]) {
             delete _pending[id][op];
             _pendingExists[id][op] = false;
@@ -501,7 +480,8 @@ contract FVMRewardActor {
     // -------------------------------------------------------------------------
 
     function _claim(bytes calldata params) internal returns (uint32, uint64, bytes memory) {
-        (uint64 id, address[] memory wallets) = abi.decode(params, (uint64, address[]));
+        // Params CBOR: [id, [walletBytes...]]
+        (uint64 id, address[] memory wallets) = _decodeClaimParams(params);
 
         bool tombstoned = _tombstones[id].exists;
         Stream storage s = _streams[id];
@@ -537,7 +517,281 @@ contract FVMRewardActor {
             emit Claimed(id, wallet, entitlement);
             amounts[i] = entitlement;
         }
-        return (0, 0, abi.encode(amounts));
+        // Return CBOR: an array of Filecoin BigInt-encoded entitlements, one per wallet.
+        return (0, CBOR_CODEC, _encodeCborBigIntArray(amounts));
+    }
+
+    // -------------------------------------------------------------------------
+    // CBOR params/return encoding -- f02's real wire format; not gas-optimized, since only
+    // FVMRewards (src/lib/FVMRewards.sol) and this mock need to agree on it.
+    // -------------------------------------------------------------------------
+
+    // Every decode helper below takes/returns an absolute calldata byte position (not an offset
+    // into `params`), read via `calldataload` -- one word load per field, no `bytes calldata`
+    // indexing or intermediate slicing.
+
+    function _decodeSetWeightRecordsParams(bytes calldata params)
+        private
+        pure
+        returns (uint64[] memory ids, WeightRecord[] memory records)
+    {
+        uint256 pos = _calldataPos(params) + 1; // skip the top-level 2-element array header
+        uint256 idsCount;
+        (idsCount, pos) = _decodeCborArrayHeader(pos);
+        ids = new uint64[](idsCount);
+        for (uint256 i = 0; i < idsCount; i++) {
+            (ids[i], pos) = _decodeCborUint64(pos);
+        }
+
+        uint256 recCount;
+        (recCount, pos) = _decodeCborArrayHeader(pos);
+        records = new WeightRecord[](recCount);
+        for (uint256 i = 0; i < recCount; i++) {
+            pos += 1; // skip the per-record 5-element array header
+            (records[i], pos) = _decodeWeightRecord(pos);
+        }
+    }
+
+    function _decodeSetSharesParams(bytes calldata params) private pure returns (uint64 id, Share[] memory newShares) {
+        uint256 pos = _calldataPos(params) + 1; // skip the top-level 2-element array header
+        (id, pos) = _decodeCborUint64(pos);
+        uint256 count;
+        (count, pos) = _decodeCborArrayHeader(pos);
+        newShares = new Share[](count);
+        for (uint256 i = 0; i < count; i++) {
+            pos += 1; // skip the per-entry 2-element array header
+            address wallet;
+            (wallet, pos) = _decodeAddressOrNull(pos);
+            uint64 share;
+            (share, pos) = _decodeCborUint64(pos);
+            newShares[i] = Share({wallet: wallet, share: share});
+        }
+    }
+
+    function _decodeRegisterStreamParams(bytes calldata params)
+        private
+        pure
+        returns (uint64 id, WeightRecord memory record, DistributionKind kind, address writer, uint64 activationEpoch)
+    {
+        uint256 pos = _calldataPos(params) + 1; // skip the top-level 5-element array header
+        (id, pos) = _decodeCborUint64(pos);
+        pos += 1; // skip the weight-record 5-element array header
+        (record, pos) = _decodeWeightRecord(pos);
+        uint64 kindOrdinal;
+        (kindOrdinal, pos) = _decodeCborUint64(pos);
+        kind = DistributionKind(kindOrdinal);
+        (writer, pos) = _decodeAddressOrNull(pos);
+        (activationEpoch, pos) = _decodeCborUint64(pos);
+    }
+
+    function _decodeSetDistributionParams(bytes calldata params)
+        private
+        pure
+        returns (uint64 id, DistributionKind kind, address writer)
+    {
+        uint256 pos = _calldataPos(params) + 1; // skip the top-level 3-element array header
+        (id, pos) = _decodeCborUint64(pos);
+        uint64 kindOrdinal;
+        (kindOrdinal, pos) = _decodeCborUint64(pos);
+        kind = DistributionKind(kindOrdinal);
+        (writer, pos) = _decodeAddressOrNull(pos);
+    }
+
+    function _decodeCancelPendingParams(bytes calldata params) private pure returns (uint64 id, PendingOp op) {
+        uint256 pos = _calldataPos(params) + 1; // skip the top-level 2-element array header
+        (id, pos) = _decodeCborUint64(pos);
+        uint64 opOrdinal;
+        (opOrdinal, pos) = _decodeCborUint64(pos);
+        op = PendingOp(opOrdinal);
+    }
+
+    function _decodeClaimParams(bytes calldata params) private pure returns (uint64 id, address[] memory wallets) {
+        uint256 pos = _calldataPos(params) + 1; // skip the top-level 2-element array header
+        (id, pos) = _decodeCborUint64(pos);
+        uint256 count;
+        (count, pos) = _decodeCborArrayHeader(pos);
+        wallets = new address[](count);
+        for (uint256 i = 0; i < count; i++) {
+            (wallets[i], pos) = _decodeAddressOrNull(pos);
+        }
+    }
+
+    /// @dev Bare CBOR uint64 (no array wrapper), e.g. RemoveStream's single streamId param.
+    function _decodeBareUint64(bytes calldata params) private pure returns (uint64 v) {
+        (v,) = _decodeCborUint64(_calldataPos(params));
+    }
+
+    function _decodeWeightRecord(uint256 pos) private pure returns (WeightRecord memory record, uint256 newPos) {
+        int256 vStart;
+        int256 slope;
+        uint64 tStart;
+        int256 floor;
+        int256 cap;
+        (vStart, pos) = _decodeCborInt64(pos);
+        (slope, pos) = _decodeCborInt64(pos);
+        (tStart, pos) = _decodeCborUint64(pos);
+        (floor, pos) = _decodeCborInt64(pos);
+        (cap, pos) = _decodeCborInt64(pos);
+        record = WeightRecord({vStart: vStart, slope: slope, tStart: tStart, floor: floor, cap: cap});
+        newPos = pos;
+    }
+
+    /// @dev The absolute calldata byte position of a calldata bytes value's content.
+    function _calldataPos(bytes calldata data) private pure returns (uint256 pos) {
+        assembly ("memory-safe") {
+            pos := data.offset
+        }
+    }
+
+    /// @dev Decodes a CBOR unsigned integer (major type 0) at absolute calldata position `pos`;
+    /// also reused for array-length header counts (major type 4), since both encode their value
+    /// the same way in the low 5 info bits. One `calldataload`, then shifts extract the width
+    /// the info byte calls for -- no per-byte reads.
+    function _decodeCborUint64(uint256 pos) private pure returns (uint64 v, uint256 newPos) {
+        assembly ("memory-safe") {
+            let w := calldataload(pos)
+            let info := and(byte(0, w), 0x1f)
+            let data := shl(8, w) // drop the header byte; field bytes now sit at the MSB end
+            switch lt(info, 24)
+            case 1 {
+                v := info
+                newPos := add(pos, 1)
+            }
+            default {
+                switch info
+                case 24 {
+                    v := shr(248, data)
+                    newPos := add(pos, 2)
+                }
+                case 25 {
+                    v := shr(240, data)
+                    newPos := add(pos, 3)
+                }
+                case 26 {
+                    v := shr(224, data)
+                    newPos := add(pos, 5)
+                }
+                default {
+                    // info == 27
+                    v := shr(192, data)
+                    newPos := add(pos, 9)
+                }
+            }
+        }
+    }
+
+    function _decodeCborArrayHeader(uint256 pos) private pure returns (uint256 count, uint256 newPos) {
+        (uint64 c, uint256 np) = _decodeCborUint64(pos);
+        return (c, np);
+    }
+
+    /// @dev Decodes a CBOR signed integer (major type 0 or 1) at absolute calldata position
+    /// `pos`; the value fits int256 regardless of major type, since a CBOR-major-1 int64's
+    /// magnitude is itself at most a uint64.
+    function _decodeCborInt64(uint256 pos) private pure returns (int256 v, uint256 newPos) {
+        uint256 major;
+        assembly ("memory-safe") {
+            major := shr(5, byte(0, calldataload(pos)))
+        }
+        uint64 magnitude;
+        (magnitude, newPos) = _decodeCborUint64(pos);
+        v = major == 0 ? int256(uint256(magnitude)) : -1 - int256(uint256(magnitude));
+    }
+
+    /// @dev Decodes an f410 delegated address wrapped in a CBOR byte string (0x04, 0x0a, 20
+    /// bytes) at absolute calldata position `pos`, or CBOR null (address(0)) for an IMPLICIT
+    /// stream's absent writer. The address bytes are big-endian, so one `calldataload` shifted
+    /// into place reads all 20 at once.
+    function _decodeAddressOrNull(uint256 pos) private pure returns (address addr, uint256 newPos) {
+        assembly ("memory-safe") {
+            let b := byte(0, calldataload(pos))
+            switch eq(b, 0xf6)
+            case 1 {
+                addr := 0
+                newPos := add(pos, 1)
+            }
+            default {
+                let len := and(b, 0x1f) // 22 for f410; length is always inline
+                // header byte + [0x04, 0x0a] prefix (3 bytes), then 20 big-endian address bytes
+                addr := shr(96, calldataload(add(pos, 3)))
+                newPos := add(pos, add(1, len))
+            }
+        }
+    }
+
+    function _encodeCborArrayHeaderLen(uint256 count) private pure returns (uint256) {
+        if (count < 24) return 1;
+        if (count < 0x100) return 2;
+        return 3;
+    }
+
+    /// @dev Writes a CBOR array(count) header into `out` starting at `pos`; returns the new position.
+    function _writeCborArrayHeader(bytes memory out, uint256 pos, uint256 count) private pure returns (uint256) {
+        if (count < 24) {
+            out[pos] = bytes1(uint8(0x80 | count));
+            return pos + 1;
+        }
+        if (count < 0x100) {
+            out[pos] = bytes1(uint8(0x98));
+            out[pos + 1] = bytes1(uint8(count));
+            return pos + 2;
+        }
+        out[pos] = bytes1(uint8(0x99));
+        out[pos + 1] = bytes1(uint8(count >> 8));
+        out[pos + 2] = bytes1(uint8(count));
+        return pos + 3;
+    }
+
+    /// @dev The minimal big-endian encoding length of `value` (no leading zero byte); `value` is nonzero.
+    function _bigEndianLen(uint256 value) private pure returns (uint256 len) {
+        len = 32;
+        bytes32 full = bytes32(value);
+        while (full[32 - len] == 0) {
+            len--;
+        }
+    }
+
+    /// @dev A Filecoin BigInt: a CBOR byte string containing a sign byte (0x00, since
+    /// entitlements are never negative) followed by the minimal big-endian magnitude; zero is
+    /// the empty byte string, matching go-state-types' big.Int (de)serialization.
+    function _bigIntEncodedLen(uint256 value) private pure returns (uint256) {
+        if (value == 0) return 1;
+        uint256 contentLen = _bigEndianLen(value) + 1;
+        return (contentLen < 24 ? 1 : 2) + contentLen;
+    }
+
+    /// @dev Writes `value`'s BigInt CBOR encoding into `out` starting at `pos`; returns the new position.
+    function _writeCborBigInt(bytes memory out, uint256 pos, uint256 value) private pure returns (uint256) {
+        if (value == 0) {
+            out[pos] = bytes1(uint8(0x40));
+            return pos + 1;
+        }
+        uint256 magLen = _bigEndianLen(value);
+        uint256 contentLen = magLen + 1;
+        if (contentLen < 24) {
+            out[pos++] = bytes1(uint8(0x40 | contentLen));
+        } else {
+            out[pos++] = bytes1(uint8(0x58));
+            out[pos++] = bytes1(uint8(contentLen));
+        }
+        out[pos++] = 0x00; // sign byte: positive
+        bytes32 full = bytes32(value);
+        for (uint256 i = 0; i < magLen; i++) {
+            out[pos++] = full[32 - magLen + i];
+        }
+        return pos;
+    }
+
+    function _encodeCborBigIntArray(uint256[] memory values) private pure returns (bytes memory out) {
+        uint256 totalLen = _encodeCborArrayHeaderLen(values.length);
+        for (uint256 i = 0; i < values.length; i++) {
+            totalLen += _bigIntEncodedLen(values[i]);
+        }
+        out = new bytes(totalLen);
+        uint256 pos = _writeCborArrayHeader(out, 0, values.length);
+        for (uint256 i = 0; i < values.length; i++) {
+            pos = _writeCborBigInt(out, pos, values[i]);
+        }
     }
 
     // -------------------------------------------------------------------------
