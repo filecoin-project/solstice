@@ -719,27 +719,32 @@ contract FVMRewardActor {
         }
     }
 
-    function _encodeCborArrayHeaderLen(uint256 count) private pure returns (uint256) {
-        if (count < 24) return 1;
-        if (count < 0x100) return 2;
-        return 3;
-    }
-
-    /// @dev Writes a CBOR array(count) header into `out` starting at `pos`; returns the new position.
-    function _writeCborArrayHeader(bytes memory out, uint256 pos, uint256 count) private pure returns (uint256) {
-        if (count < 24) {
-            out[pos] = bytes1(uint8(0x80 | count));
-            return pos + 1;
+    /// @dev Writes a CBOR array(count) header at absolute memory position `pos`; returns the new
+    /// position. `pos` is a raw pointer (like a calldata `.offset`), not an index into a `bytes
+    /// memory` -- callers compute it once from their buffer instead of passing the buffer itself,
+    /// so every write is a direct `mstore8` rather than a bounds-checked `bytes memory` index.
+    function _writeCborArrayHeader(uint256 pos, uint256 count) private pure returns (uint256 newPos) {
+        assembly ("memory-safe") {
+            switch lt(count, 24)
+            case 1 {
+                mstore8(pos, or(0x80, count))
+                newPos := add(pos, 1)
+            }
+            default {
+                switch lt(count, 0x100)
+                case 1 {
+                    mstore8(pos, 0x98)
+                    mstore8(add(pos, 1), count)
+                    newPos := add(pos, 2)
+                }
+                default {
+                    mstore8(pos, 0x99)
+                    mstore8(add(pos, 1), shr(8, count))
+                    mstore8(add(pos, 2), count)
+                    newPos := add(pos, 3)
+                }
+            }
         }
-        if (count < 0x100) {
-            out[pos] = bytes1(uint8(0x98));
-            out[pos + 1] = bytes1(uint8(count));
-            return pos + 2;
-        }
-        out[pos] = bytes1(uint8(0x99));
-        out[pos + 1] = bytes1(uint8(count >> 8));
-        out[pos + 2] = bytes1(uint8(count));
-        return pos + 3;
     }
 
     /// @dev The minimal big-endian encoding length of `value` (no leading zero byte); `value` is nonzero.
@@ -751,46 +756,63 @@ contract FVMRewardActor {
         }
     }
 
-    /// @dev A Filecoin BigInt: a CBOR byte string containing a sign byte (0x00, since
-    /// entitlements are never negative) followed by the minimal big-endian magnitude; zero is
-    /// the empty byte string, matching go-state-types' big.Int (de)serialization.
-    function _bigIntEncodedLen(uint256 value) private pure returns (uint256) {
-        if (value == 0) return 1;
-        uint256 contentLen = _bigEndianLen(value) + 1;
-        return (contentLen < 24 ? 1 : 2) + contentLen;
-    }
-
-    /// @dev Writes `value`'s BigInt CBOR encoding into `out` starting at `pos`; returns the new position.
-    function _writeCborBigInt(bytes memory out, uint256 pos, uint256 value) private pure returns (uint256) {
+    /// @dev Writes `value`'s Filecoin BigInt CBOR encoding (a CBOR byte string containing a sign
+    /// byte -- 0x00, since entitlements are never negative -- followed by the minimal big-endian
+    /// magnitude; zero is the empty byte string, matching go-state-types' big.Int
+    /// (de)serialization) at absolute memory position `pos`; returns the new position.
+    function _writeCborBigInt(uint256 pos, uint256 value) private pure returns (uint256 newPos) {
         if (value == 0) {
-            out[pos] = bytes1(uint8(0x40));
-            return pos + 1;
+            assembly ("memory-safe") {
+                mstore8(pos, 0x40)
+                newPos := add(pos, 1)
+            }
+            return newPos;
         }
         uint256 magLen = _bigEndianLen(value);
         uint256 contentLen = magLen + 1;
-        if (contentLen < 24) {
-            out[pos++] = bytes1(uint8(0x40 | contentLen));
-        } else {
-            out[pos++] = bytes1(uint8(0x58));
-            out[pos++] = bytes1(uint8(contentLen));
+        assembly ("memory-safe") {
+            let p := pos
+            switch lt(contentLen, 24)
+            case 1 {
+                mstore8(p, or(0x40, contentLen))
+                p := add(p, 1)
+            }
+            default {
+                mstore8(p, 0x58)
+                mstore8(add(p, 1), contentLen)
+                p := add(p, 2)
+            }
+            mstore8(p, 0) // sign byte: positive
+            p := add(p, 1)
+            // Magnitude, big-endian, right-aligned in `value`; the mstore's trailing bytes past
+            // magLen spill into the buffer's over-allocated slack (see below) and are harmless.
+            mstore(p, shl(mul(8, sub(32, magLen)), value))
+            newPos := add(p, magLen)
         }
-        out[pos++] = 0x00; // sign byte: positive
-        bytes32 full = bytes32(value);
-        for (uint256 i = 0; i < magLen; i++) {
-            out[pos++] = full[32 - magLen + i];
-        }
-        return pos;
     }
 
+    /// @dev Claims the free memory pointer directly rather than `new bytes(...)`, since the exact
+    /// length isn't known until after writing: `new bytes(worstCase)` would permanently bump the
+    /// free pointer past memory this array never ends up using (memory is never freed), forcing
+    /// every later allocation in the call to sit -- and pay expansion gas -- past that unused
+    /// stretch regardless. Writing before the free pointer is moved, then moving it to the real
+    /// (32-rounded) size afterward, is the standard memory-safe manual-allocation pattern: only
+    /// memory at-or-past the free pointer at the time of each write is ever touched.
     function _encodeCborBigIntArray(uint256[] memory values) private pure returns (bytes memory out) {
-        uint256 totalLen = _encodeCborArrayHeaderLen(values.length);
-        for (uint256 i = 0; i < values.length; i++) {
-            totalLen += _bigIntEncodedLen(values[i]);
+        uint256 n = values.length;
+        uint256 dataStart;
+        assembly ("memory-safe") {
+            out := mload(0x40)
+            dataStart := add(out, 0x20)
         }
-        out = new bytes(totalLen);
-        uint256 pos = _writeCborArrayHeader(out, 0, values.length);
-        for (uint256 i = 0; i < values.length; i++) {
-            pos = _writeCborBigInt(out, pos, values[i]);
+        uint256 pos = _writeCborArrayHeader(dataStart, n);
+        for (uint256 i = 0; i < n; i++) {
+            pos = _writeCborBigInt(pos, values[i]);
+        }
+        uint256 actualLen = pos - dataStart;
+        assembly ("memory-safe") {
+            mstore(out, actualLen)
+            mstore(0x40, add(dataStart, and(add(actualLen, 0x1f), not(0x1f))))
         }
     }
 
