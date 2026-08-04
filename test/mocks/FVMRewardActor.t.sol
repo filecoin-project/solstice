@@ -942,6 +942,34 @@ contract FVMRewardActorTest is MockRewardTest {
         assertEq(RECIPIENT_A.balance, 0.1 ether);
     }
 
+    function _wallets(address a, address b) internal pure returns (address[] memory arr) {
+        arr = new address[](2);
+        arr[0] = a;
+        arr[1] = b;
+    }
+
+    // Every other Claim test only ever passes a single wallet, so FVMRewards.tryClaim's
+    // returndata-array decode loop (and its trailing free-memory-pointer bump) never runs past
+    // one iteration. This exercises count > 1, including the last element specifically.
+    function test_Claim_MultipleWallets_ReturnsAmountsInOrder() public {
+        _registerExplicit(SERVICE_ID, address(writerCaller)); // weight 0.1e18
+        Share[] memory shares_ = new Share[](2);
+        shares_[0] = Share({wallet: RECIPIENT_A, share: 0.6e18});
+        shares_[1] = Share({wallet: RECIPIENT_B, share: 0.4e18});
+        uint32 setSharesExit = writerCaller.setShares(SERVICE_ID, shares_);
+        assertEq(setSharesExit, 0);
+
+        rewardActor().mockAwardBlockReward(1 ether); // service accrues 0.1 ether, split 60/40
+
+        (uint32 exitCode, uint256[] memory amounts) = _claim(SERVICE_ID, _wallets(RECIPIENT_A, RECIPIENT_B));
+        assertEq(exitCode, 0);
+        assertEq(amounts.length, 2);
+        assertEq(amounts[0], 0.06 ether);
+        assertEq(amounts[1], 0.04 ether, "last element of the returned array");
+        assertEq(RECIPIENT_A.balance, 0.06 ether);
+        assertEq(RECIPIENT_B.balance, 0.04 ether);
+    }
+
     function test_Claim_PaysPayablePlusLive() public {
         _registerExplicit(SERVICE_ID, address(writerCaller));
         uint32 firstSetExit = writerCaller.setShares(SERVICE_ID, _shares(RECIPIENT_A, SHARE_TOTAL));
