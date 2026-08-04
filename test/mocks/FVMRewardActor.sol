@@ -786,7 +786,7 @@ contract FVMRewardActor {
             p := add(p, 1)
             // Magnitude, big-endian, right-aligned in `value`; the mstore's trailing bytes past
             // magLen spill into the buffer's over-allocated slack (see below) and are harmless.
-            mstore(p, shl(mul(8, sub(32, magLen)), value))
+            mstore(p, shl(shl(3, sub(32, magLen)), value))
             newPos := add(p, magLen)
         }
     }

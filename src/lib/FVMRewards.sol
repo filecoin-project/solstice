@@ -340,14 +340,14 @@ library FVMRewards {
             p := writeCborArrayHeader(p, idsCount)
             let idsData := add(ids, 0x20)
             for { let i := 0 } lt(i, idsCount) { i := add(i, 1) } {
-                p := writeCborUint64(p, mload(add(idsData, mul(i, 0x20))))
+                p := writeCborUint64(p, mload(add(idsData, shl(5, i))))
             }
 
             let recCount := mload(records)
             p := writeCborArrayHeader(p, recCount)
             let recData := add(records, 0x20)
             for { let i := 0 } lt(i, recCount) { i := add(i, 1) } {
-                let rec := mload(add(recData, mul(i, 0x20)))
+                let rec := mload(add(recData, shl(5, i)))
                 mstore8(p, 0x85)
                 p := add(p, 1)
                 p := writeCborInt64(p, mload(rec))
@@ -588,7 +588,7 @@ library FVMRewards {
             p := writeCborArrayHeader(p, n)
             let data := add(shares, 0x20)
             for { let i := 0 } lt(i, n) { i := add(i, 1) } {
-                let s := mload(add(data, mul(i, 0x20))) // pointer to Share struct
+                let s := mload(add(data, shl(5, i))) // pointer to Share struct
                 let wallet := mload(s)
                 let share := mload(add(s, 0x20))
                 mstore8(p, 0x82)
@@ -718,7 +718,7 @@ library FVMRewards {
             p := writeCborArrayHeader(p, n)
             let wdata := add(wallets, 0x20)
             for { let i := 0 } lt(i, n) { i := add(i, 1) } {
-                let wallet := mload(add(wdata, mul(i, 0x20)))
+                let wallet := mload(add(wdata, shl(5, i)))
                 mstore(p, or(shl(232, 0x56040a), shl(72, wallet)))
                 p := add(p, 23)
             }
@@ -752,17 +752,17 @@ library FVMRewards {
                         let strMajor, blen
                         strMajor, blen, cur := readCborHead(cur)
                         let value := 0
-                        if gt(blen, 0) {
+                        if blen {
                             let signByte := byte(0, mload(cur))
                             let magLen := sub(blen, 1)
-                            if or(gt(signByte, 0), gt(magLen, 32)) { revert(0, 0) }
-                            if gt(magLen, 0) { value := shr(mul(8, sub(32, magLen)), mload(add(cur, 1))) }
+                            if or(signByte, gt(magLen, 32)) { revert(0, 0) }
+                            if magLen { value := shr(shl(3, sub(32, magLen)), mload(add(cur, 1))) }
                         }
-                        mstore(add(out, mul(i, 0x20)), value)
+                        mstore(add(out, shl(5, i)), value)
                         cur := add(cur, blen)
                     }
 
-                    mstore(0x40, add(out, mul(count, 0x20)))
+                    mstore(0x40, add(out, shl(5, count)))
                 }
             }
         }
