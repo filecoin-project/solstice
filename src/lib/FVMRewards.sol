@@ -681,18 +681,18 @@ library FVMRewards {
             }
 
             // Reads one CBOR head (major type + info-derived count/length), 1-, 2-, or 3-byte form.
-            function readCborHead(ptr) -> major, value, newPtr {
-                let b := byte(0, mload(ptr))
-                major := shr(5, b)
-                let info := and(b, 0x1f)
+            // Major type is never consumed by either caller below (this codebase's own encoder
+            // only ever produces the shapes they expect), so it's not computed or returned.
+            function readCborHead(ptr) -> value, newPtr {
+                let info := and(byte(0, mload(ptr)), 0x1f)
                 switch lt(info, 24)
                 case 1 {
                     value := info
                     newPtr := add(ptr, 1)
                 }
                 default {
-                    switch eq(info, 24)
-                    case 1 {
+                    switch info
+                    case 24 {
                         value := byte(0, mload(add(ptr, 1)))
                         newPtr := add(ptr, 2)
                     }
@@ -741,8 +741,8 @@ library FVMRewards {
                     let cborPtr := fmp // call input is dead; reuse it as scratch for the raw copy
                     returndatacopy(cborPtr, 0x80, cborLen)
 
-                    let arrMajor, count, cur
-                    arrMajor, count, cur := readCborHead(cborPtr)
+                    let count, cur
+                    count, cur := readCborHead(cborPtr)
 
                     // Place the real, pointer-bumped array right after the raw scratch copy so
                     // the two never overlap.
@@ -751,8 +751,8 @@ library FVMRewards {
                     let out := add(amounts, 0x20)
 
                     for { let i := 0 } lt(i, count) { i := add(i, 1) } {
-                        let strMajor, blen
-                        strMajor, blen, cur := readCborHead(cur)
+                        let blen
+                        blen, cur := readCborHead(cur)
                         let value := 0
                         if blen {
                             let signByte := byte(0, mload(cur))
