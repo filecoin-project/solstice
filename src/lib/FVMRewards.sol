@@ -139,8 +139,10 @@ library FVMRewards {
             // Null iff writer is the zero address -- independent of `kind`, so a caller mistake
             // (e.g. IMPLICIT with a nonzero writer) reaches the actor honestly instead of being
             // silently corrected here.
-            switch iszero(writer)
-            case 1 {
+            // case 0 on the raw value, not case 1 on a precomputed iszero(writer): one ISZERO
+            // instead of two comparisons.
+            switch writer
+            case 0 {
                 mstore8(p, 0xf6) // CBOR null
                 p := add(p, 1)
             }
@@ -423,8 +425,8 @@ library FVMRewards {
             mstore8(p, kind)
             p := add(p, 1)
             // Null iff writer is the zero address -- independent of `kind` (see RegisterStream).
-            switch iszero(writer)
-            case 1 {
+            switch writer
+            case 0 {
                 mstore8(p, 0xf6)
                 p := add(p, 1)
             }

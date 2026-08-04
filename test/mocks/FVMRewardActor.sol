@@ -705,8 +705,8 @@ contract FVMRewardActor {
     function _decodeAddressOrNull(uint256 pos) private pure returns (address addr, uint256 newPos) {
         assembly ("memory-safe") {
             let b := byte(0, calldataload(pos))
-            switch eq(b, 0xf6)
-            case 1 {
+            switch b
+            case 0xf6 {
                 addr := 0
                 newPos := add(pos, 1)
             }
