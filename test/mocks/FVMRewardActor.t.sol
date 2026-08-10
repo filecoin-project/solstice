@@ -25,6 +25,7 @@ import {
 } from "./FVMRewardActor.sol";
 import {CLAIM, SWA_TIMELOCK} from "../../src/lib/FVMRewardMethod.sol";
 import {FVMRewards} from "../../src/lib/FVMRewards.sol";
+import {WeightRecordUpdate} from "../../src/lib/FVMRewardTypes.sol";
 
 /// @dev A distinct external caller, so tests can check authorization by identity rather than
 /// by happenstance of who the test contract is. The typed methods below go through FVMRewards
@@ -53,12 +54,12 @@ contract RewardCaller {
         exitCode = uint32(uint256(FVMRewards.tryRemoveStream(id)));
     }
 
-    function setWeightRecords(uint64[] memory ids, WeightRecord[] memory records) external returns (uint32 exitCode) {
-        exitCode = uint32(uint256(FVMRewards.trySetWeightRecords(ids, records)));
+    function setWeightRecords(WeightRecordUpdate[] memory updates) external returns (uint32 exitCode) {
+        exitCode = uint32(uint256(FVMRewards.trySetWeightRecords(updates)));
     }
 
-    function stepWeightRecords(uint64[] memory ids, WeightRecord[] memory records) external returns (uint32 exitCode) {
-        exitCode = uint32(uint256(FVMRewards.tryStepWeightRecords(ids, records)));
+    function stepWeightRecords(WeightRecordUpdate[] memory updates) external returns (uint32 exitCode) {
+        exitCode = uint32(uint256(FVMRewards.tryStepWeightRecords(updates)));
     }
 
     function setDistribution(uint64 id, address writer) external returns (uint32 exitCode) {
@@ -141,26 +142,22 @@ contract FVMRewardActorTest is MockRewardTest {
         return swaCaller.registerStream(id, record, writer, initial, uint64(block.number) + SWA_TIMELOCK);
     }
 
-    /// @dev Bundles a single id/record into the arrays SetWeightRecords batches over.
+    /// @dev Bundles a single id/record into the batch SetWeightRecords takes.
     function _singleWeightRecord(uint64 id, WeightRecord memory record)
         internal
         pure
-        returns (uint64[] memory ids, WeightRecord[] memory records)
+        returns (WeightRecordUpdate[] memory updates)
     {
-        ids = new uint64[](1);
-        ids[0] = id;
-        records = new WeightRecord[](1);
-        records[0] = record;
+        updates = new WeightRecordUpdate[](1);
+        updates[0] = WeightRecordUpdate({id: id, record: record});
     }
 
     function _setWeightRecords(RewardCaller caller, uint64 id, WeightRecord memory record) internal returns (uint32) {
-        (uint64[] memory ids, WeightRecord[] memory records) = _singleWeightRecord(id, record);
-        return caller.setWeightRecords(ids, records);
+        return caller.setWeightRecords(_singleWeightRecord(id, record));
     }
 
     function _stepWeightRecords(RewardCaller caller, uint64 id, WeightRecord memory record) internal returns (uint32) {
-        (uint64[] memory ids, WeightRecord[] memory records) = _singleWeightRecord(id, record);
-        return caller.stepWeightRecords(ids, records);
+        return caller.stepWeightRecords(_singleWeightRecord(id, record));
     }
 
     function _registerExplicit(uint64 id, address writer) internal {
@@ -421,27 +418,15 @@ contract FVMRewardActorTest is MockRewardTest {
         assertEq(exitCode, USR_NOT_FOUND);
     }
 
-    // The wire carries one array of [id, record] pairs, so mismatched lengths have no encoding.
-    // f02 never sees this; the caller is stopped at the boundary.
-    function test_SetWeightRecords_MismatchedArrayLengths_Reverts() public {
-        uint64[] memory ids = new uint64[](2);
-        WeightRecord[] memory records = new WeightRecord[](1);
-        vm.expectRevert(abi.encodeWithSelector(FVMRewards.ArrayLengthMismatch.selector, uint256(2), uint256(1)));
-        swaCaller.setWeightRecords(ids, records);
-    }
-
     function test_SetWeightRecords_DuplicateIdInBatch_IllegalArgument() public {
         assertEq(_registerStream(SERVICE_ID, _constantRecord(0.1e18), DistributionKind.IMPLICIT, address(0)), 0);
         _warpPastTimelockAndSettle();
 
-        uint64[] memory ids = new uint64[](2);
-        ids[0] = SERVICE_ID;
-        ids[1] = SERVICE_ID;
-        WeightRecord[] memory records = new WeightRecord[](2);
-        records[0] = _constantRecord(0.5e18);
-        records[1] = _constantRecord(0.5e18);
+        WeightRecordUpdate[] memory updates = new WeightRecordUpdate[](2);
+        updates[0] = WeightRecordUpdate({id: SERVICE_ID, record: _constantRecord(0.5e18)});
+        updates[1] = WeightRecordUpdate({id: SERVICE_ID, record: _constantRecord(0.5e18)});
 
-        uint32 exitCode = swaCaller.setWeightRecords(ids, records);
+        uint32 exitCode = swaCaller.setWeightRecords(updates);
         assertEq(exitCode, USR_ILLEGAL_ARGUMENT, "a repeated id queues two PendingKeys for one slot");
     }
 

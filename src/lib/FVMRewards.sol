@@ -17,7 +17,7 @@ import {
     SET_SHARES,
     CLAIM
 } from "./FVMRewardMethod.sol";
-import {WeightRecord, Share, PendingOp} from "./FVMRewardTypes.sol";
+import {WeightRecord, WeightRecordUpdate, Share, PendingOp} from "./FVMRewardTypes.sol";
 
 /// @notice Calls the f02 (Reward actor) methods specified by FIP-0118, for the Stream Weight
 /// Actor (solstice#3) and Service Rewards Actor (solstice#4).
@@ -42,9 +42,6 @@ library FVMRewards {
     error ValueOutOfRange(int256 value);
     /// @dev An implicit stream (null distribution) carries no share map.
     error ImplicitStreamWithShares();
-    /// @dev The wire carries one array of `[id, record]` pairs, so the two inputs must be equal in
-    /// length; a mismatch has no encoding.
-    error ArrayLengthMismatch(uint256 ids, uint256 records);
 
     /// @dev Sentinel for the unexpected case where the syscall reverts or returns fewer than 32
     /// bytes. Kept at -1 to match `fvm-solidity`'s behavior.
@@ -274,53 +271,42 @@ library FVMRewards {
     // -------------------------------------------------------------------------
 
     /// @notice Queues a discretionary weight-schedule write, without reverting on actor error.
-    function trySetWeightRecords(uint64[] memory ids, WeightRecord[] memory records)
-        internal
-        returns (int256 exitCode)
-    {
-        return _tryWeightRecords(SET_WEIGHT_RECORDS, ids, records);
+    function trySetWeightRecords(WeightRecordUpdate[] memory updates) internal returns (int256 exitCode) {
+        return _tryWeightRecords(SET_WEIGHT_RECORDS, updates);
     }
 
     /// @notice Queues a gate-originated weight-schedule write, without reverting on actor error.
     /// @dev Encodes identically to SetWeightRecords and differs only in dispatch, but the two are
     /// separate calls because f02 treats them differently: a StepWeightRecords write cannot be
     /// cancelled, so the discretionary path cannot revoke what the governance gate produced.
-    function tryStepWeightRecords(uint64[] memory ids, WeightRecord[] memory records)
-        internal
-        returns (int256 exitCode)
-    {
-        return _tryWeightRecords(STEP_WEIGHT_RECORDS, ids, records);
+    function tryStepWeightRecords(WeightRecordUpdate[] memory updates) internal returns (int256 exitCode) {
+        return _tryWeightRecords(STEP_WEIGHT_RECORDS, updates);
     }
 
     /// @dev Params CBOR: `[[[id, record], ...]]` -- one array of pairs, inside the single-field
     /// tuple wrapper f02's parameter struct produces.
-    function _tryWeightRecords(uint64 method, uint64[] memory ids, WeightRecord[] memory records)
-        private
-        returns (int256 exitCode)
-    {
-        if (ids.length != records.length) revert ArrayLengthMismatch(ids.length, records.length);
-
+    function _tryWeightRecords(uint64 method, WeightRecordUpdate[] memory updates) private returns (int256 exitCode) {
         // [[[id, record], ...]]
-        (uint256 base, uint256 p) = _begin(method, MAX_HEAD_BYTES + MAX_HEAD_BYTES + ids.length * MAX_UPDATE_BYTES);
+        (uint256 base, uint256 p) = _begin(method, MAX_HEAD_BYTES + MAX_HEAD_BYTES + updates.length * MAX_UPDATE_BYTES);
         p = _writeArrayHeader(p, 1);
-        p = _writeArrayHeader(p, ids.length);
-        for (uint256 i = 0; i < ids.length; i++) {
+        p = _writeArrayHeader(p, updates.length);
+        for (uint256 i = 0; i < updates.length; i++) {
             p = _writeArrayHeader(p, 2);
-            p = _writeUint(p, ids[i]);
-            p = _writeRecord(p, records[i]);
+            p = _writeUint(p, updates[i].id);
+            p = _writeRecord(p, updates[i].record);
         }
         return _invoke(base, p);
     }
 
     /// @notice Queues a discretionary weight-schedule write, reverting on actor error.
-    function setWeightRecords(uint64[] memory ids, WeightRecord[] memory records) internal {
-        int256 exitCode = trySetWeightRecords(ids, records);
+    function setWeightRecords(WeightRecordUpdate[] memory updates) internal {
+        int256 exitCode = trySetWeightRecords(updates);
         require(exitCode == EXIT_SUCCESS, SetWeightRecordsFailed(exitCode));
     }
 
     /// @notice Queues a gate-originated weight-schedule write, reverting on actor error.
-    function stepWeightRecords(uint64[] memory ids, WeightRecord[] memory records) internal {
-        int256 exitCode = tryStepWeightRecords(ids, records);
+    function stepWeightRecords(WeightRecordUpdate[] memory updates) internal {
+        int256 exitCode = tryStepWeightRecords(updates);
         require(exitCode == EXIT_SUCCESS, StepWeightRecordsFailed(exitCode));
     }
 

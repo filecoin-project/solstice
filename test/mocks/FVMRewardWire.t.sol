@@ -2,7 +2,7 @@
 pragma solidity ^0.8.36;
 
 import {MockRewardTest} from "./MockRewardTest.sol";
-import {WeightRecord, Share, PendingOp} from "../../src/lib/FVMRewardTypes.sol";
+import {WeightRecord, WeightRecordUpdate, Share, PendingOp} from "../../src/lib/FVMRewardTypes.sol";
 import {FVMRewards} from "../../src/lib/FVMRewards.sol";
 
 /// @dev Tests to match with Rust `fil_actor_reward` tests/types_test.rs `mod serialization`, whose
@@ -48,14 +48,15 @@ contract FVMRewardWireTest is MockRewardTest {
     // ]]
     function test_SetWeightRecords_WalksEveryIntegerWidth() public {
         uint64[8] memory v = [uint64(23), 24, 255, 256, 65_535, 65_536, 4_294_967_295, 4_294_967_296];
-        uint64[] memory ids = new uint64[](8);
-        WeightRecord[] memory records = new WeightRecord[](8);
+        WeightRecordUpdate[] memory updates = new WeightRecordUpdate[](8);
         for (uint256 i = 0; i < 8; i++) {
-            ids[i] = v[i];
-            records[i] = _record(int256(uint256(v[i])), -int256(uint256(v[i])) - 1, v[i], 0, int256(uint256(v[i])));
+            updates[i] = WeightRecordUpdate({
+                id: v[i],
+                record: _record(int256(uint256(v[i])), -int256(uint256(v[i])) - 1, v[i], 0, int256(uint256(v[i])))
+            });
         }
 
-        FVMRewards.trySetWeightRecords(ids, records);
+        FVMRewards.trySetWeightRecords(updates);
         assertEq(
             _sent(),
             hex"81888217851737170017821818851818381818180018188218ff8518ff38ff18ff0018ff"
@@ -69,28 +70,25 @@ contract FVMRewardWireTest is MockRewardTest {
     /// @dev Identical params, different dispatch. The two are separate calls because f02 will not
     /// let the discretionary path cancel what the gate produced.
     function test_StepWeightRecords_EncodesLikeSetWeightRecords() public {
-        uint64[] memory ids = new uint64[](1);
-        WeightRecord[] memory records = new WeightRecord[](1);
-        ids[0] = 23;
-        records[0] = _record(23, -24, 23, 0, 23);
+        WeightRecordUpdate[] memory updates = new WeightRecordUpdate[](1);
+        updates[0] = WeightRecordUpdate({id: 23, record: _record(23, -24, 23, 0, 23)});
 
-        FVMRewards.trySetWeightRecords(ids, records);
+        FVMRewards.trySetWeightRecords(updates);
         bytes memory set = _sent();
-        FVMRewards.tryStepWeightRecords(ids, records);
+        FVMRewards.tryStepWeightRecords(updates);
         assertEq(_sent(), set);
     }
 
     // [[]] and one entry at the widest form. Step encodes identically to Set but is pinned
     // separately, so this table stands alone as a description of the method.
     function test_StepWeightRecords_EmptyAndBoundaryBatch() public {
-        FVMRewards.tryStepWeightRecords(new uint64[](0), new WeightRecord[](0));
+        FVMRewards.tryStepWeightRecords(new WeightRecordUpdate[](0));
         assertEq(_sent(), hex"8180");
 
-        uint64[] memory ids = new uint64[](1);
-        WeightRecord[] memory records = new WeightRecord[](1);
-        ids[0] = 4_294_967_296;
-        records[0] = _record(4_294_967_296, -4_294_967_297, 65_536, 256, 1e18);
-        FVMRewards.tryStepWeightRecords(ids, records);
+        WeightRecordUpdate[] memory updates = new WeightRecordUpdate[](1);
+        updates[0] =
+            WeightRecordUpdate({id: 4_294_967_296, record: _record(4_294_967_296, -4_294_967_297, 65_536, 256, 1e18)});
+        FVMRewards.tryStepWeightRecords(updates);
         assertEq(
             _sent(),
             hex"8181821b0000000100000000851b00000001000000003b0000000100000000" hex"1a000100001901001b0de0b6b3a7640000"
