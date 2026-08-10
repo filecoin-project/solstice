@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 pragma solidity ^0.8.36;
 
+import {FVMAddress} from "fvm-solidity/FVMAddress.sol";
+
 import {MockRewardTest} from "./MockRewardTest.sol";
 import {WeightRecord, WeightRecordUpdate, Share, PendingOp} from "../../src/lib/FVMRewardTypes.sol";
 import {FVMRewards} from "../../src/lib/FVMRewards.sol";
@@ -16,11 +18,6 @@ import {FVMRewards} from "../../src/lib/FVMRewards.sol";
 /// Some vectors pin a shape f02 will refuse on inspection (an empty weight batch, for one). They
 /// fix the encoding, not the admissibility.
 contract FVMRewardWireTest is MockRewardTest {
-    /// @dev The EVM spelling of a Filecoin-native actor: 0xff, eleven zero bytes, then the id.
-    function _f0(uint64 id) internal pure returns (address) {
-        return address(uint160((uint256(0xff) << 152) | id));
-    }
-
     function _record(int256 vStart, int256 slope, uint64 tStart, int256 floor, int256 cap)
         internal
         pure
@@ -102,7 +99,7 @@ contract FVMRewardWireTest is MockRewardTest {
     // ]
     function test_RegisterStream_ExplicitCarriesWriterAndInitialMap() public {
         Share[] memory shares = new Share[](1);
-        shares[0] = Share({wallet: _f0(4_294_967_296), share: 1e18});
+        shares[0] = Share({wallet: FVMAddress.maskedAddress(4_294_967_296), share: 1e18});
         FVMRewards.tryRegisterStream(
             4_294_967_296,
             _record(4_294_967_296, -4_294_967_296, 65_536, 256, 1e18),
@@ -138,7 +135,7 @@ contract FVMRewardWireTest is MockRewardTest {
 
     // [24,byte[008080808010]] and [256,byte[040a1111...1111]] -- one writer in each address form.
     function test_SetDistribution_CarriesOnlyTheWriter() public {
-        FVMRewards.trySetDistribution(24, _f0(4_294_967_296));
+        FVMRewards.trySetDistribution(24, FVMAddress.maskedAddress(4_294_967_296));
         assertEq(_sent(), hex"82181846008080808010");
         FVMRewards.trySetDistribution(256, 0x1111111111111111111111111111111111111111);
         assertEq(_sent(), hex"8219010056040a1111111111111111111111111111111111111111");
@@ -158,7 +155,7 @@ contract FVMRewardWireTest is MockRewardTest {
         uint64[4] memory v = [uint64(24), 256, 65_536, 4_294_967_296];
         Share[] memory shares = new Share[](4);
         for (uint256 i = 0; i < 4; i++) {
-            shares[i] = Share({wallet: _f0(v[i]), share: v[i]});
+            shares[i] = Share({wallet: FVMAddress.maskedAddress(v[i]), share: v[i]});
         }
         FVMRewards.trySetShares(256, shares);
         assertEq(
@@ -172,7 +169,7 @@ contract FVMRewardWireTest is MockRewardTest {
     function test_SetShares_MaxRecipients() public {
         Share[] memory shares = new Share[](64);
         for (uint64 i = 0; i < 64; i++) {
-            shares[i] = Share({wallet: _f0(1000 + i), share: 1e18 / 64});
+            shares[i] = Share({wallet: FVMAddress.maskedAddress(1000 + i), share: 1e18 / 64});
         }
         FVMRewards.trySetShares(65_536, shares);
         assertEq(
@@ -258,7 +255,7 @@ contract FVMRewardWireTest is MockRewardTest {
     // [65536,[byte[008080808010],byte[040a1111111111111111111111111111111111111111]]]
     function test_Claim_EncodesBothAddressForms() public {
         address[] memory wallets = new address[](2);
-        wallets[0] = _f0(4_294_967_296);
+        wallets[0] = FVMAddress.maskedAddress(4_294_967_296);
         wallets[1] = 0x1111111111111111111111111111111111111111;
         FVMRewards.tryClaim(65_536, wallets);
         assertEq(_sent(), hex"821a000100008246008080808010" hex"56040a1111111111111111111111111111111111111111");
