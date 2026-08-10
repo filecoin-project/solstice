@@ -3,7 +3,7 @@ pragma solidity ^0.8.36;
 
 import {FVMAddress} from "fvm-solidity/FVMAddress.sol";
 
-import {MockRewardTest} from "./MockRewardTest.sol";
+import {MockRewardWireTest} from "./MockRewardWireTest.sol";
 import {WeightRecord, WeightRecordUpdate, Share, PendingOp} from "../../src/lib/FVMRewardTypes.sol";
 import {FVMRewards} from "../../src/lib/FVMRewards.sol";
 
@@ -17,7 +17,7 @@ import {FVMRewards} from "../../src/lib/FVMRewards.sol";
 ///
 /// Some vectors pin a shape f02 will refuse on inspection (an empty weight batch, for one). They
 /// fix the encoding, not the admissibility.
-contract FVMRewardWireTest is MockRewardTest {
+contract FVMRewardWireTest is MockRewardWireTest {
     function _record(int256 vStart, int256 slope, uint64 tStart, int256 floor, int256 cap)
         internal
         pure
@@ -28,12 +28,6 @@ contract FVMRewardWireTest is MockRewardTest {
 
     function _sent() internal view returns (bytes memory) {
         return rewardActor().mockLastParams();
-    }
-
-    function setUp() public override {
-        super.setUp();
-        rewardActor().mockSwa(address(this));
-        rewardActor().mockRecordParams();
     }
 
     // [[

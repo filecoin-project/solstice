@@ -172,26 +172,6 @@ contract FVMRewardActor {
         nextTransitionEpoch = type(uint64).max;
     }
 
-    /// @notice Test helper: the params of the most recent dispatched call, exactly as they
-    /// arrived. Lets a test assert the bytes f02 would have seen against f02's own vectors.
-    bytes public mockLastParams;
-    bool public mockRecordsParams;
-
-    /// @notice Test helper: return this blob from Claim verbatim, so a test can pin the decode
-    /// path against f02's own ClaimReturn vectors rather than against what this mock computes.
-    bytes public mockClaimReturnData;
-    bool public mockClaimReturnSet;
-
-    function mockSetClaimReturn(bytes calldata data) external {
-        mockClaimReturnData = data;
-        mockClaimReturnSet = true;
-    }
-
-    /// @notice Test helper: start recording params into mockLastParams.
-    function mockRecordParams() external {
-        mockRecordsParams = true;
-    }
-
     /// @notice Test helper: set the address authorized to call SWA-only methods.
     function mockSwa(address swa_) external {
         swa = swa_;
@@ -276,7 +256,6 @@ contract FVMRewardActor {
         // UpdateNetworkKPI, Constructor) is closed to EVM callers, and everything reaching a mock
         // through CALL_ACTOR_BY_ID is one. ThisEpochReward is not a back door.
         if (method < FIRST_EXPORTED_METHOD_NUMBER) return (USR_FORBIDDEN, 0, "");
-        if (mockRecordsParams) mockLastParams = params;
         _settle();
         if (method == SET_WEIGHT_RECORDS) return _queueWeightWrite(PendingOp.SET_WEIGHT, params);
         if (method == STEP_WEIGHT_RECORDS) return _queueWeightWrite(PendingOp.STEP_WEIGHT, params);
@@ -550,7 +529,6 @@ contract FVMRewardActor {
     // -------------------------------------------------------------------------
 
     function _claim(bytes calldata params) internal returns (uint32, uint64, bytes memory) {
-        if (mockClaimReturnSet) return (0, CBOR_CODEC, mockClaimReturnData);
         // Params CBOR: [id, [walletBytes...]]
         (uint64 id, address[] memory wallets) = _decodeClaimParams(params);
 
