@@ -125,13 +125,6 @@ library FVMRewards {
         return _writeHead(p, 4, count);
     }
 
-    function _writeNull(uint256 p) private pure returns (uint256) {
-        assembly ("memory-safe") {
-            mstore8(p, 0xf6)
-        }
-        return p + 1;
-    }
-
     /// @dev A Filecoin address as a CBOR byte string, in one of the two forms a contract can hold.
     ///
     /// A masked ID address (`0xff` then eleven zero bytes then a big-endian actor id) is the EVM
@@ -316,7 +309,10 @@ library FVMRewards {
         p = _writeUint(p, id);
         p = _writeRecord(p, record);
         if (writer == address(0)) {
-            p = _writeNull(p);
+            assembly ("memory-safe") {
+                mstore8(p, 0xf6) // writer = null
+                p := add(p, 1)
+            }
         } else {
             p = _writeArrayHeader(p, 2);
             p = _writeAddress(p, writer);
@@ -392,7 +388,10 @@ library FVMRewards {
         // [null, op]
         (uint256 base, uint256 p) = _begin(CANCEL_PENDING);
         p = _writeArrayHeader(p, 2);
-        p = _writeNull(p);
+        assembly ("memory-safe") {
+            mstore8(p, 0xf6) // null
+            p := add(p, 1)
+        }
         p = _writeUint(p, uint256(op));
         return _invoke(base, p);
     }
