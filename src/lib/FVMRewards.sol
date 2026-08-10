@@ -5,6 +5,7 @@ import {CALL_ACTOR_BY_ID} from "fvm-solidity/FVMPrecompiles.sol";
 import {REWARD_ACTOR_ID} from "fvm-solidity/FVMActors.sol";
 import {NO_FLAGS} from "fvm-solidity/FVMFlags.sol";
 import {CBOR_CODEC} from "fvm-solidity/FVMCodec.sol";
+import {EXIT_SUCCESS} from "fvm-solidity/FVMErrors.sol";
 
 import {
     REGISTER_STREAM,
@@ -45,8 +46,8 @@ library FVMRewards {
     /// length; a mismatch has no encoding.
     error ArrayLengthMismatch(uint256 ids, uint256 records);
 
-    int256 internal constant EXIT_SUCCESS = 0;
-    /// @dev Returned when the precompile itself fails, distinguishing that from any actor code.
+    /// @dev Sentinel for the unexpected case where the syscall reverts or returns fewer than 32
+    /// bytes. Kept at -1 to match `fvm-solidity`'s behavior.
     int256 internal constant EXIT_PRECOMPILE_FAILED = -1;
 
     uint256 private constant ENVELOPE_HEAD = 0xe0;
