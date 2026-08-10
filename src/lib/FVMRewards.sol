@@ -136,7 +136,10 @@ library FVMRewards {
     /// nowhere and f02 rejects the call. f099, the burn actor, is reachable only through the first
     /// form.
     function _writeAddress(uint256 p, address a) private pure returns (uint256) {
-        uint256 v = uint256(uint160(a));
+        uint256 v;
+        assembly ("memory-safe") {
+            v := a
+        }
         if ((v >> 64) == (uint256(0xff) << 88)) return _writeIdAddress(p, v);
 
         assembly ("memory-safe") {
