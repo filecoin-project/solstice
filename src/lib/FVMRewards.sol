@@ -240,8 +240,9 @@ library FVMRewards {
         assembly ("memory-safe") {
             mstore(add(base, 0xc0), sub(p, add(base, ENVELOPE_HEAD))) // params length
             exitCode := EXIT_PRECOMPILE_FAILED
-            let ok := delegatecall(gas(), CALL_ACTOR_BY_ID, base, sub(p, base), 0, 0x20)
-            if and(ok, gt(returndatasize(), 0x1f)) { exitCode := mload(0) }
+            if and(gt(returndatasize(), 0x1f), delegatecall(gas(), CALL_ACTOR_BY_ID, base, sub(p, base), 0, 0x20)) {
+                exitCode := mload(0)
+            }
         }
     }
 
