@@ -74,7 +74,19 @@ struct Pending {
     address writer; // REGISTER / SET_DISTRIBUTION payload
 }
 
+/// @notice A queued weight batch: the whole `SetWeightRecords` or `StepWeightRecords` call as one
+/// entry. Both ops key their slot by op alone, so a second batch is rejected while one is pending
+/// even when it names entirely different streams.
+struct WeightBatch {
+    uint64 effectiveEpoch;
+    uint64[] ids;
+    WeightRecord[] records;
+}
+
+/// @dev `hasId` is false for the two weight ops, whose slot is schedule-wide and carries a null id
+/// on the wire.
 struct PendingKey {
+    bool hasId;
     uint64 id;
     PendingOp op;
 }
@@ -97,6 +109,7 @@ struct TombstoneView {
 }
 
 struct PendingView {
+    bool hasId; // false for the two schedule-wide weight slots
     uint64 id;
     PendingOp op;
     uint64 effectiveEpoch;
@@ -156,6 +169,9 @@ contract FVMRewardActor {
     /// at most one pending registration. `delete _pending[id][op]` does not reach it; it is
     /// cleared where a registration applies and where one is queued.
     mapping(uint64 streamId => Share[]) internal _pendingShares;
+
+    mapping(PendingOp => WeightBatch) internal _pendingWeight;
+    mapping(PendingOp => bool) internal _pendingWeightExists;
 
     mapping(uint64 streamId => mapping(PendingOp => Pending)) internal _pending;
     mapping(uint64 streamId => mapping(PendingOp => bool)) internal _pendingExists;
@@ -278,12 +294,14 @@ contract FVMRewardActor {
         (uint64[] memory ids, WeightRecord[] memory records) = _decodeSetWeightRecordsParams(params);
         if (ids.length != records.length) return (USR_ILLEGAL_ARGUMENT, 0, "");
 
+        // One slot per op for the whole schedule, so a pending batch blocks the next one outright.
+        if (_pendingWeightExists[op]) return (USR_ILLEGAL_ARGUMENT, 0, "");
+        if (ids.length == 0) return (USR_ILLEGAL_ARGUMENT, 0, "");
+
         uint64 effectiveEpoch = uint64(block.number) + swaTimelockEpochs;
         for (uint256 i = 0; i < ids.length; i++) {
             if (!_streams[ids[i]].exists) return (USR_NOT_FOUND, 0, "");
             if (!_sane(records[i])) return (USR_ILLEGAL_ARGUMENT, 0, "");
-            if (_pendingExists[ids[i]][op]) return (USR_ILLEGAL_ARGUMENT, 0, "");
-            // Reject repeats: they'd queue two PendingKeys for one (id, op) slot.
             for (uint256 j = 0; j < i; j++) {
                 if (ids[j] == ids[i]) return (USR_ILLEGAL_ARGUMENT, 0, "");
             }
@@ -295,18 +313,15 @@ contract FVMRewardActor {
         }
         if (sum > WAD) return (USR_ILLEGAL_ARGUMENT, 0, "");
 
+        WeightBatch storage batch = _pendingWeight[op];
+        batch.effectiveEpoch = effectiveEpoch;
         for (uint256 i = 0; i < ids.length; i++) {
-            _queueWrite(
-                ids[i],
-                op,
-                Pending({
-                    effectiveEpoch: effectiveEpoch,
-                    weightRecord: records[i],
-                    distributionKind: DistributionKind.IMPLICIT,
-                    writer: address(0)
-                })
-            );
+            batch.ids.push(ids[i]);
+            batch.records.push(records[i]);
         }
+        _pendingWeightExists[op] = true;
+        _pendingKeys.push(PendingKey({hasId: false, id: 0, op: op}));
+        if (effectiveEpoch < nextTransitionEpoch) nextTransitionEpoch = effectiveEpoch;
         return (0, 0, "");
     }
 
@@ -370,9 +385,10 @@ contract FVMRewardActor {
             PendingKey memory k = _pendingKeys[i];
             Pending storage p = _pending[k.id][k.op];
             pendingWrites[i] = PendingView({
+                hasId: k.hasId,
                 id: k.id,
                 op: k.op,
-                effectiveEpoch: p.effectiveEpoch,
+                effectiveEpoch: k.hasId ? p.effectiveEpoch : _pendingWeight[k.op].effectiveEpoch,
                 weightRecord: p.weightRecord,
                 distributionKind: p.distributionKind,
                 writer: p.writer
@@ -498,26 +514,27 @@ contract FVMRewardActor {
         // StepWeightRecords is the one uncancellable op: the discretionary path must not be able
         // to revoke a governance-gated write.
         if (op == PendingOp.STEP_WEIGHT) return (USR_ILLEGAL_ARGUMENT, 0, "");
+        // Shape mismatch: the weight slots are schedule-wide and are addressed with a null id,
+        // every other op names its stream. Neither can be cancelled through the other's shape.
+        if (hasId && op == PendingOp.SET_WEIGHT) return (USR_ILLEGAL_ARGUMENT, 0, "");
         // A weight write is one schedule-wide entry addressed with a null id. Until the slot model
         // matches, cancelling one clears every stream's share of that batch, which is the same
         // observable outcome.
         if (!hasId) {
             if (op != PendingOp.SET_WEIGHT) return (USR_ILLEGAL_ARGUMENT, 0, "");
-            for (uint256 i = _pendingKeys.length; i > 0; i--) {
-                PendingKey memory k = _pendingKeys[i - 1];
-                if (k.op != op) continue;
-                delete _pending[k.id][op];
-                _pendingExists[k.id][op] = false;
-                _swapRemove(_pendingKeys, i - 1);
-                emit PendingCancelled(k.id, op);
+            if (_pendingWeightExists[op]) {
+                delete _pendingWeight[op];
+                _pendingWeightExists[op] = false;
+                _removePendingKey(false, 0, op);
+                _recomputeNextTransition();
+                emit PendingCancelled(0, op);
             }
-            _recomputeNextTransition();
             return (0, 0, "");
         }
         if (_pendingExists[id][op]) {
             delete _pending[id][op];
             _pendingExists[id][op] = false;
-            _removePendingKey(id, op);
+            _removePendingKey(true, id, op);
             _recomputeNextTransition();
             emit PendingCancelled(id, op);
         }
@@ -960,14 +977,19 @@ contract FVMRewardActor {
     /// queued), so the WAD guardrail can't be bypassed by splitting increases across batches.
     function _effectiveWeight(uint64 id, uint64 atEpoch) internal view returns (int256 w) {
         w = _clampWeight(_streams[id].weightRecord, atEpoch);
-        if (_pendingExists[id][PendingOp.SET_WEIGHT]) {
-            int256 pw = _clampWeight(_pending[id][PendingOp.SET_WEIGHT].weightRecord, atEpoch);
-            if (pw > w) w = pw;
+        w = _maxAgainstBatch(w, PendingOp.SET_WEIGHT, id, atEpoch);
+        w = _maxAgainstBatch(w, PendingOp.STEP_WEIGHT, id, atEpoch);
+    }
+
+    function _maxAgainstBatch(int256 w, PendingOp op, uint64 id, uint64 atEpoch) internal view returns (int256) {
+        if (!_pendingWeightExists[op]) return w;
+        WeightBatch storage batch = _pendingWeight[op];
+        for (uint256 i = 0; i < batch.ids.length; i++) {
+            if (batch.ids[i] != id) continue;
+            int256 pw = _clampWeight(batch.records[i], atEpoch);
+            return pw > w ? pw : w;
         }
-        if (_pendingExists[id][PendingOp.STEP_WEIGHT]) {
-            int256 pw = _clampWeight(_pending[id][PendingOp.STEP_WEIGHT].weightRecord, atEpoch);
-            if (pw > w) w = pw;
-        }
+        return w;
     }
 
     function _pendingRegistrationCount() internal view returns (uint256 count) {
@@ -1010,13 +1032,13 @@ contract FVMRewardActor {
     function _queueWrite(uint64 id, PendingOp op, Pending memory p) internal {
         _pending[id][op] = p;
         _pendingExists[id][op] = true;
-        _pendingKeys.push(PendingKey({id: id, op: op}));
+        _pendingKeys.push(PendingKey({hasId: true, id: id, op: op}));
         if (p.effectiveEpoch < nextTransitionEpoch) nextTransitionEpoch = p.effectiveEpoch;
     }
 
-    function _removePendingKey(uint64 id, PendingOp op) internal {
+    function _removePendingKey(bool hasId, uint64 id, PendingOp op) internal {
         for (uint256 i = 0; i < _pendingKeys.length; i++) {
-            if (_pendingKeys[i].id == id && _pendingKeys[i].op == op) {
+            if (_pendingKeys[i].hasId == hasId && _pendingKeys[i].id == id && _pendingKeys[i].op == op) {
                 _swapRemove(_pendingKeys, i);
                 return;
             }
@@ -1038,7 +1060,8 @@ contract FVMRewardActor {
     function _recomputeNextTransition() internal {
         uint64 best = type(uint64).max;
         for (uint256 i = 0; i < _pendingKeys.length; i++) {
-            uint64 e = _pending[_pendingKeys[i].id][_pendingKeys[i].op].effectiveEpoch;
+            PendingKey memory k = _pendingKeys[i];
+            uint64 e = k.hasId ? _pending[k.id][k.op].effectiveEpoch : _pendingWeight[k.op].effectiveEpoch;
             if (e < best) best = e;
         }
         nextTransitionEpoch = best;
@@ -1112,7 +1135,7 @@ contract FVMRewardActor {
             uint64 bestId = 0;
             for (uint256 i = 0; i < _pendingKeys.length; i++) {
                 PendingKey memory k = _pendingKeys[i];
-                uint64 e = _pending[k.id][k.op].effectiveEpoch;
+                uint64 e = k.hasId ? _pending[k.id][k.op].effectiveEpoch : _pendingWeight[k.op].effectiveEpoch;
                 if (e > nowEpoch) continue;
                 if (!found || e < bestEpoch || (e == bestEpoch && k.id < bestId)) {
                     found = true;
@@ -1124,9 +1147,13 @@ contract FVMRewardActor {
             if (!found) break;
 
             PendingKey memory key = _pendingKeys[bestIdx];
-            _apply(key.id, key.op);
-            delete _pending[key.id][key.op];
-            _pendingExists[key.id][key.op] = false;
+            if (key.hasId) {
+                _apply(key.id, key.op);
+                delete _pending[key.id][key.op];
+                _pendingExists[key.id][key.op] = false;
+            } else {
+                _applyWeightBatch(key.op);
+            }
             _pendingKeys[bestIdx] = _pendingKeys[_pendingKeys.length - 1];
             _pendingKeys.pop();
         }
@@ -1147,8 +1174,6 @@ contract FVMRewardActor {
             }
             delete _pendingShares[id];
             _streamIds.push(id);
-        } else if (op == PendingOp.SET_WEIGHT || op == PendingOp.STEP_WEIGHT) {
-            _streams[id].weightRecord = p.weightRecord;
         } else if (op == PendingOp.SET_DISTRIBUTION) {
             Stream storage s = _streams[id];
             _foldAndBurnResidue(s);
@@ -1156,6 +1181,17 @@ contract FVMRewardActor {
         } else if (op == PendingOp.REMOVE) {
             _applyRemove(id);
         }
+    }
+
+    /// @dev A weight batch applies as one unit: every record in it lands, or the whole entry is
+    /// still queued. That is what makes the slot schedule-wide rather than per stream.
+    function _applyWeightBatch(PendingOp op) internal {
+        WeightBatch storage batch = _pendingWeight[op];
+        for (uint256 i = 0; i < batch.ids.length; i++) {
+            _streams[batch.ids[i]].weightRecord = batch.records[i];
+        }
+        delete _pendingWeight[op];
+        _pendingWeightExists[op] = false;
     }
 
     function _applyRemove(uint64 id) internal {

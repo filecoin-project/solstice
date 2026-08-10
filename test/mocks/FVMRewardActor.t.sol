@@ -743,8 +743,49 @@ contract FVMRewardActorTest is MockRewardTest {
 
     // Cancelling a slot with nothing queued must succeed as a no-op, not error.
     function test_CancelPending_EmptySlot_BenignNoOp() public {
-        uint32 exitCode = swaCaller.cancelPending(SERVICE_ID, PendingOp.SET_WEIGHT);
-        assertEq(exitCode, 0);
+        assertEq(swaCaller.cancelPending(SERVICE_ID, PendingOp.REGISTER), 0);
+        assertEq(swaCaller.cancelPendingWeight(PendingOp.SET_WEIGHT), 0);
+    }
+
+    // The two weight ops hold one schedule-wide slot each and are addressed with a null id; every
+    // other op names its stream. Neither is reachable through the other's shape.
+    function test_CancelPending_ShapeMismatch_IllegalArgument() public {
+        assertEq(swaCaller.cancelPending(SERVICE_ID, PendingOp.SET_WEIGHT), USR_ILLEGAL_ARGUMENT);
+        assertEq(swaCaller.cancelPendingWeight(PendingOp.REGISTER), USR_ILLEGAL_ARGUMENT);
+    }
+
+    // The slot is the whole schedule, not one stream's share of it, so a pending batch blocks the
+    // next one even when the two name entirely different streams.
+    function test_SetWeightRecords_PendingBatchBlocksAnotherStream() public {
+        _registerExplicit(SERVICE_ID, address(writerCaller));
+        assertEq(_registerStream(CONSENSUS_ID, _constantRecord(0.1e18), DistributionKind.IMPLICIT, address(0)), 0);
+        _warpPastTimelockAndSettle();
+
+        assertEq(_setWeightRecords(swaCaller, SERVICE_ID, _constantRecord(0.2e18)), 0);
+        assertEq(
+            _setWeightRecords(swaCaller, CONSENSUS_ID, _constantRecord(0.2e18)),
+            USR_ILLEGAL_ARGUMENT,
+            "one weight slot for the whole schedule"
+        );
+    }
+
+    // A batch applies as one unit, so both streams move at the same epoch or neither does.
+    function test_SetWeightRecords_BatchAppliesAsOneEntry() public {
+        _registerExplicit(SERVICE_ID, address(writerCaller));
+        assertEq(_registerStream(CONSENSUS_ID, _constantRecord(0.1e18), DistributionKind.IMPLICIT, address(0)), 0);
+        _warpPastTimelockAndSettle();
+
+        uint64[] memory ids = new uint64[](2);
+        WeightRecord[] memory records = new WeightRecord[](2);
+        (ids[0], records[0]) = (SERVICE_ID, _constantRecord(0.3e18));
+        (ids[1], records[1]) = (CONSENSUS_ID, _constantRecord(0.4e18));
+        assertEq(swaCaller.setWeightRecords(ids, records), 0);
+        assertEq(_getState().pendingWrites.length, 1, "a batch is one queue entry");
+
+        _warpPastTimelockAndSettle();
+        StreamView[] memory streams = _streams();
+        assertEq(streams[0].weightRecord.vStart, 0.3e18);
+        assertEq(streams[1].weightRecord.vStart, 0.4e18);
     }
 
     function test_CancelPending_DiscardsQueuedSetWeightRecords() public {
@@ -752,7 +793,7 @@ contract FVMRewardActorTest is MockRewardTest {
         uint32 setExit = _setWeightRecords(swaCaller, SERVICE_ID, _constantRecord(0.9e18));
         assertEq(setExit, 0);
 
-        uint32 cancelExit = swaCaller.cancelPending(SERVICE_ID, PendingOp.SET_WEIGHT);
+        uint32 cancelExit = swaCaller.cancelPendingWeight(PendingOp.SET_WEIGHT);
         assertEq(cancelExit, 0);
 
         _warpPastTimelockAndSettle();
@@ -802,7 +843,7 @@ contract FVMRewardActorTest is MockRewardTest {
         uint32 stepExit = _stepWeightRecords(swaCaller, SERVICE_ID, _constantRecord(0.6e18));
         assertEq(stepExit, 0);
 
-        uint32 cancelExit = swaCaller.cancelPending(SERVICE_ID, PendingOp.SET_WEIGHT);
+        uint32 cancelExit = swaCaller.cancelPendingWeight(PendingOp.SET_WEIGHT);
         assertEq(cancelExit, 0);
 
         _warpPastTimelockAndSettle();
