@@ -514,7 +514,7 @@ library FVMRewards {
             default {
                 switch info
                 case 24 {
-                    value := byte(0, mload(add(p, 1)))
+                    value := byte(1, mload(p))
                     next := add(p, 2)
                 }
                 case 25 {

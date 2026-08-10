@@ -223,6 +223,25 @@ contract FVMRewardWireTest is MockRewardWireTest {
         assertEq(amounts.length, 0);
     }
 
+    /// @dev No other Claim vector reaches `_readHead`'s one-byte-extension case (info == 24): the
+    /// count header here must encode a count outside CBOR's 0-23 inline range, so decoding 24
+    /// amounts is what forces it to fire. Distinct nonzero amounts also confirm decoding stays
+    /// correctly positioned across all 24 entries, not just that it doesn't revert.
+    // [1..24, each byte[00xx]]
+    function test_ClaimReturn_CountNeedsExtendedHeader() public {
+        rewardActor()
+            .mockSetClaimReturn(
+                hex"81981842000142000242000342000442000542000642000742000842000942000a42000b42000c42000d42000e42000f"
+                hex"420010420011420012420013420014420015420016420017420018"
+            );
+        (int256 exitCode, uint256[] memory amounts) = FVMRewards.tryClaim(1, new address[](24));
+        assertEq(exitCode, 0);
+        assertEq(amounts.length, 24);
+        for (uint256 i = 0; i < 24; i++) {
+            assertEq(amounts[i], i + 1);
+        }
+    }
+
     // [null,op] for the two schedule-wide weight slots, [id,op] for everything per stream.
     function test_CancelPending_NullIdAddressesTheWeightSlot() public {
         FVMRewards.tryCancelPendingWeight(PendingOp.SET_WEIGHT);
