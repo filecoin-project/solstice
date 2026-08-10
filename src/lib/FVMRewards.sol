@@ -163,19 +163,16 @@ library FVMRewards {
         p = _writeHead(p, 2, varintLen + 1);
         assembly ("memory-safe") {
             mstore8(p, 0)
-        }
-        p += 1;
-        while (id > 0x7f) {
-            assembly ("memory-safe") {
+            p := add(p, 1)
+            for {} gt(id, 0x7f) {} {
                 mstore8(p, or(and(id, 0x7f), 0x80))
+                p := add(p, 1)
+                id := shr(7, id)
             }
-            p += 1;
-            id >>= 7;
-        }
-        assembly ("memory-safe") {
             mstore8(p, id)
+            p := add(p, 1)
         }
-        return p + 1;
+        return p;
     }
 
     /// @dev `[v_start, slope, t_start, floor, cap]`. f02 declares v_start, floor and cap as u64
