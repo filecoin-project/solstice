@@ -49,26 +49,6 @@ library FVMRewards {
 
     uint256 private constant ENVELOPE_HEAD = 0xe0;
 
-    // Upper bounds on encoded size, in bytes. Each `_begin` call below sums these to reserve the
-    // memory its params need, and every term maps one-to-one onto a `_write*` call beneath it, so
-    // a bound can be checked by reading down the function. Under-counting would write past the
-    // reservation rather than revert, which is why these are deliberately loose and traceable
-    // rather than tight and clever; `_invoke` also asserts the reservation held.
-
-    /// @dev Any CBOR head, whatever its major type: the tag byte plus eight argument bytes. Array
-    /// and byte-string headers are counted at this width too, since the library does not bound the
-    /// array lengths a caller may hand it.
-    uint256 private constant MAX_HEAD_BYTES = 9;
-    uint256 private constant NULL_BYTES = 1;
-    /// @dev A one-byte head plus f410's 22 payload bytes. An f0 address is at most 12.
-    uint256 private constant MAX_ADDRESS_BYTES = 23;
-    /// @dev A weight record: its own head plus five integers.
-    uint256 private constant MAX_RECORD_BYTES = 6 * MAX_HEAD_BYTES;
-    /// @dev One `[recipient, share]` row.
-    uint256 private constant MAX_SHARE_BYTES = MAX_HEAD_BYTES + MAX_ADDRESS_BYTES + MAX_HEAD_BYTES;
-    /// @dev One `[id, record]` row.
-    uint256 private constant MAX_UPDATE_BYTES = MAX_HEAD_BYTES + MAX_HEAD_BYTES + MAX_RECORD_BYTES;
-
     // -------------------------------------------------------------------------
     // Width guards
     // -------------------------------------------------------------------------
@@ -234,14 +214,15 @@ library FVMRewards {
     // Call envelope: the six-field tuple CALL_ACTOR_BY_ID expects, laid out by hand.
     // -------------------------------------------------------------------------
 
-    /// @dev Reserves `paramsBound` bytes of params space and writes the fixed head, returning the
-    /// envelope base and the cursor the params start at.
-    function _begin(uint64 method, uint256 paramsBound) private pure returns (uint256 base, uint256 p) {
+    /// @dev Writes the fixed envelope head at the current free memory pointer without moving it,
+    /// returning the envelope base and the cursor the params start at.
+    /// @dev The envelope and params that follow are call-scratch: they die with the delegatecall
+    /// in `_invoke` and nothing else reads or allocates memory while they exist, so writing past
+    /// the free memory pointer without bumping it is memory-safe. Nothing here ever needs to know
+    /// a maximum encoded size up front.
+    function _begin(uint64 method) private pure returns (uint256 base, uint256 p) {
         assembly ("memory-safe") {
             base := mload(0x40)
-            // Own the whole envelope before writing, so nothing here depends on scratch memory
-            // surviving an allocation.
-            mstore(0x40, add(base, and(add(add(ENVELOPE_HEAD, paramsBound), 31), not(31))))
             mstore(base, method)
             mstore(add(base, 0x20), 0) // value: no method accepts one
             mstore(add(base, 0x40), NO_FLAGS)
@@ -252,13 +233,11 @@ library FVMRewards {
         }
     }
 
-    /// @dev Completes the envelope and invokes the precompile, returning f02's exit code.
+    /// @dev Completes the envelope and invokes the precompile, returning f02's exit code. The free
+    /// memory pointer is left untouched: the envelope and params are dead as soon as the
+    /// delegatecall returns.
     function _invoke(uint256 base, uint256 p) private returns (int256 exitCode) {
         assembly ("memory-safe") {
-            // The reservation `_begin` made ends at the free memory pointer, since nothing between
-            // then and now allocates. Writing past it would corrupt the next allocation silently,
-            // so an under-counted bound fails here instead.
-            if gt(p, mload(0x40)) { revert(0, 0) }
             mstore(add(base, 0xc0), sub(p, add(base, ENVELOPE_HEAD))) // params length
             exitCode := EXIT_PRECOMPILE_FAILED
             let ok := delegatecall(gas(), CALL_ACTOR_BY_ID, base, sub(p, base), 0, 0x20)
@@ -287,7 +266,7 @@ library FVMRewards {
     /// tuple wrapper f02's parameter struct produces.
     function _tryWeightRecords(uint64 method, WeightRecordUpdate[] memory updates) private returns (int256 exitCode) {
         // [[[id, record], ...]]
-        (uint256 base, uint256 p) = _begin(method, MAX_HEAD_BYTES + MAX_HEAD_BYTES + updates.length * MAX_UPDATE_BYTES);
+        (uint256 base, uint256 p) = _begin(method);
         p = _writeArrayHeader(p, 1);
         p = _writeArrayHeader(p, updates.length);
         for (uint256 i = 0; i < updates.length; i++) {
@@ -331,11 +310,7 @@ library FVMRewards {
         if (writer == address(0) && shares.length != 0) revert ImplicitStreamWithShares();
 
         // [id, record, [writer, [[recipient, share], ...]] | null, activationEpoch]
-        (uint256 base, uint256 p) = _begin(
-            REGISTER_STREAM,
-            MAX_HEAD_BYTES + MAX_HEAD_BYTES + MAX_RECORD_BYTES + MAX_HEAD_BYTES + MAX_ADDRESS_BYTES + MAX_HEAD_BYTES
-                + shares.length * MAX_SHARE_BYTES + MAX_HEAD_BYTES
-        );
+        (uint256 base, uint256 p) = _begin(REGISTER_STREAM);
         p = _writeArrayHeader(p, 4);
         p = _writeUint(p, id);
         p = _writeRecord(p, record);
@@ -370,7 +345,7 @@ library FVMRewards {
     /// @dev Params CBOR: `[id]`. A single-field parameter tuple is still an array.
     function tryRemoveStream(uint64 id) internal returns (int256 exitCode) {
         // [id]
-        (uint256 base, uint256 p) = _begin(REMOVE_STREAM, MAX_HEAD_BYTES + MAX_HEAD_BYTES);
+        (uint256 base, uint256 p) = _begin(REMOVE_STREAM);
         p = _writeArrayHeader(p, 1);
         p = _writeUint(p, id);
         return _invoke(base, p);
@@ -391,7 +366,7 @@ library FVMRewards {
     /// registration.
     function trySetDistribution(uint64 id, address writer) internal returns (int256 exitCode) {
         // [id, writer]
-        (uint256 base, uint256 p) = _begin(SET_DISTRIBUTION, MAX_HEAD_BYTES + MAX_HEAD_BYTES + MAX_ADDRESS_BYTES);
+        (uint256 base, uint256 p) = _begin(SET_DISTRIBUTION);
         p = _writeArrayHeader(p, 2);
         p = _writeUint(p, id);
         p = _writeAddress(p, writer);
@@ -414,7 +389,7 @@ library FVMRewards {
     /// stream and carries its id.
     function tryCancelPendingWeight(PendingOp op) internal returns (int256 exitCode) {
         // [null, op]
-        (uint256 base, uint256 p) = _begin(CANCEL_PENDING, MAX_HEAD_BYTES + NULL_BYTES + MAX_HEAD_BYTES);
+        (uint256 base, uint256 p) = _begin(CANCEL_PENDING);
         p = _writeArrayHeader(p, 2);
         p = _writeNull(p);
         p = _writeUint(p, uint256(op));
@@ -424,7 +399,7 @@ library FVMRewards {
     /// @notice Cancels a queued per-stream write, without reverting on actor error.
     function tryCancelPending(uint64 id, PendingOp op) internal returns (int256 exitCode) {
         // [id, op]
-        (uint256 base, uint256 p) = _begin(CANCEL_PENDING, MAX_HEAD_BYTES + MAX_HEAD_BYTES + MAX_HEAD_BYTES);
+        (uint256 base, uint256 p) = _begin(CANCEL_PENDING);
         p = _writeArrayHeader(p, 2);
         p = _writeUint(p, id);
         p = _writeUint(p, uint256(op));
@@ -451,8 +426,7 @@ library FVMRewards {
     /// @dev Params CBOR: `[id, [[recipient, share], ...]]`.
     function trySetShares(uint64 id, Share[] memory shares) internal returns (int256 exitCode) {
         // [id, [[recipient, share], ...]]
-        (uint256 base, uint256 p) =
-            _begin(SET_SHARES, MAX_HEAD_BYTES + MAX_HEAD_BYTES + MAX_HEAD_BYTES + shares.length * MAX_SHARE_BYTES);
+        (uint256 base, uint256 p) = _begin(SET_SHARES);
         p = _writeArrayHeader(p, 2);
         p = _writeUint(p, id);
         p = _writeShares(p, shares);
@@ -478,8 +452,7 @@ library FVMRewards {
         returns (int256 exitCode, uint256[] memory amounts)
     {
         // [id, [wallet, ...]]
-        (uint256 base, uint256 p) =
-            _begin(CLAIM, MAX_HEAD_BYTES + MAX_HEAD_BYTES + MAX_HEAD_BYTES + wallets.length * MAX_ADDRESS_BYTES);
+        (uint256 base, uint256 p) = _begin(CLAIM);
         p = _writeArrayHeader(p, 2);
         p = _writeUint(p, id);
         p = _writeArrayHeader(p, wallets.length);
