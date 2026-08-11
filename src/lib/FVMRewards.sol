@@ -461,7 +461,7 @@ library FVMRewards {
         }
 
         exitCode = _invoke(base, p);
-        amounts = exitCode == EXIT_SUCCESS ? _decodeAmounts() : new uint256[](0);
+        if (exitCode == EXIT_SUCCESS) amounts = _decodeAmounts();
     }
 
     /// @notice Claims for a batch of wallets, reverting on actor error.
