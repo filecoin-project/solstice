@@ -475,18 +475,16 @@ library FVMRewards {
     /// bytes length, then the CBOR payload at 0x80.
     function _decodeAmounts() private pure returns (uint256[] memory amounts) {
         uint256 payloadLen;
-        assembly ("memory-safe") {
-            payloadLen := 0
-            if gt(returndatasize(), 0x80) { payloadLen := sub(returndatasize(), 0x80) }
-        }
-        if (payloadLen == 0) return new uint256[](0);
-
         uint256 scratch;
         assembly ("memory-safe") {
-            scratch := mload(0x40)
-            mstore(0x40, add(scratch, and(add(payloadLen, 31), not(31))))
-            returndatacopy(scratch, 0x80, payloadLen)
+            if gt(returndatasize(), 0x80) {
+                payloadLen := sub(returndatasize(), 0x80)
+                scratch := mload(0x40)
+                mstore(0x40, add(scratch, and(add(payloadLen, 31), not(31))))
+                returndatacopy(scratch, 0x80, payloadLen)
+            }
         }
+        if (payloadLen == 0) return amounts;
 
         // ClaimReturn is a single-field tuple: the amounts array is wrapped in a 1-element array.
         (, uint256 cur) = _readHead(scratch);
