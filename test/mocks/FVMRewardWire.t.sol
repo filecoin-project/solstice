@@ -121,7 +121,7 @@ contract FVMRewardWireTest is MockRewardWireTest {
 
     // [24,[24,-24,256,0,65536],null,4294967296]
     function test_RegisterStream_ImplicitIsANullDistribution() public {
-        FVMRewards.tryRegisterStream(24, _record(24, -24, 256, 0, 65_536), address(0), new Share[](0), 4_294_967_296);
+        FVMRewards.tryRegisterStream(24, _record(24, -24, 256, 0, 65_536), 4_294_967_296);
         assertEq(_sent(), hex"84181885181837190100001a00010000f61b0000000100000000");
     }
 

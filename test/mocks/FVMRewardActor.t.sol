@@ -40,6 +40,13 @@ contract RewardCaller {
         (exitCode,, data) = abi.decode(ret, (uint32, uint64, bytes));
     }
 
+    function registerStream(uint64 id, WeightRecord memory record, uint64 activationEpoch)
+        external
+        returns (uint32 exitCode)
+    {
+        exitCode = uint32(uint256(FVMRewards.tryRegisterStream(id, record, activationEpoch)));
+    }
+
     function registerStream(
         uint64 id,
         WeightRecord memory record,
@@ -138,8 +145,9 @@ contract FVMRewardActorTest is MockRewardTest {
         internal
         returns (uint32)
     {
-        Share[] memory initial = kind == DistributionKind.EXPLICIT ? _shares(RECIPIENT_A, SHARE_TOTAL) : new Share[](0);
-        return swaCaller.registerStream(id, record, writer, initial, uint64(block.number) + SWA_TIMELOCK);
+        uint64 activation = uint64(block.number) + SWA_TIMELOCK;
+        if (kind == DistributionKind.IMPLICIT) return swaCaller.registerStream(id, record, activation);
+        return swaCaller.registerStream(id, record, writer, _shares(RECIPIENT_A, SHARE_TOTAL), activation);
     }
 
     /// @dev Bundles a single id/record into the batch SetWeightRecords takes.
@@ -218,9 +226,7 @@ contract FVMRewardActorTest is MockRewardTest {
 
         // _registerStream hardcodes SWA_TIMELOCK, not the override, so call directly with a
         // 10-epoch activation instead.
-        uint32 exitCode = swaCaller.registerStream(
-            SERVICE_ID, _constantRecord(0.1e18), address(0), new Share[](0), uint64(block.number) + 10
-        );
+        uint32 exitCode = swaCaller.registerStream(SERVICE_ID, _constantRecord(0.1e18), uint64(block.number) + 10);
         assertEq(exitCode, 0);
 
         vm.roll(block.number + 10);
@@ -286,16 +292,14 @@ contract FVMRewardActorTest is MockRewardTest {
     }
 
     function test_RegisterStream_NotSwa_Forbidden() public {
-        uint32 exitCode = randomCaller.registerStream(
-            SERVICE_ID, _constantRecord(0.1e18), address(0), new Share[](0), uint64(block.number) + SWA_TIMELOCK
-        );
+        uint32 exitCode =
+            randomCaller.registerStream(SERVICE_ID, _constantRecord(0.1e18), uint64(block.number) + SWA_TIMELOCK);
         assertEq(exitCode, USR_FORBIDDEN);
     }
 
     function test_RegisterStream_ActivationTooSoon_IllegalArgument() public {
-        uint32 exitCode = swaCaller.registerStream(
-            SERVICE_ID, _constantRecord(0.1e18), address(0), new Share[](0), uint64(block.number) + SWA_TIMELOCK - 1
-        );
+        uint32 exitCode =
+            swaCaller.registerStream(SERVICE_ID, _constantRecord(0.1e18), uint64(block.number) + SWA_TIMELOCK - 1);
         assertEq(exitCode, USR_ILLEGAL_ARGUMENT);
     }
 
@@ -314,7 +318,7 @@ contract FVMRewardActorTest is MockRewardTest {
     function test_RegisterStream_FloorBelowZero_Reverts() public {
         WeightRecord memory r = _record(0.1e18, 0, 0, -1, WAD);
         vm.expectRevert(abi.encodeWithSelector(FVMRewards.ValueOutOfRange.selector, int256(-1)));
-        swaCaller.registerStream(SERVICE_ID, r, address(0), new Share[](0), uint64(block.number) + SWA_TIMELOCK);
+        swaCaller.registerStream(SERVICE_ID, r, uint64(block.number) + SWA_TIMELOCK);
     }
 
     // validate_weight_record pins v_start inside the clamp band. Outside it the record still
@@ -327,25 +331,18 @@ contract FVMRewardActorTest is MockRewardTest {
         assertEq(_registerStream(SERVICE_ID, above, DistributionKind.IMPLICIT, address(0)), USR_ILLEGAL_ARGUMENT);
     }
 
-    function test_RegisterStream_ImplicitWithWriter_IllegalArgument() public {
-        assertEq(
-            _registerStream(SERVICE_ID, _constantRecord(0.1e18), DistributionKind.IMPLICIT, address(writerCaller)),
-            USR_ILLEGAL_ARGUMENT
-        );
-    }
-
-    // A null distribution is what makes a stream implicit, and an implicit stream has no share
-    // map. Shares with no writer to install them would encode to nothing, so the call is refused
-    // rather than sent as something the caller did not mean.
-    function test_RegisterStream_ImplicitWithShares_Reverts() public {
-        vm.expectRevert(FVMRewards.ImplicitStreamWithShares.selector);
-        swaCaller.registerStream(
+    // f02 validates the initial map at registration, and an empty map does not sum to one. Named
+    // for what it exercises: there is no "implicit with a writer" to test, since a stream is
+    // implicit exactly when it carries no distribution.
+    function test_RegisterStream_ExplicitWithEmptyShareMap_IllegalArgument() public {
+        uint32 exitCode = swaCaller.registerStream(
             SERVICE_ID,
             _constantRecord(0.1e18),
-            address(0),
-            _shares(RECIPIENT_A, SHARE_TOTAL),
+            address(writerCaller),
+            new Share[](0),
             uint64(block.number) + SWA_TIMELOCK
         );
+        assertEq(exitCode, USR_ILLEGAL_ARGUMENT);
     }
 
     function test_RegisterStream_DuplicateId_IllegalArgument() public {

@@ -40,8 +40,6 @@ library FVMRewards {
     /// @dev A field does not fit the width f02 declares for it, so encoding it would silently
     /// truncate. Solidity checks arithmetic overflow but not narrowing casts, so this is checked.
     error ValueOutOfRange(int256 value);
-    /// @dev An implicit stream (null distribution) carries no share map.
-    error ImplicitStreamWithShares();
 
     /// @dev Sentinel for the unexpected case where the syscall reverts or returns fewer than 32
     /// bytes. Kept at -1 to match `fvm-solidity`'s behavior.
@@ -287,13 +285,37 @@ library FVMRewards {
     // RegisterStream -- SWA only
     // -------------------------------------------------------------------------
 
-    /// @notice Queues a new stream, without reverting on actor error.
-    /// @param writer The explicit stream's designated share writer; `address(0)` registers an
-    /// implicit stream, whose recipient f02 resolves from protocol state.
-    /// @param shares The explicit stream's initial share map; must be empty when implicit.
     /// @dev Params CBOR: `[id, record, distribution|null, activationEpoch]`, where distribution is
-    /// `[writer, shares]`. A stream's kind is not a wire field: it is exactly whether the
-    /// distribution is present.
+    /// `[writer, shares]`. A stream's kind is not a wire field: a stream is implicit when the
+    /// distribution is null and explicit when it is present, so each kind has its own overload.
+    function _beginRegisterStream(uint64 id, WeightRecord memory record)
+        private
+        pure
+        returns (uint256 base, uint256 p)
+    {
+        (base, p) = _begin(REGISTER_STREAM);
+        p = _writeArrayHeader(p, 4);
+        p = _writeUint(p, id);
+        p = _writeRecord(p, record);
+    }
+
+    /// @notice Queues a new implicit stream, without reverting on actor error. f02 resolves an
+    /// implicit stream's recipient from protocol state, so it carries no writer and no share map.
+    function tryRegisterStream(uint64 id, WeightRecord memory record, uint64 activationEpoch)
+        internal
+        returns (int256 exitCode)
+    {
+        (uint256 base, uint256 p) = _beginRegisterStream(id, record);
+        assembly ("memory-safe") {
+            mstore8(p, 0xf6) // distribution = null
+            p := add(p, 1)
+        }
+        p = _writeUint(p, activationEpoch);
+        return _invoke(base, p);
+    }
+
+    /// @notice Queues a new explicit stream with its designated writer and initial share map,
+    /// without reverting on actor error. f02 requires the map to be valid at registration.
     function tryRegisterStream(
         uint64 id,
         WeightRecord memory record,
@@ -301,28 +323,21 @@ library FVMRewards {
         Share[] memory shares,
         uint64 activationEpoch
     ) internal returns (int256 exitCode) {
-        if (writer == address(0) && shares.length != 0) revert ImplicitStreamWithShares();
-
-        // [id, record, [writer, [[recipient, share], ...]] | null, activationEpoch]
-        (uint256 base, uint256 p) = _begin(REGISTER_STREAM);
-        p = _writeArrayHeader(p, 4);
-        p = _writeUint(p, id);
-        p = _writeRecord(p, record);
-        if (writer == address(0)) {
-            assembly ("memory-safe") {
-                mstore8(p, 0xf6) // writer = null
-                p := add(p, 1)
-            }
-        } else {
-            p = _writeArrayHeader(p, 2);
-            p = _writeAddress(p, writer);
-            p = _writeShares(p, shares);
-        }
+        (uint256 base, uint256 p) = _beginRegisterStream(id, record);
+        p = _writeArrayHeader(p, 2);
+        p = _writeAddress(p, writer);
+        p = _writeShares(p, shares);
         p = _writeUint(p, activationEpoch);
         return _invoke(base, p);
     }
 
-    /// @notice Queues a new stream, reverting on actor error.
+    /// @notice Queues a new implicit stream, reverting on actor error.
+    function registerStream(uint64 id, WeightRecord memory record, uint64 activationEpoch) internal {
+        int256 exitCode = tryRegisterStream(id, record, activationEpoch);
+        require(exitCode == EXIT_SUCCESS, RegisterStreamFailed(exitCode));
+    }
+
+    /// @notice Queues a new explicit stream, reverting on actor error.
     function registerStream(
         uint64 id,
         WeightRecord memory record,
