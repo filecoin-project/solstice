@@ -73,38 +73,38 @@ library FVMRewards {
         uint256 base = major << 5;
         assembly ("memory-safe") {
             switch lt(value, 24)
-            case 1 {
-                mstore8(p, or(base, value))
-                p := add(p, 1)
-            }
-            default {
+            case 0 {
                 switch lt(value, 0x100)
-                case 1 {
-                    mstore8(p, or(base, 24))
-                    mstore8(add(p, 1), value)
-                    p := add(p, 2)
-                }
-                default {
+                case 0 {
                     switch lt(value, 0x10000)
-                    case 1 {
-                        mstore8(p, or(base, 25))
-                        mstore(add(p, 1), shl(240, value))
-                        p := add(p, 3)
-                    }
-                    default {
+                    case 0 {
                         switch lt(value, 0x100000000)
-                        case 1 {
-                            mstore8(p, or(base, 26))
-                            mstore(add(p, 1), shl(224, value))
-                            p := add(p, 5)
-                        }
-                        default {
+                        case 0 {
                             mstore8(p, or(base, 27))
                             mstore(add(p, 1), shl(192, value))
                             p := add(p, 9)
                         }
+                        default {
+                            mstore8(p, or(base, 26))
+                            mstore(add(p, 1), shl(224, value))
+                            p := add(p, 5)
+                        }
+                    }
+                    default {
+                        mstore8(p, or(base, 25))
+                        mstore(add(p, 1), shl(240, value))
+                        p := add(p, 3)
                     }
                 }
+                default {
+                    mstore8(p, or(base, 24))
+                    mstore8(add(p, 1), value)
+                    p := add(p, 2)
+                }
+            }
+            default {
+                mstore8(p, or(base, value))
+                p := add(p, 1)
             }
         }
         return p;
