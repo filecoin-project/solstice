@@ -30,6 +30,16 @@ contract FVMRewardWireTest is MockRewardWireTest {
         return rewardActor().mockLastParams();
     }
 
+    /// @dev `vm.expectRevert` cannot see a revert that happens after `_invoke`'s delegatecall,
+    /// since that delegatecall runs inlined in this contract's own frame rather than behind a
+    /// real CALL boundary. Routing through an external self-call gives `expectRevert` one to catch.
+    function _externalClaim(uint64 id, address[] memory wallets)
+        external
+        returns (int256 exitCode, uint256[] memory amounts)
+    {
+        return FVMRewards.tryClaim(id, wallets);
+    }
+
     // [[
     //   [23,[23,-24,23,0,23]], [24,[24,-25,24,0,24]],
     //   [255,[255,-256,255,0,255]], [256,[256,-257,256,0,256]],
@@ -240,6 +250,42 @@ contract FVMRewardWireTest is MockRewardWireTest {
         for (uint256 i = 0; i < 24; i++) {
             assertEq(amounts[i], i + 1);
         }
+    }
+
+    /// @dev A lone sign byte with an empty magnitude, distinct from an empty byte string.
+    // [[byte[00]]]
+    function test_ClaimReturn_SignByteWithEmptyMagnitudeIsZero() public {
+        rewardActor().mockSetClaimReturn(hex"81814100");
+        (int256 exitCode, uint256[] memory amounts) = FVMRewards.tryClaim(1, new address[](1));
+        assertEq(exitCode, 0);
+        assertEq(amounts[0], 0);
+    }
+
+    /// @dev The widest magnitude `_readBigInt` accepts: 32 bytes, forcing its shift amount to zero.
+    // [[byte[00,ff*32]]]
+    function test_ClaimReturn_WidestMagnitude() public {
+        rewardActor()
+            .mockSetClaimReturn(hex"8181582100ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+        (int256 exitCode, uint256[] memory amounts) = FVMRewards.tryClaim(1, new address[](1));
+        assertEq(exitCode, 0);
+        assertEq(amounts[0], type(uint256).max);
+    }
+
+    /// @dev A nonzero sign byte, which `_readBigInt` rejects even though f02 never emits one.
+    // [[byte[01,01]]]
+    function test_ClaimReturn_NegativeSignByte_Reverts() public {
+        rewardActor().mockSetClaimReturn(hex"8181420101");
+        vm.expectRevert(bytes(""));
+        this._externalClaim(1, new address[](1));
+    }
+
+    /// @dev One byte past `_readBigInt`'s 32-byte magnitude cap.
+    // [[byte[00,00*33]]]
+    function test_ClaimReturn_OversizedMagnitude_Reverts() public {
+        rewardActor()
+            .mockSetClaimReturn(hex"8181582200000000000000000000000000000000000000000000000000000000000000000000");
+        vm.expectRevert(bytes(""));
+        this._externalClaim(1, new address[](1));
     }
 
     // [null,op] for the two schedule-wide weight slots, [id,op] for everything per stream.
