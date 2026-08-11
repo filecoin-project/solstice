@@ -784,11 +784,10 @@ contract FVMRewardActorTest is MockRewardTest {
         assertEq(_registerStream(CONSENSUS_ID, _constantRecord(0.1e18), DistributionKind.IMPLICIT, address(0)), 0);
         _warpPastTimelockAndSettle();
 
-        uint64[] memory ids = new uint64[](2);
-        WeightRecord[] memory records = new WeightRecord[](2);
-        (ids[0], records[0]) = (SERVICE_ID, _constantRecord(0.3e18));
-        (ids[1], records[1]) = (CONSENSUS_ID, _constantRecord(0.4e18));
-        assertEq(swaCaller.setWeightRecords(ids, records), 0);
+        WeightRecordUpdate[] memory updates = new WeightRecordUpdate[](2);
+        updates[0] = WeightRecordUpdate({id: SERVICE_ID, record: _constantRecord(0.3e18)});
+        updates[1] = WeightRecordUpdate({id: CONSENSUS_ID, record: _constantRecord(0.4e18)});
+        assertEq(swaCaller.setWeightRecords(updates), 0);
         assertEq(_getState().pendingWrites.length, 1, "a batch is one queue entry");
 
         _warpPastTimelockAndSettle();
@@ -950,14 +949,13 @@ contract FVMRewardActorTest is MockRewardTest {
         _twoStreams(0.1e18, 0.1e18);
         uint64 f = uint64(block.number) + SWA_TIMELOCK;
 
-        uint64[] memory ids = new uint64[](2);
-        WeightRecord[] memory records = new WeightRecord[](2);
+        WeightRecordUpdate[] memory updates = new WeightRecordUpdate[](2);
         // Rises 3 per epoch to a cap of 11, so 11/3 truncates to 3 but the cap lands at 4.
-        (ids[0], records[0]) = (SERVICE_ID, _record(0, 3, f, 0, 11));
+        updates[0] = WeightRecordUpdate({id: SERVICE_ID, record: _record(0, 3, f, 0, 11)});
         // Falls 1 per epoch from just under the limit.
-        (ids[1], records[1]) = (CONSENSUS_ID, _record(WAD - 6, -1, f, 0, WAD - 6));
+        updates[1] = WeightRecordUpdate({id: CONSENSUS_ID, record: _record(WAD - 6, -1, f, 0, WAD - 6)});
 
-        assertEq(swaCaller.setWeightRecords(ids, records), USR_ILLEGAL_ARGUMENT);
+        assertEq(swaCaller.setWeightRecords(updates), USR_ILLEGAL_ARGUMENT);
     }
 
     // A falling ramp selects the floor as its crossing bound rather than the cap.
