@@ -536,12 +536,13 @@ library FVMRewards {
     /// @dev A Filecoin BigInt: an empty byte string is zero, otherwise a sign byte followed by a
     /// big-endian magnitude. An entitlement is never negative and never exceeds a uint256.
     function _readBigInt(uint256 p, uint256 len) private pure returns (uint256 value) {
-        if (len == 0) return 0;
         assembly ("memory-safe") {
-            let signByte := byte(0, mload(p))
-            let magLen := sub(len, 1)
-            if or(signByte, gt(magLen, 32)) { revert(0, 0) }
-            if magLen { value := shr(shl(3, sub(32, magLen)), mload(add(p, 1))) }
+            if len {
+                let signByte := byte(0, mload(p))
+                let magLen := sub(len, 1)
+                if or(signByte, gt(magLen, 32)) { revert(0, 0) }
+                if magLen { value := shr(shl(3, sub(32, magLen)), mload(add(p, 1))) }
+            }
         }
     }
 }
