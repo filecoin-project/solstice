@@ -52,12 +52,14 @@ library FVMRewards {
     // -------------------------------------------------------------------------
 
     function _u64(int256 v) private pure returns (uint256) {
-        if (v < 0 || v > int256(uint256(type(uint64).max))) revert ValueOutOfRange(v);
+        if (uint256(v) > type(uint64).max) revert ValueOutOfRange(v);
         return uint256(v);
     }
 
     function _i64(int256 v) private pure returns (int256) {
-        if (v < type(int64).min || v > type(int64).max) revert ValueOutOfRange(v);
+        unchecked {
+            if (uint256(v - type(int64).min) > type(uint64).max) revert ValueOutOfRange(v);
+        }
         return v;
     }
 
