@@ -510,7 +510,7 @@ library FVMRewards {
         amounts = new uint256[](count);
         uint256 out;
         assembly ("memory-safe") {
-            out := add(amounts, 0x20)
+            out := add(amounts, 32)
         }
         for (uint256 i = 0; i < count; i++) {
             uint256 len;
