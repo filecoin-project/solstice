@@ -508,10 +508,18 @@ library FVMRewards {
         uint256 count;
         (count, cur) = _readHead(cur);
         amounts = new uint256[](count);
+        uint256 out;
+        assembly ("memory-safe") {
+            out := add(amounts, 0x20)
+        }
         for (uint256 i = 0; i < count; i++) {
             uint256 len;
             (len, cur) = _readHead(cur);
-            amounts[i] = _readBigInt(cur, len);
+            uint256 value = _readBigInt(cur, len);
+            assembly ("memory-safe") {
+                mstore(out, value)
+                out := add(out, 32)
+            }
             cur += len;
         }
     }
