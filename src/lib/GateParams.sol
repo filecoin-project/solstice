@@ -11,6 +11,7 @@ struct VolumeTarget {
 struct GateParams {
     VolumeTarget target;
     uint64 steps;
+    uint64 lastCheckedQuarter;
 }
 
 using GateParamsLibrary for GateParams global;

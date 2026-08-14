@@ -2,7 +2,7 @@
 pragma solidity ^0.8.36;
 
 import {IServiceRewardsActor} from "./interfaces/IServiceRewardsActor.sol";
-import {Epoch, currentEpoch} from "./lib/Epoch.sol";
+import {Epoch} from "./lib/Epoch.sol";
 import {FixedU18} from "./lib/FixedU18.sol";
 import {GateParams, GateParamsLibrary} from "./lib/GateParams.sol";
 import {FVMRewards} from "./lib/FVMRewards.sol";
@@ -89,28 +89,23 @@ contract StreamWeightActor is UnanimousGovernance {
         newOwner.addOwner();
     }
 
-    // TODO relocate these
-    Epoch nextQuarter;
-
-    error WaitUntil(Epoch then);
     error StepsComplete();
 
     function quarterlyGateCheck() external {
-        Epoch nextQuarterLoaded = nextQuarter;
-        require(nextQuarterLoaded <= currentEpoch(), WaitUntil(nextQuarterLoaded));
 
         GateParamsLibrary.GateParamsInfo storage gateParamsInfo = GateParamsLibrary.getGateParamsSlot();
         GateParams memory loaded = gateParamsInfo.params;
         require(loaded.steps < 9, StepsComplete());
 
+        uint64 quarter = loaded.lastCheckedQuarter + 1;
         int256 nextCap = (int256(uint256(loaded.steps)) + 2) * STEP; // FIXME this is wrong
-        // TODO aggregatedFPV takes an incrementing quarter index, not an epoch; nextQuarterLoaded is wrong here
-        FixedU18 fpv = SRA.aggregatedFPV(Epoch.unwrap(nextQuarterLoaded));
+        // NOTE this will enforce afterBinding()
+        FixedU18 fpv = SRA.aggregatedFPV(quarter);
 
         WeightRecordUpdate[] memory updates = new WeightRecordUpdate[](1);
         updates[0].id = SERVICE_ID;
         updates[0].record.floor = INITIAL;
-        updates[0].record.tStart = nextQuarter;
+        updates[0].record.tStart = SRA.qEnd(quarter);
         updates[0].record.vStart = nextCap;
 
         if (fpv > loaded.nextThreshold()) {
@@ -119,14 +114,14 @@ contract StreamWeightActor is UnanimousGovernance {
                 (updates[0].record.cap - updates[0].record.vStart) / int256(uint256(Epoch.unwrap(QUARTER)));
 
             loaded.steps++;
-            gateParamsInfo.params = loaded;
         } else {
             updates[0].record.cap = nextCap;
             updates[0].record.slope = 0;
         }
 
+        loaded.lastCheckedQuarter = quarter;
+        gateParamsInfo.params = loaded;
         FVMRewards.stepWeightRecords(updates);
-        nextQuarter = nextQuarterLoaded + QUARTER;
     }
 
     function setGateParams(GateParams calldata params) external unanimous(keccak256(msg.data), HOLD) {
