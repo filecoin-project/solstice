@@ -3,6 +3,9 @@ pragma solidity ^0.8.36;
 
 import {FixedU18} from "./FixedU18.sol";
 
+FixedU18 constant VOL_TARGET_ENTRY = FixedU18.wrap(3500 ether);
+FixedU18 constant VOL_TARGET_RATIO = FixedU18.wrap(2.7 ether);
+
 struct VolumeTarget {
     FixedU18 base;
     FixedU18 stepRatio;
@@ -33,5 +36,13 @@ library GateParamsLibrary {
 
     function nextThreshold(GateParams memory params) internal pure returns (FixedU18 fpvThreshold) {
         return params.target.base * params.target.stepRatio.exp(params.steps);
+    }
+
+    function init() internal {
+        GateParams memory params;
+        params.target.base = VOL_TARGET_ENTRY;
+        params.target.stepRatio = VOL_TARGET_RATIO;
+        params.lastCheckedQuarter = 1;
+        GateParamsLibrary.getGateParamsSlot().params = params;
     }
 }

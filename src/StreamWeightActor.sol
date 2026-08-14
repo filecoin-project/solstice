@@ -35,6 +35,8 @@ contract StreamWeightActor is UnanimousGovernance {
         owner2.addOwner();
 
         SRA = sra;
+
+        GateParamsLibrary.init();
     }
 
     function registerStream(uint64 id, WeightRecord calldata record, uint64 activationEpoch)
@@ -94,10 +96,10 @@ contract StreamWeightActor is UnanimousGovernance {
     function quarterlyGateCheck() external {
         GateParamsLibrary.GateParamsInfo storage gateParamsInfo = GateParamsLibrary.getGateParamsSlot();
         GateParams memory loaded = gateParamsInfo.params;
-        require(loaded.steps < 9, StepsComplete());
+        require(loaded.steps < 8, StepsComplete());
 
         uint64 quarter = loaded.lastCheckedQuarter + 1;
-        int256 nextCap = (int256(uint256(loaded.steps)) + 2) * STEP; // FIXME this is wrong
+        int256 start = (int256(uint256(loaded.steps)) + 2) * STEP; // FIXME this is wrong
         // NOTE this will enforce afterBinding()
         FixedU18 fpv = SRA.aggregatedFPV(quarter);
 
@@ -105,16 +107,16 @@ contract StreamWeightActor is UnanimousGovernance {
         updates[0].id = SERVICE_ID;
         updates[0].record.floor = INITIAL;
         updates[0].record.tStart = SRA.qEnd(quarter);
-        updates[0].record.vStart = nextCap;
+        updates[0].record.vStart = start;
 
         if (fpv > loaded.nextThreshold()) {
-            updates[0].record.cap = nextCap;
+            updates[0].record.cap = start + STEP;
             updates[0].record.slope =
                 (updates[0].record.cap - updates[0].record.vStart) / int256(uint256(Epoch.unwrap(QUARTER)));
 
             loaded.steps++;
         } else {
-            updates[0].record.cap = nextCap;
+            updates[0].record.cap = start;
             updates[0].record.slope = 0;
         }
 
