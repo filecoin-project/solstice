@@ -8,7 +8,9 @@ import {USR_FORBIDDEN, USR_ILLEGAL_ARGUMENT, USR_NOT_FOUND} from "fvm-solidity/F
 import {MockRewardTest} from "./mocks/MockRewardTest.sol";
 import {WAD} from "./mocks/FVMRewardActor.sol";
 import {StreamWeightActor} from "../src/StreamWeightActor.sol";
+import {IServiceRewardsActor} from "../src/interfaces/IServiceRewardsActor.sol";
 import {PendingOp, Share, WeightRecord, WeightRecordUpdate} from "../src/lib/FVMRewardTypes.sol";
+import {Epoch} from "../src/lib/Epoch.sol";
 import {FVMRewards} from "../src/lib/FVMRewards.sol";
 import {SWA_TIMELOCK} from "../src/lib/FVMRewardMethod.sol";
 
@@ -24,7 +26,7 @@ contract StreamWeightActorTest is MockRewardTest {
         super.setUp();
         owner1 = _makeSafeOwner("owner1");
         owner2 = _makeSafeOwner("owner2");
-        actor = new StreamWeightActor(owner1, owner2);
+        actor = new StreamWeightActor(owner1, owner2, IServiceRewardsActor(makeAddr("sra")));
         rewardActor().mockSwa(address(actor));
     }
 
@@ -45,7 +47,7 @@ contract StreamWeightActorTest is MockRewardTest {
     // -------------------------------------------------------------------------
 
     function _record(int256 w) internal pure returns (WeightRecord memory) {
-        return WeightRecord({vStart: w, slope: 0, tStart: 0, floor: 0, cap: WAD});
+        return WeightRecord({vStart: w, slope: 0, tStart: Epoch.wrap(0), floor: 0, cap: WAD});
     }
 
     function _activation() internal view returns (uint64) {

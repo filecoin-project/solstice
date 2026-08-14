@@ -1,0 +1,36 @@
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+pragma solidity ^0.8.36;
+
+import {FixedU18} from "./FixedU18.sol";
+
+struct VolumeTarget {
+    FixedU18 base;
+    FixedU18 stepRatio;
+}
+
+struct GateParams {
+    VolumeTarget target;
+    uint64 steps;
+}
+
+using GateParamsLibrary for GateParams global;
+
+library GateParamsLibrary {
+    /// @custom:storage-location erc7201:Solstice.GateParams
+    struct GateParamsInfo {
+        GateParams params;
+    }
+
+    // keccak256(abi.encode(uint256(keccak256("Solstice.GateParams")) - 1)) & ~bytes32(uint256(0xff));
+    bytes32 private constant GATE_PARAMS_SLOT = 0xf9abab00248d945495524c8caf6be2b837274c1becd1964fb3775f62fd6e4600;
+
+    function getGateParamsSlot() internal pure returns (GateParamsInfo storage slot) {
+        assembly ("memory-safe") {
+            slot.slot := GATE_PARAMS_SLOT
+        }
+    }
+
+    function nextThreshold(GateParams memory params) internal pure returns (FixedU18 fpvThreshold) {
+        return params.target.base * params.target.stepRatio.exp(params.steps);
+    }
+}
