@@ -92,7 +92,6 @@ contract StreamWeightActor is UnanimousGovernance {
     error StepsComplete();
 
     function quarterlyGateCheck() external {
-
         GateParamsLibrary.GateParamsInfo storage gateParamsInfo = GateParamsLibrary.getGateParamsSlot();
         GateParams memory loaded = gateParamsInfo.params;
         require(loaded.steps < 9, StepsComplete());
