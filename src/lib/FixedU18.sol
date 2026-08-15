@@ -91,13 +91,11 @@ library FixedU18Library {
     function exp(FixedU18 base, uint64 exponent) internal pure returns (FixedU18 power) {
         power = ONE;
         while (exponent > 0) {
-            if (exponent & 1 == 0) {
-                base = base * base;
-                exponent >>= 1;
-            } else {
+            if (exponent & 1 == 1) {
                 power = base * power;
-                exponent--;
             }
+            base = base * base;
+            exponent >>= 1;
         }
     }
 }
