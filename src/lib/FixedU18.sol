@@ -89,10 +89,10 @@ library FixedU18Library {
     }
 
     function exp(FixedU18 base, uint64 exponent) internal pure returns (FixedU18 power) {
-        power = base;
+        power = ONE;
         while (exponent > 0) {
             if (exponent & 1 == 0) {
-                power = power * power;
+                base = base * base;
                 exponent >>= 1;
             } else {
                 power = base * power;
