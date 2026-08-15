@@ -7,7 +7,7 @@ import {FixedU18, ONE} from "../src/lib/FixedU18.sol";
 contract FixedU18Test is Test {
     function test_exp_zeroExponent_isOne() public pure {
         assertTrue(FixedU18.wrap(2.7 ether).exp(0) == ONE);
-        assertTrue(FixedU18.wrap(.7 ether).exp(0) == ONE);
+        assertTrue(FixedU18.wrap(0.7 ether).exp(0) == ONE);
         assertTrue(FixedU18.wrap(0).exp(0) == ONE);
     }
 
@@ -15,9 +15,9 @@ contract FixedU18Test is Test {
         FixedU18 base;
         base = FixedU18.wrap(2.7 ether);
         assertTrue(base.exp(1) == base);
-        base = FixedU18.wrap(.7 ether);
+        base = FixedU18.wrap(0.7 ether);
         assertTrue(base.exp(1) == base);
-        base = FixedU18.wrap(.3 ether);
+        base = FixedU18.wrap(0.3 ether);
         assertTrue(base.exp(1) == base);
         base = FixedU18.wrap(3 ether);
         assertTrue(base.exp(1) == base);
@@ -29,13 +29,13 @@ contract FixedU18Test is Test {
     }
 
     function test_exp_gautlet() public pure {
-        assertTrue(FixedU18.wrap(.5 ether).exp(2) == FixedU18.wrap(.25 ether));
+        assertTrue(FixedU18.wrap(0.5 ether).exp(2) == FixedU18.wrap(0.25 ether));
         assertTrue(FixedU18.wrap(5 ether).exp(2) == FixedU18.wrap(25 ether));
 
-        assertTrue(FixedU18.wrap(.3 ether).exp(3) == FixedU18.wrap(.027 ether));
+        assertTrue(FixedU18.wrap(0.3 ether).exp(3) == FixedU18.wrap(0.027 ether));
         assertTrue(FixedU18.wrap(3 ether).exp(3) == FixedU18.wrap(27 ether));
 
-        assertTrue(FixedU18.wrap(.2 ether).exp(4) == FixedU18.wrap(.0016 ether));
+        assertTrue(FixedU18.wrap(0.2 ether).exp(4) == FixedU18.wrap(0.0016 ether));
         assertTrue(FixedU18.wrap(2 ether).exp(4) == FixedU18.wrap(16 ether));
 
         assertTrue(FixedU18.wrap(2.7 ether).exp(5) == FixedU18.wrap(143.48907 ether));
