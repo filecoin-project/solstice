@@ -99,30 +99,28 @@ contract StreamWeightActor is UnanimousGovernance {
         require(loaded.steps < 8, StepsComplete());
 
         uint64 quarter = loaded.lastCheckedQuarter + 1;
-        int256 start = (int256(uint256(loaded.steps)) + 2) * STEP; // FIXME this is wrong
         // NOTE this will enforce afterBinding()
         FixedU18 fpv = SRA.aggregatedFPV(quarter);
 
-        WeightRecordUpdate[] memory updates = new WeightRecordUpdate[](1);
-        updates[0].id = SERVICE_ID;
-        updates[0].record.floor = INITIAL;
-        updates[0].record.tStart = SRA.qEnd(quarter);
-        updates[0].record.vStart = start;
-
         if (fpv > loaded.nextThreshold()) {
+            int256 start = (int256(uint256(loaded.steps)) + 2) * STEP;
+
+            WeightRecordUpdate[] memory updates = new WeightRecordUpdate[](1);
+            updates[0].id = SERVICE_ID;
+            updates[0].record.floor = INITIAL;
+            updates[0].record.tStart = SRA.qEnd(quarter);
+            updates[0].record.vStart = start;
             updates[0].record.cap = start + STEP;
             updates[0].record.slope =
                 (updates[0].record.cap - updates[0].record.vStart) / int256(uint256(Epoch.unwrap(QUARTER)));
 
             loaded.steps++;
+            loaded.lastCheckedQuarter = quarter;
+            gateParamsInfo.params = loaded;
+            FVMRewards.stepWeightRecords(updates);
         } else {
-            updates[0].record.cap = start;
-            updates[0].record.slope = 0;
+            gateParamsInfo.params.lastCheckedQuarter = quarter;
         }
-
-        loaded.lastCheckedQuarter = quarter;
-        gateParamsInfo.params = loaded;
-        FVMRewards.stepWeightRecords(updates);
     }
 
     function setGateParams(GateParams calldata params) external unanimous(keccak256(msg.data), HOLD) {
