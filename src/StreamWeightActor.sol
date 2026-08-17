@@ -11,21 +11,18 @@ import {OwnersLibrary} from "./lib/Owners.sol";
 import {UnanimousGovernance} from "./lib/UnanimousGovernance.sol";
 import {IsASafe} from "./lib/IsASafe.sol";
 
-uint64 constant CONSENSUS_ID = 1;
-uint64 constant SERVICE_ID = 1;
+uint64 constant SERVICE_ID = 2;
 
 int256 constant INITIAL = 5e16; // 5%
 int256 constant STEP = 5e16; // 5%
-
-// TODO get QUARTER and HOLD from SRA
-Epoch constant QUARTER = Epoch.wrap(262980); // epochs per 365.25/4 days
-Epoch constant HOLD = Epoch.wrap(2 * 60 * 24 * 7); // epochs per 7 days
 
 contract StreamWeightActor is UnanimousGovernance {
     using IsASafe for address;
     using OwnersLibrary for address;
 
     IServiceRewardsActor immutable SRA;
+    Epoch immutable QUARTER;
+    Epoch immutable HOLD;
 
     constructor(address owner1, address owner2, IServiceRewardsActor sra) {
         owner1.isProbablyASafe();
@@ -35,6 +32,8 @@ contract StreamWeightActor is UnanimousGovernance {
         owner2.addOwner();
 
         SRA = sra;
+        QUARTER = sra.EPOCHS_PER_QUARTER();
+        HOLD = sra.SRA_CANCEL_HOLD();
 
         GateParamsLibrary.init();
     }
