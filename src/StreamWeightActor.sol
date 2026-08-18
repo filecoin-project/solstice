@@ -13,7 +13,6 @@ import {IsASafe} from "./lib/IsASafe.sol";
 
 uint64 constant SERVICE_ID = 2;
 
-int256 constant INITIAL = 5e16; // 5%
 int256 constant STEP = 5e16; // 5%
 
 /// @notice Owner-governed actor with sudo control over every f02 stream's weight schedule
@@ -142,21 +141,21 @@ contract StreamWeightActor is UnanimousGovernance {
         FixedU18 fpv = SRA.aggregatedFPV(quarter);
 
         if (fpv >= loaded.nextThreshold()) {
-            int256 start = (int256(uint256(loaded.steps)) + 2) * STEP;
+            int256 next = (int256(uint256(loaded.steps)) + 3) * STEP;
 
             WeightRecordUpdate[] memory updates = new WeightRecordUpdate[](1);
             updates[0].id = SERVICE_ID;
-            updates[0].record.floor = INITIAL;
+            updates[0].record.floor = next;
             updates[0].record.tStart = SRA.qEnd(quarter);
-            updates[0].record.vStart = start;
-            updates[0].record.cap = start + STEP;
-            updates[0].record.slope =
-                (updates[0].record.cap - updates[0].record.vStart) / int256(uint256(Epoch.unwrap(QUARTER)));
+            updates[0].record.vStart = next;
+            updates[0].record.cap = next;
+            updates[0].record.slope = 0;
+
+            FVMRewards.stepWeightRecords(updates);
 
             loaded.steps++;
             loaded.lastCheckedQuarter = quarter;
             gateParamsInfo.params = loaded;
-            FVMRewards.stepWeightRecords(updates);
         } else {
             gateParamsInfo.params.lastCheckedQuarter = quarter;
         }
