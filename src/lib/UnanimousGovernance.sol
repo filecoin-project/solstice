@@ -64,6 +64,9 @@ contract UnanimousGovernance {
         }
     }
 
+    /// @notice Executes the wrapped function once every current owner has approved `taskId`.
+    /// @dev Equivalent to `unanimous(taskId, NO_HOLD)`: no permissionless completion path.
+    /// @param taskId Identifier of the task being approved, usually keccak256(msg.data)
     modifier unanimousNoHold(bytes32 taskId) {
         PendingTaskInfo storage taskInfo = PendingTaskLibrary.getTasksSlot()[taskId];
         PendingTask memory loaded = taskInfo.task;
