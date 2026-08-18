@@ -91,11 +91,15 @@ library FixedU18Library {
     function exp(FixedU18 base, uint64 exponent) internal pure returns (FixedU18 power) {
         assembly ("memory-safe") {
             power := ONE_WAD
-            for {} exponent { exponent := shr(1, exponent) } {
-                if and(1, exponent) {
-                    power := div(mul(base, power), ONE_WAD)
+            if exponent {
+                for {} gt(exponent, 1) {} {
+                    if and(1, exponent) {
+                        power := div(mul(base, power), ONE_WAD)
+                    }
+                    base := div(mul(base, base), ONE_WAD)
+                    exponent := shr(1, exponent)
                 }
-                base := div(mul(base, base), ONE_WAD)
+                power := div(mul(base, power), ONE_WAD)
             }
         }
     }
