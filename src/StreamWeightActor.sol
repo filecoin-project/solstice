@@ -141,7 +141,7 @@ contract StreamWeightActor is UnanimousGovernance {
         // NOTE this will enforce afterBinding()
         FixedU18 fpv = SRA.aggregatedFPV(quarter);
 
-        if (fpv > loaded.nextThreshold()) {
+        if (fpv >= loaded.nextThreshold()) {
             int256 start = (int256(uint256(loaded.steps)) + 2) * STEP;
 
             WeightRecordUpdate[] memory updates = new WeightRecordUpdate[](1);
