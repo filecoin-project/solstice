@@ -136,7 +136,7 @@ contract StreamWeightActor is UnanimousGovernance {
         GateParams memory loaded = gateParamsInfo.params;
         require(loaded.steps < 8, StepsComplete());
 
-        uint64 quarter = loaded.lastCheckedQuarter + 1;
+        uint64 quarter = ++gateParamsInfo.lastCheckedQuarter;
         // NOTE this will enforce afterBinding()
         FixedU18 fpv = SRA.aggregatedFPV(quarter);
 
@@ -151,13 +151,8 @@ contract StreamWeightActor is UnanimousGovernance {
             updates[0].record.cap = next;
             updates[0].record.slope = 0;
 
+            gateParamsInfo.params.steps++;
             FVMRewards.stepWeightRecords(updates);
-
-            loaded.steps++;
-            loaded.lastCheckedQuarter = quarter;
-            gateParamsInfo.params = loaded;
-        } else {
-            gateParamsInfo.params.lastCheckedQuarter = quarter;
         }
     }
 

@@ -14,7 +14,6 @@ struct VolumeTarget {
 struct GateParams {
     VolumeTarget target;
     uint64 steps;
-    uint64 lastCheckedQuarter;
 }
 
 using GateParamsLibrary for GateParams global;
@@ -22,6 +21,7 @@ using GateParamsLibrary for GateParams global;
 library GateParamsLibrary {
     /// @custom:storage-location erc7201:Solstice.GateParams
     struct GateParamsInfo {
+        uint64 lastCheckedQuarter;
         GateParams params;
     }
 
@@ -39,10 +39,9 @@ library GateParamsLibrary {
     }
 
     function init() internal {
-        GateParams memory params;
-        params.target.base = VOL_TARGET_ENTRY;
-        params.target.stepRatio = VOL_TARGET_RATIO;
-        params.lastCheckedQuarter = 1;
-        GateParamsLibrary.getGateParamsSlot().params = params;
+        GateParamsInfo storage slot = GateParamsLibrary.getGateParamsSlot();
+        slot.lastCheckedQuarter = 1;
+        slot.params.target.base = VOL_TARGET_ENTRY;
+        slot.params.target.stepRatio = VOL_TARGET_RATIO;
     }
 }
