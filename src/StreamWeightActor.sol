@@ -9,6 +9,7 @@ import {FVMRewards} from "./lib/FVMRewards.sol";
 import {PendingOp, SERVICE_ID, Share, WeightRecord, WeightRecordUpdate} from "./lib/FVMRewardTypes.sol";
 import {OwnersLibrary} from "./lib/Owners.sol";
 import {UnanimousGovernance} from "./lib/UnanimousGovernance.sol";
+import {SWA_TIMELOCK} from "./lib/FVMRewardMethod.sol";
 
 int256 constant STEP = 5e16; // 5%
 
