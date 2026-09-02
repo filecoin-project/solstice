@@ -14,7 +14,7 @@ pragma solidity ^0.8.36;
 import {MockRewardTest} from "./mocks/MockRewardTest.sol";
 import {WAD} from "./mocks/FVMRewardActor.sol";
 
-import {ServiceRewardsActor} from "../src/ServiceRewardsActor.sol";
+import {FlatServiceRewardsActor as ServiceRewardsActor} from "./FlatServiceRewardsActor.sol";
 import {Epoch} from "../src/lib/Epoch.sol";
 import {FixedU18} from "../src/lib/FixedU18.sol";
 import {Binding} from "../src/lib/SraTypes.sol";

@@ -85,7 +85,6 @@ contract ServiceRewardsActor is UnanimousGovernance {
     error TooManyPairs(); // registerPairs batch exceeds MAX_PAIRS
     error InvalidParameter();
 
-    /// @param owner1,owner2 the two governance owners
     /// @param epochsPerQuarter quarter length (epochs)
     /// @param postPeriod posting window (epochs)
     /// @param verificationWindow verification window (epochs)
@@ -93,8 +92,6 @@ contract ServiceRewardsActor is UnanimousGovernance {
     /// @param activationEpoch end epoch of quarter 0 (window start)
     /// @param minLot,priceBand initial FIL pricing parameters (governable; authoritative for the off-chain indexer, FIPs#1275)
     constructor(
-        address owner1,
-        address owner2,
         Epoch epochsPerQuarter,
         Epoch postPeriod,
         Epoch verificationWindow,
@@ -103,9 +100,6 @@ contract ServiceRewardsActor is UnanimousGovernance {
         uint256 minLot,
         uint256 priceBand
     ) {
-        owner1.addOwner();
-        owner2.addOwner();
-
         require(
             priceBand <= BASIS_POINTS && Epoch.unwrap(epochsPerQuarter) > 0 && Epoch.unwrap(postPeriod) > 0
                 && Epoch.unwrap(verificationWindow) > 0

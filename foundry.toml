@@ -17,12 +17,18 @@ remappings = [
     'fvm-solidity/=lib/fvm-solidity/src/',
 ]
 
+fs_permissions = [
+    { access = "read", path = "./lib/erc8167/out/" },
+    { access = "read", path = "./lib/ReservedAddress/" },
+]
+
 [lint]
 severity = ["high", "med", "low", "info", "gas", "code-size"]
 exclude_lints = [
     "incorrect-shift",
     "mixed-case-function",
     "multi-contract-file",
+    "unchecked-call", # false-positive when function is called call
     "unsafe-typecast",
     "unwrapped-modifier-logic",
 ]

@@ -5,7 +5,7 @@ import {USR_FORBIDDEN, USR_ILLEGAL_ARGUMENT, USR_NOT_FOUND} from "fvm-solidity/F
 
 import {MockRewardTest} from "./mocks/MockRewardTest.sol";
 import {WAD} from "./mocks/FVMRewardActor.sol";
-import {StreamWeightActor} from "../src/StreamWeightActor.sol";
+import {FlatStreamWeightActor as StreamWeightActor} from "./FlatStreamWeightActor.sol";
 import {IServiceRewardsActor} from "../src/interfaces/IServiceRewardsActor.sol";
 import {PendingOp, Share, WeightRecord, WeightRecordUpdate} from "../src/lib/FVMRewardTypes.sol";
 import {Epoch} from "../src/lib/Epoch.sol";

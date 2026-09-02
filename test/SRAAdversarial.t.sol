@@ -22,6 +22,7 @@ pragma solidity ^0.8.36;
 
 import {SERVICE_ID, Share} from "../src/lib/FVMRewardTypes.sol";
 import {ServiceRewardsActor} from "../src/ServiceRewardsActor.sol";
+import {FlatServiceRewardsActor} from "./FlatServiceRewardsActor.sol";
 import {Epoch} from "../src/lib/Epoch.sol";
 import {Binding} from "../src/lib/SraTypes.sol";
 import {SRATestBase} from "./SRATestBase.sol";
@@ -109,7 +110,7 @@ contract SRAAdversarial is SRATestBase {
     /// uint64.max × 2^40 ≈ 2^104 > 2^64 -> end beyond type(uint64).max -> InvalidParameter
     /// (same rejection path as the MaxQuarter probes above, but with a config-amplified q).
     function test_QEnd_HugeQuarter_RangeGuard_InvalidParameter() public {
-        ServiceRewardsActor big = new ServiceRewardsActor(
+        ServiceRewardsActor big = new FlatServiceRewardsActor(
             owner1,
             owner2,
             Epoch.wrap(1 << 40), // EPOCHS_PER_QUARTER: uint64.max × 2^40 ≈ 2^104 > 2^64
@@ -348,7 +349,7 @@ contract SRAAdversarial is SRATestBase {
     /// target an already-advanced quarter and rewind the mirror.
     function test_Ctor_WindowOverlap_Rejected() public {
         vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.InvalidParameter.selector));
-        new ServiceRewardsActor(
+        new FlatServiceRewardsActor(
             owner1,
             owner2,
             Epoch.wrap(500), // EPOCHS
@@ -366,7 +367,7 @@ contract SRAAdversarial is SRATestBase {
     /// admit an overlapping window. The uint256 sum (2^64) against EPOCHS must reject.
     function test_Ctor_WindowSum_Uint64Wrap_Rejected() public {
         vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.InvalidParameter.selector));
-        new ServiceRewardsActor(
+        new FlatServiceRewardsActor(
             owner1,
             owner2,
             Epoch.wrap(type(uint64).max), // EPOCHS: 2^64 - 1
@@ -384,7 +385,7 @@ contract SRAAdversarial is SRATestBase {
     /// while _assertMirrorWindow rejects it (off-by-one dead zone), so the constraint is strict.
     function test_Ctor_WindowBoundary_Rejected() public {
         vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.InvalidParameter.selector));
-        new ServiceRewardsActor(
+        new FlatServiceRewardsActor(
             owner1,
             owner2,
             Epoch.wrap(700), // EPOCHS

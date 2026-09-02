@@ -1,0 +1,14 @@
+[
+    {
+        "address": "0x888808e3e6888E8988E8178864cA861d8882e88A",
+        "facetSrc": [
+            "src/ServiceRewardsActor.sol"
+        ]
+    },
+    {
+        "address": "0x88802aa46868868584802848988888C882888BE3",
+        "facetSrc": [
+            "src/StreamWeightActor.sol"
+        ]
+    }
+]
