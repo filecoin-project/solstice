@@ -6,7 +6,9 @@ import {Implementation} from "erc8167/interfaces/Implementation.sol";
 import {Script} from "forge-std/Script.sol";
 import {IDeployer} from "ReservedAddress/interfaces/IDeployer.sol";
 
+import {Epoch} from "../src/lib/Epoch.sol";
 import {InitializableOwners} from "../src/lib/InitializableOwners.sol";
+import {Migratable} from "../src/lib/Migratable.sol";
 
 contract DeployScript is Script {
     address constant ROOT_DEPLOYER = 0x3ef96E9f82CaFE4a05183b59e7671E39B6b26347;
