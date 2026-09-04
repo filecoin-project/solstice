@@ -16,9 +16,11 @@ cbor_metadata = false
 remappings = [
     'forge-std/=lib/forge-std/src/',
     'fvm-solidity/=lib/fvm-solidity/src/',
+    'erc8167/=lib/erc8167/src/',
 ]
 
 fs_permissions = [
+    { access = "read", path = "./out/" },
     { access = "read", path = "./lib/erc8167/out/" },
     { access = "read", path = "./lib/ReservedAddress/" },
 ]

@@ -38,6 +38,51 @@ contract DeployScript is Script {
         rawTx = vm.parseJsonBytes(json, ".params[0]");
     }
 
+    /// @dev Reads every external/public function selector out of a forge build artifact's
+    ///      `methodIdentifiers`, so migrations don't need to hardcode a contract's ABI by hand.
+    function getSelectors(string memory artifactPath) internal returns (bytes4[] memory selectors) {
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        string memory json = vm.readFile(artifactPath);
+        string[] memory signatures = vm.parseJsonKeys(json, ".methodIdentifiers");
+        selectors = new bytes4[](signatures.length);
+        for (uint256 i = 0; i < signatures.length; i++) {
+            selectors[i] = bytes4(keccak256(bytes(signatures[i])));
+        }
+    }
+
+    function delegateAll(bytes4[] memory selectors, address delegate)
+        internal
+        pure
+        returns (SetDelegateOperation[] memory operations)
+    {
+        operations = new SetDelegateOperation[](selectors.length);
+        for (uint256 i = 0; i < selectors.length; i++) {
+            operations[i] = SetDelegateOperation(selectors[i], delegate);
+        }
+    }
+
+    /// @dev Memory arrays of structs hold pointers, so concatenation only needs to mcopy the
+    ///      pointer table (32 bytes per element) — the pointed-to struct data is untouched.
+    function concat(SetDelegateOperation[] memory a, SetDelegateOperation[] memory b)
+        internal
+        pure
+        returns (SetDelegateOperation[] memory result)
+    {
+        uint256 aLen = a.length;
+        uint256 bLen = b.length;
+        assembly ("memory-safe") {
+            result := mload(0x40)
+            mstore(result, add(aLen, bLen))
+            let aBytes := shl(5, aLen)
+            let bBytes := shl(5, bLen)
+            let dst := add(result, 0x20)
+            mcopy(dst, add(a, 0x20), aBytes)
+            dst := add(dst, aBytes)
+            mcopy(dst, add(b, 0x20), bBytes)
+            mstore(0x40, add(dst, bBytes))
+        }
+    }
+
     function create(bytes memory initcode) internal returns (address account) {
         assembly ("memory-safe") {
             account := create(0, add(32, initcode), mload(initcode))
@@ -46,38 +91,47 @@ contract DeployScript is Script {
     }
 
     function createSraMigration(
-        address,
-        /*streamWeightActor*/
-        address,
-        /*sraOwners*/
-        address,
-        /*implementationMethod*/
-        address /*migrateMethod*/
-    )
-        internal
-        returns (address migration)
-    {
-        // TODO
-        SetDelegateOperation[] memory operations = new SetDelegateOperation[](0);
+        address serviceRewardsActor,
+        address sraOwners,
+        address implementationMethod,
+        address migrateMethod
+    ) internal returns (address migration) {
+        SetDelegateOperation[] memory operations = delegateAll(
+            getSelectors("out/ServiceRewardsActor.sol/ServiceRewardsActor.json"), serviceRewardsActor
+        );
+        operations = concat(
+            operations, delegateAll(getSelectors("out/InitializableOwners.sol/InitializableOwners.json"), sraOwners)
+        );
+        operations = concat(
+            operations,
+            delegateAll(getSelectors("lib/erc8167/out/Implementation.evm/Implementation.json"), implementationMethod)
+        );
+        operations = concat(operations, delegateAll(getSelectors("out/Migratable.sol/Migratable.json"), migrateMethod));
         return operations.createMigration();
     }
 
     function createSwaMigration(
-        address,
-        /*serviceRewardsActor*/
-        address,
-        /*swaOwners*/
-        address,
-        /*implementationMethod*/
-        address,
-        /*migrateMethod*/
-        address /*initializeGateParamsMethod*/
-    )
-        internal
-        returns (address migration)
-    {
-        // TODO
-        SetDelegateOperation[] memory operations = new SetDelegateOperation[](0);
+        address streamWeightActor,
+        address swaOwners,
+        address implementationMethod,
+        address migrateMethod,
+        address initializeGateParamsMethod
+    ) internal returns (address migration) {
+        SetDelegateOperation[] memory operations = delegateAll(
+            getSelectors("out/StreamWeightActor.sol/StreamWeightActor.json"), streamWeightActor
+        );
+        operations = concat(
+            operations, delegateAll(getSelectors("out/InitializableOwners.sol/InitializableOwners.json"), swaOwners)
+        );
+        operations = concat(
+            operations,
+            delegateAll(getSelectors("lib/erc8167/out/Implementation.evm/Implementation.json"), implementationMethod)
+        );
+        operations = concat(operations, delegateAll(getSelectors("out/Migratable.sol/Migratable.json"), migrateMethod));
+        operations = concat(
+            operations,
+            delegateAll(getSelectors("out/GateParams.sol/InitializableGateParams.json"), initializeGateParamsMethod)
+        );
         return operations.createMigration();
     }
 
@@ -150,10 +204,9 @@ contract DeployScript is Script {
         address migrateMethod = address(new Migratable(epochsToHold)); // overwrites bootstrapping migrate method
         address initializeGateParamsMethod = address(new InitializableGateParams());
 
-        // TODO deploy migration
-        address sraMigration = createSraMigration(streamWeightActor, sraOwners, implementationMethod, migrateMethod);
+        address sraMigration = createSraMigration(serviceRewardsActor, sraOwners, implementationMethod, migrateMethod);
         address swaMigration = createSwaMigration(
-            serviceRewardsActor, swaOwners, implementationMethod, migrateMethod, initializeGateParamsMethod
+            streamWeightActor, swaOwners, implementationMethod, migrateMethod, initializeGateParamsMethod
         );
 
         // run migration
