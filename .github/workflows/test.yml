@@ -13,6 +13,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Shallow-clone EVM assembler
+        run: git clone --depth 1 --revision 315d16a2f2f6d5a3a23811cd1fdb53640c273636 --recurse-submodules --shallow-submodules --no-tags https://github.com/wjmelements/evm.git
+
+      - name: Install libcurl
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
+
+      - name: Build EVM assembler
+        run: make -C evm check
+
+      - name: Install EVM assembler
+        run: sudo install $(pwd)/evm/bin/evm $(dirname $(which git))/evm
+
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
@@ -25,6 +37,6 @@ jobs:
 
       - name: Run tests
         run: |
-          forge test
+          make test
         env:
           FOUNDRY_PROFILE: ci
