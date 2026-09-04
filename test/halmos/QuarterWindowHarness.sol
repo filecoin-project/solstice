@@ -16,20 +16,18 @@ import {Epoch} from "../../src/lib/Epoch.sol";
 ///      values), so the propositions verified by this harness are all "parameter-independent properties"
 ///      (mathematical properties holding under any window config); absolute boundary membership depending on
 ///      concrete parameter values is covered by dynamic tests.
-///      The E+POST exclusion is a stored flag (frozenAtPostEnd) — there is no per-epoch
-///      interval-search function to verify; the E+POST semantics is covered by dynamic tests.
+///      The E+POST snapshot is fixed into the mirror at the advance (prevFpv) — there is no
+///      per-epoch interval-search function to verify; the E+POST semantics is covered by dynamic tests.
 contract QuarterWindowHarness is ServiceRewardsActor {
-    constructor(address owner1, address owner2)
+    constructor(address owner1, address owner2, uint64 sraUpgradeHold)
         ServiceRewardsActor(
             owner1,
             owner2,
             Epoch.wrap(1000), // epochsPerQuarter
             Epoch.wrap(300), // postPeriod
             Epoch.wrap(400), // verificationWindow
-            Epoch.wrap(100), // cancelHold
             Epoch.wrap(100_000), // activationEpoch
-            1e18, // minLot
-            2000 // priceBand (20%, basis points)
+            Epoch.wrap(sraUpgradeHold)
         )
     {}
 

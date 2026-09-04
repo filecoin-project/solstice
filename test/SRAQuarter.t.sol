@@ -3,8 +3,8 @@ pragma solidity ^0.8.36;
 
 // SRA quarter state machine + FilecoinPayVolume + FIL pricing tests
 //   window boundaries / CorrectVolume / AggregatedFilecoinPayVolume
-//   FIP-0118 (FIPs#1275): FilecoinPayVolume is a single USD total — PRICE_BAND / FinalizeConversion
-//   tests are obsolete after FIPs#1275 (off-chain conversion).
+//   FIP-0118 (FIPs#1275): FilecoinPayVolume is a single USD total — the
+//   on-chain conversion machinery is obsolete after FIPs#1275 (off-chain conversion).
 //
 // Time model: Epoch = block.number; windows:
 //   posting:      E < now <= E+POST
@@ -13,6 +13,7 @@ pragma solidity ^0.8.36;
 
 import {SRATestBase} from "./SRATestBase.sol";
 import {FixedU18} from "../src/lib/FixedU18.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {ServiceRewardsActor} from "../src/ServiceRewardsActor.sol";
 import {FilecoinPayVolume} from "../src/lib/SraTypes.sol";
 
@@ -24,7 +25,7 @@ contract SRAQuarterTest is SRATestBase {
     /// posting within the window (E < now <= E+POST) succeeds.
     function test_PostVolume_PostingWindow_Success() public {
         address orch = makeAddr("orch");
-        _admit(orch);
+        _admit(orch, orch);
 
         vm.roll(_qEnd(0) + 1); // E+1
         _postAs(orch, 0, _fpv(100e18));
@@ -32,10 +33,22 @@ contract SRAQuarterTest is SRATestBase {
         assertEq(FixedU18.unwrap(f.usd), 100e18);
     }
 
+    /// issue #34: VolumePosted carries the posted amount so off-chain indexers consume
+    /// the event directly instead of re-reading fpvOf after every post.
+    function test_PostVolume_EmitsVolumeAmount() public {
+        address orch = makeAddr("orch");
+        _admit(orch, orch);
+
+        vm.roll(_qEnd(0) + 1); // E+1
+        vm.expectEmit(true, true, true, true, address(sra));
+        emit ServiceRewardsActor.VolumePosted(0, orch, FixedU18.wrap(_fpv(100e18)));
+        _postAs(orch, 0, _fpv(100e18));
+    }
+
     /// E itself is not in the posting window (E < now, strictly less).
     function test_PostVolume_AtQuarterEnd_Reverts() public {
         address orch = makeAddr("orch");
-        _admit(orch);
+        _admit(orch, orch);
 
         vm.roll(_qEnd(0)); // now == E: posting not yet open
         vm.prank(orch);
@@ -46,7 +59,7 @@ contract SRAQuarterTest is SRATestBase {
     /// the posting window's right boundary is inclusive of E+POST (<=).
     function test_PostVolume_AtPostEnd_Inclusive() public {
         address orch = makeAddr("orch");
-        _admit(orch);
+        _admit(orch, orch);
 
         vm.roll(_qPostEnd(0)); // now == E+POST: allowed
         _postAs(orch, 0, _fpv(100e18));
@@ -56,7 +69,7 @@ contract SRAQuarterTest is SRATestBase {
     /// E+POST+1 enters verification; posting is rejected.
     function test_PostVolume_AfterPostingWindow_Reverts() public {
         address orch = makeAddr("orch");
-        _admit(orch);
+        _admit(orch, orch);
 
         vm.roll(_qPostEnd(0) + 1);
         vm.prank(orch);
@@ -67,7 +80,7 @@ contract SRAQuarterTest is SRATestBase {
     /// at most once per quarter — the second posting reverts (posted flag).
     function test_PostVolume_SecondPosting_Reverts() public {
         address orch = makeAddr("orch");
-        _admit(orch);
+        _admit(orch, orch);
 
         vm.roll(_qEnd(0) + 1);
         _postAs(orch, 0, _fpv(100e18));
@@ -77,11 +90,11 @@ contract SRAQuarterTest is SRATestBase {
         sra.postVolume(0, FixedU18.wrap(_fpv(200e18)));
     }
 
-    /// #7: zero posting is rejected — a zero total is equivalent to not posting, so
+    /// Zero posting is rejected — a zero total is equivalent to not posting, so
     ///     `usd == 0` unambiguously means "not posted" (postVolume requires > 0).
     function test_PostVolume_Zero_Reverts() public {
         address orch = makeAddr("orch");
-        _admit(orch);
+        _admit(orch, orch);
 
         vm.roll(_qEnd(0) + 1);
         vm.prank(orch);
@@ -89,11 +102,11 @@ contract SRAQuarterTest is SRATestBase {
         sra.postVolume(0, FixedU18.wrap(0));
     }
 
-    /// #7: CorrectVolume(0) clears a posted value (equivalent to not posted) —
+    /// CorrectVolume(0) clears a posted value (equivalent to not posted) —
     ///     the orchestrator is excluded from the aggregate.
     function test_CorrectVolume_Zero_Clears() public {
         address orch = makeAddr("orch");
-        _admit(orch);
+        _admit(orch, orch);
 
         vm.roll(_qEnd(0) + 1);
         _postAs(orch, 0, _fpv(100e18));
@@ -113,7 +126,7 @@ contract SRAQuarterTest is SRATestBase {
     /// an upward correction within the verification window succeeds.
     function test_CorrectVolume_VerificationWindow_Upward() public {
         address orch = makeAddr("orch");
-        _admit(orch);
+        _admit(orch, orch);
 
         vm.roll(_qEnd(0) + 1);
         _postAs(orch, 0, _fpv(100e18));
@@ -126,7 +139,7 @@ contract SRAQuarterTest is SRATestBase {
     /// bidirectional correction — downward succeeds.
     function test_CorrectVolume_Downward_Corrects() public {
         address orch = makeAddr("orch");
-        _admit(orch);
+        _admit(orch, orch);
 
         vm.roll(_qEnd(0) + 1);
         _postAs(orch, 0, _fpv(100e18));
@@ -139,7 +152,7 @@ contract SRAQuarterTest is SRATestBase {
     /// multiple corrections within the window; the last one wins (whole replacement).
     function test_CorrectVolume_MultipleCorrections_LastWins() public {
         address orch = makeAddr("orch");
-        _admit(orch);
+        _admit(orch, orch);
 
         vm.roll(_qEnd(0) + 1);
         _postAs(orch, 0, _fpv(100e18));
@@ -153,7 +166,7 @@ contract SRAQuarterTest is SRATestBase {
     /// an unposted orchestrator can be backfilled within the verification window (posted=false -> written).
     function test_CorrectVolume_BackfillUnposted() public {
         address orch = makeAddr("orch");
-        _admit(orch);
+        _admit(orch, orch);
 
         vm.roll(_qPostEnd(0) + 1); // unposted, straight into verification
         _correctVolume(orch, 0, _fpv(150e18));
@@ -163,7 +176,7 @@ contract SRAQuarterTest is SRATestBase {
     /// the verification window's right boundary is inclusive of E+POST+VERIFY.
     function test_CorrectVolume_AtVerifyEnd_Inclusive() public {
         address orch = makeAddr("orch");
-        _admit(orch);
+        _admit(orch, orch);
 
         vm.roll(_qEnd(0) + 1); // E+1: post within the posting window (E, E+POST]
         _postAs(orch, 0, _fpv(100e18));
@@ -176,7 +189,7 @@ contract SRAQuarterTest is SRATestBase {
     /// after the window closes (E+POST+VERIFY+1) CorrectVolume is rejected (value bound).
     function test_CorrectVolume_AfterVerificationWindow_Reverts() public {
         address orch = makeAddr("orch");
-        _admit(orch);
+        _admit(orch, orch);
 
         vm.roll(_qEnd(0) + 1);
         _postAs(orch, 0, _fpv(100e18));
@@ -196,7 +209,7 @@ contract SRAQuarterTest is SRATestBase {
     /// aggregatedFilecoinPayVolume reverts NotBound before the window closes (distinguishable from zero declared volume).
     function test_AggregatedFilecoinPayVolume_BeforeBinding_RevertsNotBound() public {
         address orch = makeAddr("orch");
-        _admit(orch);
+        _admit(orch, orch);
         vm.roll(_qEnd(0) + 1);
         _postAs(orch, 0, _fpv(100e18));
 
@@ -212,8 +225,8 @@ contract SRAQuarterTest is SRATestBase {
     function test_AggregatedFilecoinPayVolume_AfterBinding_SumOfValues() public {
         address orchA = makeAddr("orchA");
         address orchB = makeAddr("orchB");
-        _admit(orchA);
-        _admit(orchB);
+        _admit(orchA, orchA);
+        _admit(orchB, orchB);
 
         vm.roll(_qEnd(0) + 1);
         _postAs(orchA, 0, _fpv(100e18));
@@ -223,31 +236,12 @@ contract SRAQuarterTest is SRATestBase {
         assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(0)), 350e18);
     }
 
-    /// a frozen orchestrator's (frozen at the E+POST instant) FilecoinPayVolume is excluded from the aggregate.
-    function test_AggregatedFilecoinPayVolume_FrozenExcluded() public {
-        address orchA = makeAddr("orchA");
-        address orchB = makeAddr("orchB");
-        _admit(orchA);
-        _admit(orchB);
-
-        vm.roll(_qEnd(0) + 1);
-        _postAs(orchA, 0, _fpv(100e18));
-        _postAs(orchB, 0, _fpv(250e18));
-
-        // freeze B during posting (affects the quarter: B frozen at the E+POST instant)
-        _freeze(orchB);
-
-        vm.roll(_qVerifyEnd(0) + 1);
-        // B excluded: the aggregate contains only A
-        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(0)), 100e18);
-    }
-
     /// Strategy 11/CV7: some orchestrators did not post -> aggregatedFilecoinPayVolume skips them (usd==0 continue).
     function test_AggregatedFilecoinPayVolume_UnpostedOrch_Excluded() public {
         address orchA = makeAddr("orchA");
         address orchB = makeAddr("orchB"); // B admitted but does not post
-        _admit(orchA);
-        _admit(orchB);
+        _admit(orchA, orchA);
+        _admit(orchB, orchB);
 
         vm.roll(_qEnd(0) + 1);
         _postAs(orchA, 0, _fpv(100e18));
@@ -258,23 +252,37 @@ contract SRAQuarterTest is SRATestBase {
     }
 
     // ------------------------------------------------------------------------
-    // G1: setPricingParams / getPricingParams
-    //   Governance: unanimous + hold (two votes + permissionless body execution after hold elapses)
-    //   FIPs#1275: MIN_LOT/PRICE_BAND are authoritative for the off-chain indexer, not an on-chain computation
+    // G1: setPricingParams (event-only, binds at once)
+    //   FIPs#1277 (spec §2.3): MIN_LOT_FLOOR / MIN_LOT_ALPHA (rational num/den) / PRICE_BAND
+    //   are authoritative for the off-chain indexer, not stored on-chain — the call's
+    //   only effect is the PricingParamsUpdated event.
     // ------------------------------------------------------------------------
 
-    /// G1: governance updates the params minLot/priceBand; getPricingParams returns the new values.
-    function test_SetPricingParams_UpdatesParams_GetReturns() public {
+    /// G1: governance updates the params; the event carries the new values (stores nothing).
+    ///     The unanimousNoHold modifier also emits Submitted/Approved (vote records), so the
+    ///     parameter event is extracted from the recorded logs rather than expectEmit.
+    function test_SetPricingParams_UpdatesParams_EmitsEvent() public {
+        vm.recordLogs();
         vm.prank(owner1);
-        sra.setPricingParams(2e18, 1500);
+        sra.setPricingParams(2e18, 1, 400, 1500, 20160);
         vm.prank(owner2);
-        sra.setPricingParams(2e18, 1500);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        sra.setPricingParams(2e18, 1500); // third call: permissionless execution
+        sra.setPricingParams(2e18, 1, 400, 1500, 20160); // second vote executes (unanimousNoHold)
 
-        (uint256 minLot, uint256 priceBand) = sra.getPricingParams();
-        assertEq(minLot, 2e18);
-        assertEq(priceBand, 1500); // 15%
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 topic = ServiceRewardsActor.PricingParamsUpdated.selector;
+        uint256 hits;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] != topic) continue;
+            hits++;
+            (uint256 f, uint256 an, uint256 ad, uint256 b, uint256 cutoff) =
+                abi.decode(logs[i].data, (uint256, uint256, uint256, uint256, uint256));
+            assertEq(f, 2e18);
+            assertEq(an, 1);
+            assertEq(ad, 400);
+            assertEq(b, 1500); // 15%
+            assertEq(cutoff, 20160);
+        }
+        assertEq(hits, 1, "PricingParamsUpdated emitted once");
     }
 
     /// G1: a non-owner (third party) calling setPricingParams -> rejected on the first vote (NotOwner).
@@ -282,19 +290,17 @@ contract SRAQuarterTest is SRATestBase {
         address stranger = makeAddr("stranger");
         vm.prank(stranger);
         vm.expectRevert();
-        sra.setPricingParams(2e18, 1500);
+        sra.setPricingParams(2e18, 1, 400, 1500, 20160);
     }
 
-    /// G1: invalid params (priceBand > 10000) -> InvalidParameter at the third body execution.
+    /// G1: invalid params (band > 10000) -> InvalidParameter at the second vote (bind-at-once).
     function test_SetPricingParams_InvalidParams_Reverts() public {
-        // priceBand > BASIS_POINTS(10000) is invalid
+        // band > BASIS_POINTS(10000) is invalid
         vm.prank(owner1);
-        sra.setPricingParams(MIN_LOT, 10001);
+        sra.setPricingParams(2e18, 1, 400, 10001, 20160);
         vm.prank(owner2);
-        sra.setPricingParams(MIN_LOT, 10001);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
         vm.expectRevert();
-        sra.setPricingParams(MIN_LOT, 10001);
+        sra.setPricingParams(2e18, 1, 400, 10001, 20160);
     }
 
     // ------------------------------------------------------------------------

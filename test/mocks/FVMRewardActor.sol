@@ -16,8 +16,7 @@ import {
     REMOVE_STREAM,
     SET_DISTRIBUTION,
     CANCEL_PENDING,
-    CLAIM,
-    SWA_TIMELOCK
+    CLAIM
 } from "../../src/lib/FVMRewardMethod.sol";
 import {WeightRecord, DistributionKind, Share, PendingOp} from "../../src/lib/FVMRewardTypes.sol";
 import {Epoch} from "../../src/lib/Epoch.sol";
@@ -35,6 +34,8 @@ uint64 constant FIRST_EXPORTED_METHOD_NUMBER = 1 << 24;
 
 /// @dev Same value as WAD, typed uint256, so summing shares needs no signed-to-unsigned cast.
 uint256 constant SHARE_TOTAL = 1e18;
+
+uint64 constant MAINNET_TIMELOCK = 20160;
 
 struct LedgerRow {
     address wallet;
@@ -57,6 +58,7 @@ struct Stream {
     DistributionKind kind;
     address writer;
     Share[] shares;
+    uint256 strippedBurn; // f099 share total stripped from the last SetShares (f099 rows are not stored)
     uint256 accrued;
     Ledger payableLedger;
     Ledger claimedPeriod;
@@ -195,7 +197,7 @@ contract FVMRewardActor {
 
     /// @notice Test helper: sets the defaults an inline initializer would give this contract; call once, right after etching.
     function mockInit() external {
-        swaTimelockEpochs = SWA_TIMELOCK;
+        swaTimelockEpochs = MAINNET_TIMELOCK;
         nextTransitionEpoch = type(uint64).max;
     }
 
@@ -252,6 +254,11 @@ contract FVMRewardActor {
     /// @notice Test helper: an EXPLICIT stream's wallet-to-share map.
     function getShares(uint64 streamId) external view returns (Share[] memory) {
         return _streams[streamId].shares;
+    }
+
+    /// @notice Test helper: the f099 share total stripped from the last SetShares
+    function strippedBurnOf(uint64 streamId) external view returns (uint256) {
+        return _streams[streamId].strippedBurn;
     }
 
     /// @notice Test helper: read back a live stream's payable ledger directly.
@@ -364,7 +371,7 @@ contract FVMRewardActor {
         _foldAndBurnResidue(s);
 
         delete s.shares;
-        _pushNonBurnShares(s.shares, newShares);
+        s.strippedBurn = _pushNonBurnShares(s.shares, newShares);
         return (0, 0, "");
     }
 
@@ -1278,9 +1285,10 @@ contract FVMRewardActor {
         }
     }
 
-    function _pushNonBurnShares(Share[] storage target, Share[] memory shares) internal {
+    function _pushNonBurnShares(Share[] storage target, Share[] memory shares) internal returns (uint256 stripped) {
         for (uint256 i = 0; i < shares.length; i++) {
             if (shares[i].wallet != BURN_ADDRESS) target.push(shares[i]);
+            else stripped += FixedU18.unwrap(shares[i].share);
         }
     }
 

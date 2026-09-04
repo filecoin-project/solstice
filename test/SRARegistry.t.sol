@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 pragma solidity ^0.8.36;
 
-// SRA registry tests — freeze semantics / cap rejection (D2)
+// SRA registry tests — cap rejection (D2)
 //
-//   - orchestrator admission/cap: 64-full rejection, Remove release, Freeze non-release (D2)
-//   - registerPairs: uniqueness, admission/freeze gating, re-claimable after Remove release
-//   - freeze/unfreeze: suspend/restore operation capability
-//   - replace: operator identity transfer; reassignBinding: binding reassignment
+//   - orchestrator admission/cap: 64-full rejection, Remove release (D2)
+//   - registerPairs: uniqueness, admission gating, re-claimable after Remove release
+//   - replaceWallet: payout-wallet swap, identity does not move (spec §3.2); reassignBinding: binding reassignment
 
 import {SRATestBase} from "./SRATestBase.sol";
 import {FixedU18} from "../src/lib/FixedU18.sol";
@@ -23,59 +22,68 @@ contract SRARegistryTest is SRATestBase {
     // D2 cap (strategy 5)
     // ------------------------------------------------------------------------
 
+    /// CP3: addOrchestrator carries a distinct payout wallet (no default wallet=orch); the
+    /// OrchestratorAdmitted event carries the wallet, while bindingOf resolves the pair to the
+    /// admit-time orchestrator identity (issue #34: identity and wallet are separate concepts).
+    function test_Admit_WalletDistinctFromOrch_EmitsWallet() public {
+        address orch = makeAddr("orch");
+        address wallet = makeAddr("wallet"); // distinct payout wallet (CP3)
+        vm.prank(owner1);
+        sra.addOrchestrator(orch, wallet); // vote 1 (approve)
+        vm.expectEmit(true, false, false, true, address(sra));
+        emit ServiceRewardsActor.OrchestratorAdmitted(orch, wallet);
+        vm.prank(owner2);
+        sra.addOrchestrator(orch, wallet); // vote 2 executes the body
+
+        assertTrue(sra.isAdmitted(orch));
+        Binding[] memory pairs = new Binding[](1);
+        pairs[0] = _pair(makeAddr("payer"), makeAddr("operator"));
+        _registerPairsAs(orch, pairs);
+        assertEq(sra.bindingOf(makeAddr("payer"), makeAddr("operator")), orch); // identity, not wallet
+        assertNotEq(sra.bindingOf(makeAddr("payer"), makeAddr("operator")), wallet);
+    }
+
     /// Strategy 5/D2: once the admitted total reaches 64, the 65th admit is rejected.
     function test_Admit_AtCapacity_Reverts() public {
         for (uint256 i = 0; i < 64; i++) {
-            _admit(makeAddr(string.concat("orch-", vm.toString(i))));
+            _admit(makeAddr(string.concat("orch-", vm.toString(i))), makeAddr(string.concat("orch-", vm.toString(i))));
         }
         assertEq(sra.admittedCount(), 64);
 
         address orch65 = makeAddr("orch-65");
         vm.prank(owner1);
-        sra.admit(orch65);
+        sra.addOrchestrator(orch65, orch65); // vote 1 (approve)
+        vm.expectRevert(); // cap rejection: admit is full at 64 (second vote executes the body)
         vm.prank(owner2);
-        sra.admit(orch65); // second vote: completes the full vote queue (wait); body not executed
-
-        vm.roll(block.number + SRA_CANCEL_HOLD); // hold elapsed
-        vm.expectRevert(); // cap rejection: admit is full at 64 (third permissionless call executes the body)
-        sra.admit(orch65);
+        sra.addOrchestrator(orch65, orch65);
     }
 
     /// Strategy 5/D2: after Remove frees a slot, a new orchestrator can be admitted.
     function test_Admit_RemoveFreesSlot() public {
         for (uint256 i = 0; i < 64; i++) {
-            _admit(makeAddr(string.concat("orch-", vm.toString(i))));
+            _admit(makeAddr(string.concat("orch-", vm.toString(i))), makeAddr(string.concat("orch-", vm.toString(i))));
         }
         address removed = makeAddr("orch-0");
+        _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
         _remove(removed);
         assertEq(sra.admittedCount(), 63);
 
-        _admit(makeAddr("orch-new")); // slot freed, can admit
+        _admit(makeAddr("orch-new"), makeAddr("orch-new")); // slot freed, can admit
         assertEq(sra.admittedCount(), 64);
     }
 
-    /// Strategy 5/D2: Freeze does not release a slot — the frozen orchestrator still occupies an admitted slot.
-    function test_Admit_FrozenStillCountsTowardLimit() public {
-        for (uint256 i = 0; i < 64; i++) {
-            _admit(makeAddr(string.concat("orch-", vm.toString(i))));
-        }
-        // freeze one orchestrator
-        address frozenOrch = makeAddr("orch-0");
-        _freeze(frozenOrch);
-        assertTrue(sra.isFrozen(frozenOrch));
-        // freeze does not release a slot: admittedCount is still 64
-        assertEq(sra.admittedCount(), 64);
+    /// Pre-activation removal succeeds: setUp leaves block.number (≈ 1 + MAINNET_TIMELOCK) below
+    /// ACTIVATION_EPOCH, where no quarter has ever ended. The §3.2 guard must not block — nothing
+    /// can be pending before activation (removal touches only the admitted set).
+    function test_Remove_PreActivation_Succeeds() public {
+        assertLt(block.number, ACTIVATION_EPOCH, "setUp must leave the contract pre-activation");
+        address orch = makeAddr("pre-act");
+        _admit(orch, orch);
 
-        // slot not released: a new admit is still rejected (after two votes queue, rejected at body execution once hold elapses)
-        address orch65 = makeAddr("orch-65");
-        vm.prank(owner1);
-        sra.admit(orch65);
-        vm.prank(owner2);
-        sra.admit(orch65); // second vote: completes the full vote queue (wait)
+        _remove(orch);
 
-        vm.roll(block.number + SRA_CANCEL_HOLD); // hold elapsed
-        vm.expectRevert();
-        sra.admit(orch65); // third permissionless call executes the body -> cap rejection
+        assertFalse(sra.isAdmitted(orch));
+        assertEq(sra.admittedCount(), 0);
     }
 
     // ------------------------------------------------------------------------
@@ -85,7 +93,7 @@ contract SRARegistryTest is SRATestBase {
     /// an admitted orchestrator can register binding pairs.
     function test_RegisterPairs_Success() public {
         address orch = makeAddr("orch");
-        _admit(orch);
+        _admit(orch, orch);
 
         Binding[] memory pairs = new Binding[](1);
         pairs[0] = _pair(makeAddr("payer"), makeAddr("operator"));
@@ -105,26 +113,12 @@ contract SRARegistryTest is SRATestBase {
         sra.registerPairs(pairs);
     }
 
-    /// a frozen orchestrator cannot registerPairs.
-    function test_RegisterPairs_Frozen_Reverts() public {
-        address orch = makeAddr("orch");
-        _admit(orch);
-        _freeze(orch);
-
-        Binding[] memory pairs = new Binding[](1);
-        pairs[0] = _pair(makeAddr("payer"), makeAddr("operator"));
-
-        vm.prank(orch);
-        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.Frozen.selector, orch));
-        sra.registerPairs(pairs);
-    }
-
     /// registerPairs reverts when the pair is already bound to another (uniqueness invariant).
     function test_RegisterPairs_DuplicatePair_Reverts() public {
         address orchA = makeAddr("orchA");
         address orchB = makeAddr("orchB");
-        _admit(orchA);
-        _admit(orchB);
+        _admit(orchA, orchA);
+        _admit(orchB, orchB);
 
         Binding[] memory pairs = new Binding[](1);
         pairs[0] = _pair(makeAddr("payer"), makeAddr("operator"));
@@ -138,7 +132,7 @@ contract SRARegistryTest is SRATestBase {
     /// the same orchestrator re-registering the same pair reverts (self-duplicates also disallowed).
     function test_RegisterPairs_SameOrchDuplicatePair_Reverts() public {
         address orch = makeAddr("orch");
-        _admit(orch);
+        _admit(orch, orch);
 
         Binding[] memory pairs = new Binding[](1);
         pairs[0] = _pair(makeAddr("payer"), makeAddr("operator"));
@@ -152,7 +146,7 @@ contract SRARegistryTest is SRATestBase {
     /// C1: registerPairs with more than MAX_PAIRS (64) pairs reverts TooManyPairs (array-length bound, audit C1).
     function test_RegisterPairs_TooManyPairs_Reverts() public {
         address orch = makeAddr("orch");
-        _admit(orch);
+        _admit(orch, orch);
 
         Binding[] memory pairs = new Binding[](65);
         for (uint256 i = 0; i < pairs.length; i++) {
@@ -168,7 +162,7 @@ contract SRARegistryTest is SRATestBase {
     /// C1 control: exactly MAX_PAIRS (64) pairs is accepted (boundary value).
     function test_RegisterPairs_MaxPairs_Accepted() public {
         address orch = makeAddr("orch");
-        _admit(orch);
+        _admit(orch, orch);
 
         Binding[] memory pairs = new Binding[](64);
         for (uint256 i = 0; i < pairs.length; i++) {
@@ -184,15 +178,19 @@ contract SRARegistryTest is SRATestBase {
     function test_Remove_ReleasesPairs_CanBeReclaimed() public {
         address orchA = makeAddr("orchA");
         address orchB = makeAddr("orchB");
-        _admit(orchA);
-        _admit(orchB);
+        _admit(orchA, orchA);
+        _admit(orchB, orchB);
 
         Binding[] memory pairs = new Binding[](1);
         pairs[0] = _pair(makeAddr("payer"), makeAddr("operator"));
         _registerPairsAs(orchA, pairs);
         assertEq(sra.bindingOf(makeAddr("payer"), makeAddr("operator")), orchA);
 
+        _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
         _remove(orchA);
+
+        // released binding reads as unclaimed immediately (bindingOf returns 0 for a removed id)
+        assertEq(sra.bindingOf(makeAddr("payer"), makeAddr("operator")), address(0));
 
         // original orchestrator removed; B can claim the same pair
         _registerPairsAs(orchB, pairs);
@@ -200,130 +198,61 @@ contract SRARegistryTest is SRATestBase {
     }
 
     // ------------------------------------------------------------------------
-    // freeze / unfreeze (strategy 3)
-    // ------------------------------------------------------------------------
-
-    /// a frozen orchestrator cannot postVolume (rejected even within the posting window).
-    function test_Freeze_PreventsPostVolume() public {
-        address orch = makeAddr("orch");
-        _admit(orch);
-        _freeze(orch);
-
-        vm.roll(_qEnd(0) + 1); // posting period
-        vm.prank(orch);
-        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.Frozen.selector, orch));
-        sra.postVolume(0, FixedU18.wrap(_fpv(100e18)));
-    }
-
-    /// correctVolume freeze symmetry: a frozen orchestrator cannot be re-admitted
-    /// into a quarter via the governance correctVolume path. Freeze suspends — the mirror advance
-    /// clears frozenAtPostEnd, so without this gate a freeze → correctVolume → advance sequence
-    /// would give a frozen orchestrator shares in the next quarter.
-    /// Unfreeze restores the governance correction path.
-    function test_CorrectVolume_Frozen_Reverts_UnfreezeRestores() public {
-        address a = makeAddr("a");
-        address b = makeAddr("b");
-        _admit(a);
-        _admit(b);
-
-        vm.roll(_qEnd(0) + 1); // posting
-        _postAs(a, 0, _fpv(100e18));
-        _postAs(b, 0, _fpv(200e18));
-        _freeze(b); // posting window: b excluded from q0 (frozenAtPostEnd)
-
-        // verification window: correcting a frozen orchestrator must revert Frozen —
-        // the governance path must not re-admit a suspended orchestrator (unanimousNoHold:
-        // vote 1 approves, vote 2 executes the body where the gate fires)
-        vm.roll(_qPostEnd(0) + 1);
-        vm.prank(owner1);
-        sra.correctVolume(b, 0, FixedU18.wrap(_fpv(150e18))); // vote 1 (approve only)
-        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.Frozen.selector, b));
-        vm.prank(owner2);
-        sra.correctVolume(b, 0, FixedU18.wrap(_fpv(150e18))); // vote 2 executes body -> Frozen
-        assertEq(FixedU18.unwrap(sra.fpvOf(0, b).usd), 200e18, "frozen b's fpv untouched");
-
-        // unfreeze restores the governance correction path (fresh calldata -> fresh task)
-        _unfreeze(b);
-        _correctVolume(b, 0, _fpv(180e18));
-        assertEq(FixedU18.unwrap(sra.fpvOf(0, b).usd), 180e18, "corrected after unfreeze");
-    }
-
-    /// unfreeze restores operation capability (registerPairs / postVolume).
-    function test_Unfreeze_RestoresOperations() public {
-        address orch = makeAddr("orch");
-        _admit(orch);
-        _freeze(orch);
-
-        Binding[] memory pairs = new Binding[](1);
-        pairs[0] = _pair(makeAddr("payer"), makeAddr("operator"));
-        vm.prank(orch);
-        vm.expectRevert();
-        sra.registerPairs(pairs);
-
-        _unfreeze(orch);
-        assertFalse(sra.isFrozen(orch));
-
-        _registerPairsAs(orch, pairs); // can register after restore
-        vm.roll(_qEnd(0) + 1);
-        _postAs(orch, 0, _fpv(100e18)); // can post after restore
-        FilecoinPayVolume memory f = sra.fpvOf(0, orch);
-        assertEq(FixedU18.unwrap(f.usd), 100e18);
-    }
-
-    // ------------------------------------------------------------------------
     // replace / reassignBinding
     // ------------------------------------------------------------------------
 
-    /// replace transfers the operator identity (the new address gains admission and bindings; the old address becomes invalid).
-    function test_Replace_TransfersIdentity() public {
+    /// replaceWallet swaps the payout wallet (spec §3.2): the identity does not move — oldOrch stays
+    /// admitted, and bindingOf keeps resolving to the same orchestrator identity (only the payout
+    /// wallet reads as newWallet).
+    function test_Replace_SwapsWallet() public {
         address oldOrch = makeAddr("oldOrch");
-        address newOrch = makeAddr("newOrch");
-        _admit(oldOrch);
+        address newWallet = makeAddr("newWallet");
+        _admit(oldOrch, oldOrch);
 
         Binding[] memory pairs = new Binding[](1);
         pairs[0] = _pair(makeAddr("payer"), makeAddr("operator"));
         _registerPairsAs(oldOrch, pairs);
 
-        // governance replace(old, new): two votes + hold
+        // governance replaceWallet(old, new): two votes; second executes (unanimousNoHold)
         vm.prank(owner1);
-        sra.replace(oldOrch, newOrch);
+        sra.replaceWallet(oldOrch, newWallet);
+        vm.expectEmit(true, true, false, true, address(sra));
+        emit ServiceRewardsActor.OrchestratorWalletReplaced(oldOrch, newWallet);
         vm.prank(owner2);
-        sra.replace(oldOrch, newOrch);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        sra.replace(oldOrch, newOrch);
+        sra.replaceWallet(oldOrch, newWallet); // second vote executes (unanimousNoHold)
 
-        assertFalse(sra.isAdmitted(oldOrch));
-        assertTrue(sra.isAdmitted(newOrch));
-        // bindings follow the identity transfer
-        assertEq(sra.bindingOf(makeAddr("payer"), makeAddr("operator")), newOrch);
+        assertTrue(sra.isAdmitted(oldOrch), "identity does not move (spec 3.2)");
+        assertFalse(sra.isAdmitted(newWallet), "the new wallet is not an orchestrator identity");
+        // the binding stays with the same orchestrator; bindingOf reads its identity, which a
+        // replaceWallet does not move (issue #34: bindingOf returns the identity, not the wallet)
+        assertEq(sra.bindingOf(makeAddr("payer"), makeAddr("operator")), oldOrch);
     }
 
     /// After replace, a third party cannot grab the binding pair — registerPairs's AlreadyBound
-    /// check resolves along the replace chain to the current valid orchestrator.
+    /// check resolves along the identity to the current wallet.
     function test_RegisterPairs_AfterReplace_ThirdPartyReverts() public {
         address orchA = makeAddr("orchA");
-        address orchB = makeAddr("orchB"); // fresh address: replace target must be unadmitted (auto-admitted on identity transfer)
+        address orchB = makeAddr("orchB"); // fresh address: the new payout wallet (identity stays at orchA)
         address orchC = makeAddr("orchC");
-        _admit(orchA);
-        _admit(orchC); // a third party must be admitted to reach the AlreadyBound check (registerPairs gating)
+        _admit(orchA, orchA);
+        _admit(orchC, orchC); // a third party must be admitted to reach the AlreadyBound check (registerPairs gating)
 
         Binding[] memory pairs = new Binding[](1);
         pairs[0] = _pair(makeAddr("payer"), makeAddr("operator"));
         _registerPairsAs(orchA, pairs);
         assertEq(sra.bindingOf(makeAddr("payer"), makeAddr("operator")), orchA);
 
-        // governance replace(orchA -> orchB): two votes + hold elapsed + third permissionless execution
+        // governance replaceWallet(orchA -> orchB): two votes; second executes (unanimousNoHold)
         vm.prank(owner1);
-        sra.replace(orchA, orchB);
+        sra.replaceWallet(orchA, orchB);
         vm.prank(owner2);
-        sra.replace(orchA, orchB);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        sra.replace(orchA, orchB);
+        sra.replaceWallet(orchA, orchB); // second vote executes (unanimousNoHold)
 
-        assertTrue(sra.isAdmitted(orchB));
-        assertFalse(sra.isAdmitted(orchA));
-        // bindings follow the identity transfer (id-keyed: the wallet re-point keeps the binding)
-        assertEq(sra.bindingOf(makeAddr("payer"), makeAddr("operator")), orchB);
+        assertTrue(sra.isAdmitted(orchA), "identity does not move (spec 3.2)");
+        assertFalse(sra.isAdmitted(orchB), "the new wallet is not an orchestrator identity");
+        // the binding stays with the same orchestrator; bindingOf reads its identity, which a
+        // replaceWallet does not move (issue #34: bindingOf returns the identity, not the wallet)
+        assertEq(sra.bindingOf(makeAddr("payer"), makeAddr("operator")), orchA);
 
         // third party orchC tries to grab the same pair -> expect AlreadyBound revert
         vm.prank(orchC);
@@ -335,21 +264,21 @@ contract SRARegistryTest is SRATestBase {
     function test_ReassignBinding_ChangesBinding() public {
         address orchA = makeAddr("orchA");
         address orchB = makeAddr("orchB");
-        _admit(orchA);
-        _admit(orchB);
+        _admit(orchA, orchA);
+        _admit(orchB, orchB);
 
         Binding[] memory pairs = new Binding[](1);
         pairs[0] = _pair(makeAddr("payer"), makeAddr("operator"));
         _registerPairsAs(orchA, pairs);
         assertEq(sra.bindingOf(makeAddr("payer"), makeAddr("operator")), orchA);
 
-        // governance reassignBinding(payer, operator, orchB)
+        // governance reassignBinding(payer, operator, orchB); inherit carried in the event only (CP6)
         vm.prank(owner1);
-        sra.reassignBinding(makeAddr("payer"), makeAddr("operator"), orchB);
+        sra.reassignBinding(makeAddr("payer"), makeAddr("operator"), orchB, true);
+        vm.expectEmit(true, true, true, true, address(sra));
+        emit ServiceRewardsActor.BindingReassigned(makeAddr("payer"), makeAddr("operator"), orchB, true);
         vm.prank(owner2);
-        sra.reassignBinding(makeAddr("payer"), makeAddr("operator"), orchB);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        sra.reassignBinding(makeAddr("payer"), makeAddr("operator"), orchB);
+        sra.reassignBinding(makeAddr("payer"), makeAddr("operator"), orchB, true); // second vote executes (unanimousNoHold)
 
         assertEq(sra.bindingOf(makeAddr("payer"), makeAddr("operator")), orchB);
     }
@@ -358,27 +287,44 @@ contract SRARegistryTest is SRATestBase {
     // G6: failure-path closure (governance operations unanimous+hold: errors thrown at the third permissionless body execution)
     // ------------------------------------------------------------------------
 
-    /// G6: replace target already admitted (admitted=true) -> AlreadyAdmitted revert at the third execution.
-    /// (The replace tests cover the target-unadmitted + binding-transfer path; this test covers the "target already admitted" reverse branch)
-    function test_Replace_AlreadyAdmittedTarget_Reverts() public {
+    /// G6: the new wallet collides with any admitted orchestrator's wallet -> DuplicateWallet revert (D7 check).
+    /// (The identity-namespace AlreadyAdmitted check was dropped with spec §3.2 — wallet and identity are
+    /// decoupled; here newWallet is admitted with _admit(x,x) so its wallet == itself, colliding with the new wallet.)
+    function test_Replace_DuplicateWalletTarget_Reverts() public {
         address oldOrch = makeAddr("oldOrch");
-        address newOrch = makeAddr("newOrch");
-        _admit(oldOrch);
-        _admit(newOrch); // target already admitted -> replace rejected
+        address newWallet = makeAddr("newWallet");
+        _admit(oldOrch, oldOrch);
+        _admit(newWallet, newWallet); // admitted: its wallet == itself -> collides with the new wallet
 
         vm.prank(owner1);
-        sra.replace(oldOrch, newOrch);
+        sra.replaceWallet(oldOrch, newWallet); // vote 1 (approve)
+        vm.expectRevert(); // DuplicateWallet(newWallet)
         vm.prank(owner2);
-        sra.replace(oldOrch, newOrch); // second vote: completes the full vote queue (wait)
-        vm.roll(block.number + SRA_CANCEL_HOLD); // hold elapsed
-        vm.expectRevert(); // AlreadyAdmitted(newOrch)
-        sra.replace(oldOrch, newOrch); // third permissionless body execution -> revert
+        sra.replaceWallet(oldOrch, newWallet); // vote 2 executes the body -> revert
     }
 
-    /// G6: reassignBinding target not admitted -> NotAdmitted revert at the third execution.
+    /// G6: the new wallet equals another orchestrator's *identity* address (wallet/identity decoupled,
+    /// allowed by spec §3.2) -> succeeds, as long as the wallet field itself does not collide with
+    /// another orchestrator's wallet (the D7 check compares wallet fields).
+    function test_Replace_WalletEqualsOtherIdentity_Succeeds() public {
+        address oldOrch = makeAddr("oldOrch");
+        address orchB = makeAddr("orchB"); // another orchestrator's identity address
+        _admit(oldOrch, makeAddr("old-wallet")); // oldOrch's wallet is distinct
+        _admit(orchB, makeAddr("orchB-wallet")); // orchB's wallet is distinct ( != its identity address)
+
+        vm.prank(owner1);
+        sra.replaceWallet(oldOrch, orchB); // new wallet = orchB (another identity's address)
+        vm.prank(owner2);
+        sra.replaceWallet(oldOrch, orchB); // succeeds: the wallet collides with no other wallet
+
+        assertTrue(sra.isAdmitted(oldOrch), "identity does not move");
+        assertTrue(sra.isAdmitted(orchB), "orchB identity unaffected");
+    }
+
+    /// G6: reassignBinding target not admitted -> NotAdmitted revert at the body execution.
     function test_ReassignBinding_NotAdmittedTarget_Reverts() public {
         address orchA = makeAddr("orchA");
-        _admit(orchA);
+        _admit(orchA, orchA);
 
         Binding[] memory pairs = new Binding[](1);
         pairs[0] = _pair(makeAddr("payer"), makeAddr("operator"));
@@ -386,37 +332,20 @@ contract SRARegistryTest is SRATestBase {
 
         address stranger = makeAddr("stranger"); // unadmitted target
         vm.prank(owner1);
-        sra.reassignBinding(makeAddr("payer"), makeAddr("operator"), stranger);
-        vm.prank(owner2);
-        sra.reassignBinding(makeAddr("payer"), makeAddr("operator"), stranger);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
+        sra.reassignBinding(makeAddr("payer"), makeAddr("operator"), stranger, false); // vote 1 (approve)
         vm.expectRevert(); // NotAdmitted(stranger)
-        sra.reassignBinding(makeAddr("payer"), makeAddr("operator"), stranger);
+        vm.prank(owner2);
+        sra.reassignBinding(makeAddr("payer"), makeAddr("operator"), stranger, false); // vote 2 executes the body -> revert
     }
 
-    /// G6: remove on a non-orchestrator (unadmitted) -> NotAdmitted revert at the third execution.
+    /// G6: remove on a non-orchestrator (unadmitted) -> NotAdmitted revert at the body execution.
     function test_Remove_NotAdmitted_Reverts() public {
         address stranger = makeAddr("stranger");
         vm.prank(owner1);
-        sra.remove(stranger);
-        vm.prank(owner2);
-        sra.remove(stranger);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
+        sra.removeOrchestrator(stranger); // vote 1 (approve)
         vm.expectRevert(); // NotAdmitted(stranger)
-        sra.remove(stranger);
-    }
-
-    /// G6: a frozen orchestrator can be removed (the implementation does not block it; remove also clears frozen state and freeze history).
-    function test_Remove_FrozenOrch_Succeeds() public {
-        address orch = makeAddr("orch");
-        _admit(orch);
-        _freeze(orch);
-        assertTrue(sra.isFrozen(orch));
-
-        _remove(orch);
-        assertFalse(sra.isAdmitted(orch));
-        assertFalse(sra.isFrozen(orch));
-        assertEq(sra.admittedCount(), 0);
+        vm.prank(owner2);
+        sra.removeOrchestrator(stranger); // vote 2 executes the body -> revert
     }
 
     // ------------------------------------------------------------------------
@@ -427,90 +356,27 @@ contract SRARegistryTest is SRATestBase {
     /// (G2 covered AtCapacity-full; the "same address re-admitted" branch was uncovered — coverage line 346)
     function test_Admit_AlreadyAdmitted_Reverts() public {
         address orch = makeAddr("orch");
-        _admit(orch);
+        _admit(orch, orch);
         assertTrue(sra.isAdmitted(orch));
 
         vm.prank(owner1);
-        sra.admit(orch);
-        vm.prank(owner2);
-        sra.admit(orch); // second vote: completes the full vote queue (wait)
-        vm.roll(block.number + SRA_CANCEL_HOLD);
+        sra.addOrchestrator(orch, orch); // vote 1 (approve)
         vm.expectRevert(); // AlreadyAdmitted(orch)
-        sra.admit(orch); // third permissionless body execution -> revert
-    }
-
-    /// Strategy 3/CV5: freeze on an unadmitted orchestrator -> NotAdmitted revert.
-    /// (The freeze success path is tested; the NotAdmitted failure branch was uncovered — coverage line 371)
-    function test_Freeze_NotAdmitted_Reverts() public {
-        address stranger = makeAddr("stranger");
-        vm.prank(owner1);
-        sra.freeze(stranger);
         vm.prank(owner2);
-        sra.freeze(stranger);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        vm.expectRevert(); // NotAdmitted(stranger)
-        sra.freeze(stranger);
-    }
-
-    /// Strategy 3/CV5: freeze on an already-frozen orchestrator -> AlreadyFrozen revert.
-    /// (coverage line 372 revert branch uncovered)
-    function test_Freeze_AlreadyFrozen_Reverts() public {
-        address orch = makeAddr("orch");
-        _admit(orch);
-        _freeze(orch);
-        assertTrue(sra.isFrozen(orch));
-
-        vm.prank(owner1);
-        sra.freeze(orch);
-        vm.prank(owner2);
-        sra.freeze(orch);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        vm.expectRevert(); // AlreadyFrozen(orch)
-        sra.freeze(orch);
-    }
-
-    /// Strategy 3/CV5: unfreeze on an unadmitted orchestrator -> NotAdmitted revert.
-    /// (coverage line 381 revert branch uncovered)
-    function test_Unfreeze_NotAdmitted_Reverts() public {
-        address stranger = makeAddr("stranger");
-        vm.prank(owner1);
-        sra.unfreeze(stranger);
-        vm.prank(owner2);
-        sra.unfreeze(stranger);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        vm.expectRevert(); // NotAdmitted(stranger)
-        sra.unfreeze(stranger);
-    }
-
-    /// Strategy 3/CV5: unfreeze on a non-frozen orchestrator -> NotFrozen revert.
-    /// (coverage line 382 revert branch uncovered)
-    function test_Unfreeze_NotFrozen_Reverts() public {
-        address orch = makeAddr("orch");
-        _admit(orch);
-        assertFalse(sra.isFrozen(orch));
-
-        vm.prank(owner1);
-        sra.unfreeze(orch);
-        vm.prank(owner2);
-        sra.unfreeze(orch);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        vm.expectRevert(); // NotFrozen(orch)
-        sra.unfreeze(orch);
+        sra.addOrchestrator(orch, orch); // vote 2 executes the body -> revert
     }
 
     /// Strategy 3/CV6: replace with an unadmitted old address -> NotAdmitted(oldOrch) revert.
     /// (G6 covered the "target already admitted" reverse branch; old unadmitted was uncovered — coverage line 396)
     function test_Replace_OldNotAdmitted_Reverts() public {
         address stranger = makeAddr("stranger"); // old address never admitted
-        address newOrch = makeAddr("newOrch");
+        address newWallet = makeAddr("newWallet");
 
         vm.prank(owner1);
-        sra.replace(stranger, newOrch);
-        vm.prank(owner2);
-        sra.replace(stranger, newOrch);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
+        sra.replaceWallet(stranger, newWallet); // vote 1 (approve)
         vm.expectRevert(); // NotAdmitted(stranger)
-        sra.replace(stranger, newOrch);
+        vm.prank(owner2);
+        sra.replaceWallet(stranger, newWallet); // vote 2 executes the body -> revert
     }
 
     /// Strategy 5/CV7: the orchestratorCount read-only view reflects admission/removal counts (consistent with admittedCount).
@@ -520,48 +386,14 @@ contract SRARegistryTest is SRATestBase {
 
         address a = makeAddr("orchA");
         address b = makeAddr("orchB");
-        _admit(a);
-        _admit(b);
+        _admit(a, a);
+        _admit(b, b);
         assertEq(sra.orchestratorCount(), 2);
         assertEq(sra.orchestratorCount(), sra.admittedCount()); // view consistency
 
+        _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
         _remove(a);
         assertEq(sra.orchestratorCount(), 1);
-    }
-
-    // ------------------------------------------------------------------------
-    // re-admit = fresh identity (clears frozen/freeze history)
-    // ------------------------------------------------------------------------
-
-    /// Re-admit allocates a fresh identity: frozen state and freeze history are cleared, so a
-    /// re-admitted address operates as a normal orchestrator, not excluded by historical freezes.
-    function test_ReAdmit_ResetsFrozenState() public {
-        address oldOrch = makeAddr("readmit-frozen-old");
-        address newOrch = makeAddr("readmit-frozen-new");
-        _admit(oldOrch);
-        _freeze(oldOrch); // old frozen (frozenSince recorded)
-
-        // replace(old->new): the frozen state is copied wholesale with the struct to new (identity-transfer semantics)
-        vm.prank(owner1);
-        sra.replace(oldOrch, newOrch);
-        vm.prank(owner2);
-        sra.replace(oldOrch, newOrch);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        sra.replace(oldOrch, newOrch);
-        assertTrue(sra.isFrozen(newOrch), "new inherits frozen state from old");
-        assertTrue(sra.isAdmitted(newOrch));
-        assertFalse(sra.isAdmitted(oldOrch)); // old invalidated (alias)
-
-        // re-admit old: fresh identity (clears frozen state)
-        _admit(oldOrch);
-        assertTrue(sra.isAdmitted(oldOrch));
-        assertFalse(sra.isFrozen(oldOrch), "re-admit must reset frozen state");
-
-        // after re-admission old operates as a normal orchestrator (postVolume not excluded by freeze history)
-        vm.roll(_qEnd(1) + 1); // quarter 1 posting window
-        _postAs(oldOrch, 1, _fpv(100e18)); // not reverting proves normal operation
-        FilecoinPayVolume memory f = sra.fpvOf(1, oldOrch);
-        assertEq(FixedU18.unwrap(f.usd), 100e18);
     }
 
     // ------------------------------------------------------------------------
@@ -574,8 +406,8 @@ contract SRARegistryTest is SRATestBase {
     function test_ReAdmit_FreshIdentity_NoBindingsNoFilecoinPayVolume() public {
         address oldOrch = makeAddr("fresh-old");
         address third = makeAddr("fresh-third");
-        _admit(oldOrch);
-        _admit(third);
+        _admit(oldOrch, oldOrch);
+        _admit(third, third);
 
         Binding[] memory pairs = new Binding[](1);
         pairs[0] = _pair(makeAddr("payer"), makeAddr("operator"));
@@ -585,13 +417,13 @@ contract SRARegistryTest is SRATestBase {
         vm.roll(_qEnd(0) + 1); // q0 posting window
         _postAs(oldOrch, 0, _fpv(100e18));
 
+        _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
         _remove(oldOrch);
         assertFalse(sra.isAdmitted(oldOrch));
 
         // re-admit the same address: fresh identity
-        _admit(oldOrch);
+        _admit(oldOrch, oldOrch);
         assertTrue(sra.isAdmitted(oldOrch));
-        assertFalse(sra.isFrozen(oldOrch));
 
         // the removed identity's binding does not carry over: the pair is claimable by a third party
         _registerPairsAs(third, pairs); // no revert -> the old id's binding is not inherited
@@ -610,14 +442,15 @@ contract SRARegistryTest is SRATestBase {
         assertEq(uint64(uint256(vm.load(address(sra), slot))), 1, "nextId starts at 1 (0 = sentinel)");
 
         address a = makeAddr("id-a");
-        _admit(a);
+        _admit(a, a);
         assertEq(uint64(uint256(vm.load(address(sra), slot))), 2, "first admit consumes id 1");
 
+        _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
         _remove(a);
-        _admit(a); // re-admit allocates a NEW id (never reused)
+        _admit(a, a); // re-admit allocates a NEW id (never reused)
         assertEq(uint64(uint256(vm.load(address(sra), slot))), 3, "re-admit allocates a fresh id");
 
-        _admit(makeAddr("id-b"));
+        _admit(makeAddr("id-b"), makeAddr("id-b"));
         assertEq(uint64(uint256(vm.load(address(sra), slot))), 4, "ids increase strictly");
     }
 
@@ -637,10 +470,10 @@ contract SRARegistryTest is SRATestBase {
         id = uint64(uint256(vm.load(address(sra), wordSlot)) >> ((i % 4) * 64));
     }
 
-    /// @dev orchestrators mapping at REGISTRY_SLOT; struct word 3 = admittedIndex (added after prevFpv).
+    /// @dev orchestrators mapping at REGISTRY_SLOT; struct word 4 = admittedIndex (orchestrator field added in word 0 shifts it past prevFpv).
     function _admittedIndexOf(uint64 id) internal view returns (uint64 idx) {
         bytes32 base = keccak256(abi.encode(uint64(id), REGISTRY_SLOT));
-        idx = uint64(uint256(vm.load(address(sra), bytes32(uint256(base) + 3))));
+        idx = uint64(uint256(vm.load(address(sra), bytes32(uint256(base) + 4))));
     }
 
     /// OrchestratorInfo invariant: every admitted id's admittedIndex == its position in admittedIds.
@@ -658,10 +491,11 @@ contract SRARegistryTest is SRATestBase {
         address a = makeAddr("mid-a");
         address b = makeAddr("mid-b");
         address c = makeAddr("mid-c");
-        _admit(a);
-        _admit(b);
-        _admit(c); // ids 1, 2, 3
+        _admit(a, a);
+        _admit(b, b);
+        _admit(c, c); // ids 1, 2, 3
 
+        _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
         _remove(b); // remove middle (id 2): list [1, 3] — id 3 swapped into position 1
 
         assertEq(_admittedIdsLength(), 2);
@@ -677,9 +511,10 @@ contract SRARegistryTest is SRATestBase {
     function test_Remove_LastElement_IndexIntact() public {
         address a = makeAddr("last-a");
         address b = makeAddr("last-b");
-        _admit(a);
-        _admit(b); // ids 1, 2
+        _admit(a, a);
+        _admit(b, b); // ids 1, 2
 
+        _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
         _remove(b); // remove last (id 2): list [1]
 
         assertEq(_admittedIdsLength(), 1);
@@ -695,11 +530,12 @@ contract SRARegistryTest is SRATestBase {
         address b = makeAddr("seq-b");
         address c = makeAddr("seq-c");
         address d = makeAddr("seq-d");
-        _admit(a);
-        _admit(b);
-        _admit(c);
-        _admit(d); // ids 1, 2, 3, 4
+        _admit(a, a);
+        _admit(b, b);
+        _admit(c, c);
+        _admit(d, d); // ids 1, 2, 3, 4
 
+        _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
         _remove(a); // head: list [4, 2, 3]
         assertEq(_admittedIndexOf(4), 0, "head removal swaps last to front");
         assertEq(_admittedIndexOf(1), 0, "removed id's admittedIndex cleared (dead pointer)");
@@ -724,14 +560,15 @@ contract SRARegistryTest is SRATestBase {
     function test_Remove_ThenAdmit_NewAdmitGetsPushIndex() public {
         address a = makeAddr("readmit-a");
         address b = makeAddr("readmit-b");
-        _admit(a);
-        _admit(b); // ids 1, 2; list [1, 2]
+        _admit(a, a);
+        _admit(b, b); // ids 1, 2; list [1, 2]
 
+        _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
         _remove(b); // list [1] (length 1)
         assertEq(_admittedIndexOf(2), 0, "removed id's admittedIndex cleared (dead pointer)");
 
         address c = makeAddr("readmit-c");
-        _admit(c); // id 3 pushed at position 1
+        _admit(c, c); // id 3 pushed at position 1
 
         assertEq(_admittedIdsLength(), 2);
         assertEq(_admittedIdAt(0), 1);
