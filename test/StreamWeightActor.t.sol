@@ -29,13 +29,11 @@ contract StreamWeightActorTest is MockRewardTest {
         owner1 = makeAddr("owner1");
         owner2 = makeAddr("owner2");
 
-        address sra = makeAddr("sra");
-        vm.mockCall(
-            sra, abi.encodeWithSelector(IServiceRewardsActor.EPOCHS_PER_QUARTER.selector), abi.encode(TEST_QUARTER)
-        );
-        vm.mockCall(sra, abi.encodeWithSelector(IServiceRewardsActor.SRA_CANCEL_HOLD.selector), abi.encode(TEST_HOLD));
+        // The actor only calls the SRA from quarterlyGateCheck, which these tests don't exercise,
+        // so an unbacked address stands in for it.
+        IServiceRewardsActor sra = IServiceRewardsActor(makeAddr("sra"));
 
-        actor = new StreamWeightActor(owner1, owner2, IServiceRewardsActor(sra));
+        actor = new StreamWeightActor(owner1, owner2, sra, TEST_QUARTER, TEST_HOLD);
         rewardActor().mockSwa(address(actor));
     }
 

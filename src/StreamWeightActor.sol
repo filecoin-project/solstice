@@ -25,12 +25,10 @@ contract StreamWeightActor is UnanimousGovernance {
 
     /// @notice Deploys the actor, bound to a Service Rewards Actor.
     /// @param sra Service Rewards Actor supplying QUARTER/HOLD and gating `quarterlyGateCheck`.
-    constructor(IServiceRewardsActor sra) {
+    constructor(IServiceRewardsActor sra, Epoch quarter, Epoch hold) {
         SRA = sra;
-        QUARTER = sra.EPOCHS_PER_QUARTER();
-        HOLD = sra.SRA_CANCEL_HOLD();
-
-        GateParamsLibrary.init();
+        QUARTER = quarter;
+        HOLD = hold;
     }
 
     /// @notice Queues a new implicit stream.

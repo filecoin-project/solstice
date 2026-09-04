@@ -31,6 +31,8 @@ contract UnanimousGovernance {
         PendingTask memory loaded = taskInfo.task;
         OwnerSet allOwners = OwnersLibrary.getAllOwners();
 
+        require(allOwners != EMPTY_SET, NotOwner(msg.sender));
+
         // modify
         if (loaded.approvals & allOwners == allOwners) {
             // already approved: permissionless completion

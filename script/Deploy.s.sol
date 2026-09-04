@@ -2,15 +2,21 @@
 pragma solidity ^0.8.36;
 
 import {Bootstrap} from "erc8167/interfaces/Bootstrap.sol";
-import {Implementation} from "erc8167/interfaces/Implementation.sol";
+import {Migration, SetDelegateOperation} from "erc8167/lib/Migration.sol";
 import {Script} from "forge-std/Script.sol";
 import {IDeployer} from "ReservedAddress/interfaces/IDeployer.sol";
 
+import {ServiceRewardsActor} from "../src/ServiceRewardsActor.sol";
+import {IServiceRewardsActor} from "../src/interfaces/IServiceRewardsActor.sol";
+import {StreamWeightActor} from "../src/StreamWeightActor.sol";
 import {Epoch} from "../src/lib/Epoch.sol";
+import {InitializableGateParams} from "../src/lib/GateParams.sol";
 import {InitializableOwners} from "../src/lib/InitializableOwners.sol";
 import {Migratable} from "../src/lib/Migratable.sol";
 
 contract DeployScript is Script {
+    using Migration for SetDelegateOperation[];
+
     address constant ROOT_DEPLOYER = 0x3ef96E9f82CaFE4a05183b59e7671E39B6b26347;
     IDeployer constant ROOT = IDeployer(0x000000000000c57CF0A1f923d44527e703F1ad70);
     address constant SRA = 0x888808e3e6888E8988E8178864cA861d8882e88A;
@@ -39,7 +45,51 @@ contract DeployScript is Script {
         require(account.code.length != 0);
     }
 
-    function run(Epoch hold) public {
+    function createSraMigration(
+        address,
+        /*streamWeightActor*/
+        address,
+        /*sraOwners*/
+        address,
+        /*implementationMethod*/
+        address /*migrateMethod*/
+    )
+        internal
+        returns (address migration)
+    {
+        // TODO
+        SetDelegateOperation[] memory operations = new SetDelegateOperation[](0);
+        return operations.createMigration();
+    }
+
+    function createSwaMigration(
+        address,
+        /*serviceRewardsActor*/
+        address,
+        /*swaOwners*/
+        address,
+        /*implementationMethod*/
+        address,
+        /*migrateMethod*/
+        address /*initializeGateParamsMethod*/
+    )
+        internal
+        returns (address migration)
+    {
+        // TODO
+        SetDelegateOperation[] memory operations = new SetDelegateOperation[](0);
+        return operations.createMigration();
+    }
+
+    function run(
+        Epoch epochsToHold,
+        Epoch epochsPerQuarter,
+        Epoch postPeriod,
+        Epoch verificationWindow,
+        Epoch activationEpoch,
+        uint256 minLot,
+        uint256 priceBand
+    ) public {
         vm.deal(ROOT_DEPLOYER, 0.2 ether);
 
         vm.startBroadcast();
@@ -52,40 +102,67 @@ contract DeployScript is Script {
         ROOT.reveal(SRA, SRA_SALT);
         ROOT.reveal(SWA, SWA_SALT);
 
-        address proxyDeployer = create(bytes.concat(
-            UNIVERSAL_CONSTRUCTOR,
-            vm.getCode("lib/erc8167/out/Proxy.constructor.evm/Proxy.constructor.json")
-        ));
+        {
+            address proxyDeployer = create(
+                bytes.concat(
+                    UNIVERSAL_CONSTRUCTOR, vm.getCode("lib/erc8167/out/Proxy.constructor.evm/Proxy.constructor.json")
+                )
+            );
 
-        ROOT.deploy(SRA, proxyDeployer);
-        ROOT.deploy(SWA, proxyDeployer);
+            ROOT.deploy(SRA, proxyDeployer);
+            ROOT.deploy(SWA, proxyDeployer);
+        }
 
-        bytes32 proxyCodeHash = keccak256(vm.getDeployedCode("lib/erc8167/out/Proxy.evm/Proxy.json"));
-        require(SRA.codehash == proxyCodeHash);
-        require(SWA.codehash == proxyCodeHash);
+        {
+            bytes32 proxyCodeHash = keccak256(vm.getDeployedCode("lib/erc8167/out/Proxy.evm/Proxy.json"));
+            require(SRA.codehash == proxyCodeHash);
+            require(SWA.codehash == proxyCodeHash);
+        }
 
+        {
+            address bootstrapMigrateMethod =
+                create(vm.getCode("lib/erc8167/out/Migrate.constructor.evm/Migrate.constructor.evm"));
+            ROOT.call(
+                SRA,
+                abi.encodeWithSelector(
+                    Bootstrap.configure.selector, Migratable.migrate.selector, bootstrapMigrateMethod
+                )
+            );
+            ROOT.call(
+                SWA,
+                abi.encodeWithSelector(
+                    Bootstrap.configure.selector, Migratable.migrate.selector, bootstrapMigrateMethod
+                )
+            );
+        }
+
+        // deploy facets
         address implementationMethod = create(vm.getCode("lib/erc8167/out/Implementation.evm/Implementation.json"));
-        ROOT.call(SRA, abi.encodeWithSelector(Bootstrap.configure.selector, Implementation.implementation.selector, implementationMethod));
-        ROOT.call(SWA, abi.encodeWithSelector(Bootstrap.configure.selector, Implementation.implementation.selector, implementationMethod));
-        require(Implementation(SRA).implementation(Implementation.implementation.selector) == implementationMethod);
-        require(Implementation(SWA).implementation(Implementation.implementation.selector) == implementationMethod);
+        address sraOwners = address(new InitializableOwners(SRA_OWNER1, SRA_OWNER2));
+        address swaOwners = address(new InitializableOwners(SWA_OWNER1, SWA_OWNER2));
+        address streamWeightActor =
+            address(new StreamWeightActor(IServiceRewardsActor(SRA), epochsPerQuarter, epochsToHold));
+        address serviceRewardsActor = address(
+            new ServiceRewardsActor(
+                epochsPerQuarter, postPeriod, verificationWindow, epochsToHold, activationEpoch, minLot, priceBand
+            )
+        );
+        address migrateMethod = address(new Migratable(epochsToHold)); // overwrites bootstrapping migrate method
+        address initializeGateParamsMethod = address(new InitializableGateParams());
 
-        InitializableOwners sraOwners = new InitializableOwners(SRA_OWNER1, SRA_OWNER2);
-        InitializableOwners swaOwners = new InitializableOwners(SWA_OWNER1, SWA_OWNER2);
-        ROOT.call(SRA, abi.encodeWithSelector(Bootstrap.configure.selector, InitializableOwners.initializeOwners.selector, sraOwners));
-        ROOT.call(SWA, abi.encodeWithSelector(Bootstrap.configure.selector, InitializableOwners.initializeOwners.selector, swaOwners));
+        // TODO deploy migration
+        address sraMigration = createSraMigration(streamWeightActor, sraOwners, implementationMethod, migrateMethod);
+        address swaMigration = createSwaMigration(
+            serviceRewardsActor, swaOwners, implementationMethod, migrateMethod, initializeGateParamsMethod
+        );
+
+        // run migration
+        Migratable(SRA).migrate(sraMigration);
+        Migratable(SWA).migrate(swaMigration);
 
         InitializableOwners(SRA).initializeOwners();
         InitializableOwners(SWA).initializeOwners();
-
-        Migratable migratableImpl = new Migratable(hold);
-        ROOT.call(SRA, abi.encodeWithSelector(Bootstrap.configure.selector, Migratable.migrate.selector, migratableImpl));
-        ROOT.call(SWA, abi.encodeWithSelector(Bootstrap.configure.selector, Migratable.migrate.selector, migratableImpl));
-
-        // TODO deploy migration
-
+        InitializableGateParams(SWA).initializeGateParams();
         vm.stopBroadcast();
-
-        // TODO run migration as owners
     }
 }

@@ -3,6 +3,7 @@ pragma solidity ^0.8.36;
 
 import {StreamWeightActor} from "../src/StreamWeightActor.sol";
 import {IServiceRewardsActor} from "../src/interfaces/IServiceRewardsActor.sol";
+import {Epoch} from "../src/lib/Epoch.sol";
 import {OwnersLibrary} from "../src/lib/Owners.sol";
 
 /// @notice Flat (non-proxy) StreamWeightActor for tests: seeds the two owners in the
@@ -11,7 +12,9 @@ import {OwnersLibrary} from "../src/lib/Owners.sol";
 contract FlatStreamWeightActor is StreamWeightActor {
     using OwnersLibrary for address;
 
-    constructor(address owner1, address owner2, IServiceRewardsActor sra) StreamWeightActor(sra) {
+    constructor(address owner1, address owner2, IServiceRewardsActor sra, Epoch quarter, Epoch hold)
+        StreamWeightActor(sra, quarter, hold)
+    {
         owner1.addOwner();
         owner2.addOwner();
     }

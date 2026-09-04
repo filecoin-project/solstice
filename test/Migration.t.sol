@@ -4,6 +4,7 @@ pragma solidity ^0.8.36;
 import {Bootstrap} from "erc8167/interfaces/Bootstrap.sol";
 import {IERC8167} from "erc8167/interfaces/IERC8167.sol";
 import {Implementation} from "erc8167/interfaces/Implementation.sol";
+import {SetDelegate} from "erc8167/lib/SetDelegate.sol";
 import {Test} from "forge-std/Test.sol";
 import {Epoch} from "../src/lib/Epoch.sol";
 import {InitializableOwners} from "../src/lib/InitializableOwners.sol";
@@ -31,7 +32,8 @@ contract MigrationTest is Test {
         vm.etch(implementationMethod, vm.getDeployedCode("lib/erc8167/out/Implementation.evm/Implementation.json"));
         Bootstrap(proxyAddress).configure(Implementation.implementation.selector, implementationMethod);
 
-        Bootstrap(proxyAddress).configure(InitializableOwners.initializeOwners.selector, address(new InitializableOwners(owner1, owner2)));
+        Bootstrap(proxyAddress)
+            .configure(InitializableOwners.initializeOwners.selector, address(new InitializableOwners(owner1, owner2)));
         InitializableOwners(proxyAddress).initializeOwners();
         Bootstrap(proxyAddress).configure(Migratable.migrate.selector, address(new Migratable(HOLD_EPOCHS)));
         proxy = Migratable(proxyAddress);
@@ -44,7 +46,7 @@ contract MigrationTest is Test {
     function testMigrate() public {
         // create a simple migration that uninstalls Bootstrap.configure
         address migration = makeAddr("migration");
-        bytes memory migrationCode = hex"5f7f9e5badb7e9e4be042cb44f289e6b2cacbaa8f93a016a25bbfbda16d82de4943555";
+        bytes memory migrationCode = SetDelegate.setDelegateBytecode(Bootstrap.configure.selector, address(0));
         vm.etch(migration, migrationCode);
 
         address before = getBootstrapImplementation();
