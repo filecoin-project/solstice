@@ -20,20 +20,18 @@ contract StreamWeightActor is UnanimousGovernance {
     using OwnersLibrary for address;
 
     IServiceRewardsActor immutable SRA;
-    Epoch immutable QUARTER;
     Epoch immutable HOLD;
 
     /// @notice Deploys the actor with its two initial owners, bound to a Service Rewards Actor.
     /// @param owner1 First owner.
     /// @param owner2 Second owner.
-    /// @param sra Service Rewards Actor supplying QUARTER and gating `quarterlyGateCheck`.
+    /// @param sra Service Rewards Actor gating `quarterlyGateCheck`.
     /// @param hold Timelock applied to `setGateParams` updates
     constructor(address owner1, address owner2, IServiceRewardsActor sra, Epoch hold) {
         owner1.addOwner();
         owner2.addOwner();
 
         SRA = sra;
-        QUARTER = sra.EPOCHS_PER_QUARTER();
         HOLD = hold;
 
         GateParamsLibrary.init();
