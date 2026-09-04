@@ -10,6 +10,7 @@ via_ir = false
 optimizer = true
 optimizer_runs = 2000
 bytecode_hash = "none"
+cbor_metadata = false
 
 # For dependencies
 remappings = [
@@ -21,6 +22,15 @@ fs_permissions = [
     { access = "read", path = "./lib/erc8167/out/" },
     { access = "read", path = "./lib/ReservedAddress/" },
 ]
+
+# Fast invariant campaign for local iteration; CI overrides with FOUNDRY_PROFILE=ci.
+[profile.default.invariant]
+runs = 16
+depth = 64
+
+[profile.ci.invariant]
+runs = 256
+depth = 500
 
 [lint]
 severity = ["high", "med", "low", "info", "gas", "code-size"]
