@@ -40,7 +40,7 @@ contract DeployScript is Script {
 
     /// @dev Reads every external/public function selector out of a forge build artifact's
     ///      `methodIdentifiers`, so migrations don't need to hardcode a contract's ABI by hand.
-    function getSelectors(string memory artifactPath) internal returns (bytes4[] memory selectors) {
+    function getSelectors(string memory artifactPath) internal view returns (bytes4[] memory selectors) {
         // forge-lint: disable-next-line(unsafe-cheatcode)
         string memory json = vm.readFile(artifactPath);
         string[] memory signatures = vm.parseJsonKeys(json, ".methodIdentifiers");
