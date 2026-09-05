@@ -4,14 +4,13 @@ pragma solidity ^0.8.36;
 import {USR_FORBIDDEN, USR_ILLEGAL_ARGUMENT, USR_NOT_FOUND} from "fvm-solidity/FVMErrors.sol";
 
 import {MockRewardTest} from "./mocks/MockRewardTest.sol";
-import {WAD} from "./mocks/FVMRewardActor.sol";
+import {FVMRewardActor, MockState, WAD, MAINNET_TIMELOCK} from "./mocks/FVMRewardActor.sol";
 import {StreamWeightActor} from "../src/StreamWeightActor.sol";
 import {IServiceRewardsActor} from "../src/interfaces/IServiceRewardsActor.sol";
-import {PendingOp, Share, WeightRecord, WeightRecordUpdate} from "../src/lib/FVMRewardTypes.sol";
+import {DistributionKind, PendingOp, Share, WeightRecord, WeightRecordUpdate} from "../src/lib/FVMRewardTypes.sol";
 import {Epoch} from "../src/lib/Epoch.sol";
 import {FixedU18} from "../src/lib/FixedU18.sol";
 import {FVMRewards} from "../src/lib/FVMRewards.sol";
-import {SWA_TIMELOCK} from "../src/lib/FVMRewardMethod.sol";
 
 contract StreamWeightActorTest is MockRewardTest {
     StreamWeightActor actor;
@@ -21,21 +20,14 @@ contract StreamWeightActorTest is MockRewardTest {
     uint64 constant STREAM_ID = 1;
     address constant WRITER = address(0xBEEF);
 
-    Epoch constant TEST_QUARTER = Epoch.wrap(262980); // epochs per 365.25/4 days
-    Epoch constant TEST_HOLD = Epoch.wrap(2 * 60 * 24 * 7); // epochs per 7 days
-
     function setUp() public override {
         super.setUp();
         owner1 = makeAddr("owner1");
         owner2 = makeAddr("owner2");
 
-        address sra = makeAddr("sra");
-        vm.mockCall(
-            sra, abi.encodeWithSelector(IServiceRewardsActor.EPOCHS_PER_QUARTER.selector), abi.encode(TEST_QUARTER)
-        );
-        vm.mockCall(sra, abi.encodeWithSelector(IServiceRewardsActor.SRA_CANCEL_HOLD.selector), abi.encode(TEST_HOLD));
-
-        actor = new StreamWeightActor(owner1, owner2, IServiceRewardsActor(sra));
+        // mainnet hold: StreamWeightGate tests exercise the timelock boundary at MAINNET_TIMELOCK
+        actor =
+            new StreamWeightActor(owner1, owner2, IServiceRewardsActor(makeAddr("sra")), Epoch.wrap(MAINNET_TIMELOCK));
         rewardActor().mockSwa(address(actor));
     }
 
@@ -48,7 +40,7 @@ contract StreamWeightActorTest is MockRewardTest {
     }
 
     function _activation() internal view returns (uint64) {
-        return uint64(block.number) + SWA_TIMELOCK;
+        return uint64(block.number) + MAINNET_TIMELOCK;
     }
 
     function _shares() internal pure returns (Share[] memory shares) {
@@ -72,7 +64,18 @@ contract StreamWeightActorTest is MockRewardTest {
         actor.registerStream(id, _record(0.1e18), WRITER, _shares(), _activation());
         vm.prank(owner2);
         actor.registerStream(id, _record(0.1e18), WRITER, _shares(), _activation());
-        vm.roll(block.number + SWA_TIMELOCK);
+        vm.roll(block.number + MAINNET_TIMELOCK);
+    }
+
+    /// @dev Whether f02 currently holds a queued per-stream op for `id` (reads the mock's state).
+    function _hasPending(uint64 id, PendingOp op) internal view returns (bool) {
+        MockState memory st = rewardActor().mockState();
+        for (uint256 i = 0; i < st.pendingWrites.length; i++) {
+            if (st.pendingWrites[i].hasId && st.pendingWrites[i].id == id && st.pendingWrites[i].op == op) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // -------------------------------------------------------------------------
@@ -125,6 +128,44 @@ contract StreamWeightActorTest is MockRewardTest {
             abi.encodeWithSelector(FVMRewards.RegisterStreamFailed.selector, int256(uint256(USR_ILLEGAL_ARGUMENT)))
         );
         actor.registerStream(STREAM_ID, _record(0.1e18), WRITER, _shares(), _activation());
+    }
+
+    /// @dev The 3-arg overload (no writer/shares) queues an IMPLICIT registration: f02 resolves
+    /// the recipient from protocol state, so the queued and applied stream carry no writer or map.
+    function test_RegisterStream_ImplicitOverload_QueuesImplicitRegistration() public {
+        vm.prank(owner1);
+        actor.registerStream(STREAM_ID, _record(0.1e18), _activation());
+        vm.prank(owner2);
+        actor.registerStream(STREAM_ID, _record(0.1e18), _activation());
+
+        // Both approvals executed the body: f02 holds a queued REGISTER with a null distribution.
+        MockState memory st = rewardActor().mockState();
+        bool found;
+        for (uint256 i = 0; i < st.pendingWrites.length; i++) {
+            if (
+                st.pendingWrites[i].hasId && st.pendingWrites[i].id == STREAM_ID
+                    && st.pendingWrites[i].op == PendingOp.REGISTER
+            ) {
+                found = true;
+                assertEq(
+                    uint256(st.pendingWrites[i].distributionKind),
+                    uint256(DistributionKind.IMPLICIT),
+                    "queued as IMPLICIT"
+                );
+                assertEq(st.pendingWrites[i].writer, address(0), "implicit registration carries no writer");
+            }
+        }
+        assertTrue(found, "REGISTER queued for the stream");
+
+        // Settling applies it as a live IMPLICIT stream.
+        vm.roll(block.number + MAINNET_TIMELOCK);
+        rewardActor().mockSettle();
+
+        st = rewardActor().mockState();
+        assertEq(st.streams.length, 1, "registration applied");
+        assertEq(st.streams[0].id, STREAM_ID);
+        assertEq(uint256(st.streams[0].kind), uint256(DistributionKind.IMPLICIT), "applied as IMPLICIT");
+        assertEq(st.streams[0].writer, address(0));
     }
 
     // -------------------------------------------------------------------------
@@ -265,6 +306,34 @@ contract StreamWeightActorTest is MockRewardTest {
         vm.prank(owner1);
         vm.expectRevert(abi.encodeWithSelector(FVMRewards.CancelPendingFailed.selector, int256(uint256(USR_FORBIDDEN))));
         actor.cancelPendingWeight(PendingOp.SET_WEIGHT);
+    }
+
+    /// @dev Cancelling a genuinely queued per-stream op: the registration is approved by both
+    /// owners and queued at f02, so the cancel clears the occupied slot and the stream never lands.
+    function test_CancelPending_QueuedRegister_RemovesPending() public {
+        vm.prank(owner1);
+        actor.registerStream(STREAM_ID, _record(0.1e18), WRITER, _shares(), _activation());
+        vm.prank(owner2);
+        actor.registerStream(STREAM_ID, _record(0.1e18), WRITER, _shares(), _activation());
+        assertTrue(_hasPending(STREAM_ID, PendingOp.REGISTER), "registration pending before the cancel");
+
+        vm.expectEmit(true, true, true, true);
+        emit FVMRewardActor.PendingCancelled(STREAM_ID, PendingOp.REGISTER);
+        vm.prank(owner2); // either owner cancels immediately
+        actor.cancelPending(STREAM_ID, PendingOp.REGISTER);
+
+        assertFalse(_hasPending(STREAM_ID, PendingOp.REGISTER), "pending slot cleared by the cancel");
+
+        // Rolling past the registration's activation epoch applies nothing.
+        vm.roll(block.number + MAINNET_TIMELOCK);
+        rewardActor().mockSettle();
+        assertEq(rewardActor().mockState().streams.length, 0, "cancelled registration never applies");
+
+        // The freed slot admits a fresh registration for the same id.
+        vm.prank(owner1);
+        actor.registerStream(STREAM_ID, _record(0.1e18), WRITER, _shares(), _activation());
+        vm.prank(owner2);
+        actor.registerStream(STREAM_ID, _record(0.1e18), WRITER, _shares(), _activation());
     }
 
     // -------------------------------------------------------------------------
