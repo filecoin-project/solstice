@@ -14,7 +14,7 @@ import {ServiceRewardsActor} from "../src/ServiceRewardsActor.sol";
 import {Binding, FilecoinPayVolume} from "../src/lib/SraTypes.sol";
 
 /// @dev ERC-7201 Registry namespace slot (src/lib/SraStorage.sol) — the id allocator lives at
-///      REGISTRY_SLOT + 3 (low 64 bits = nextId). The test reads it directly because the id is
+///      REGISTRY_SLOT + 3 (low 64 bits = allocatedIds). The test reads it directly because the id is
 ///      internal to the identity model (no public getter).
 bytes32 constant REGISTRY_SLOT = 0xb7fd4b054ced95f43476af93bf71636318271f9e64f7661dc52f0fb4c1a54400;
 
@@ -606,19 +606,19 @@ contract SRARegistryTest is SRATestBase {
     /// increase strictly — remove + re-admit of the same address consumes a new id (never the archived one).
     /// Reads the ERC-7201 registry slot directly (no public getter — the id is internal to the identity model).
     function test_Admit_IdMonotonic_NeverReused() public {
-        bytes32 slot = bytes32(uint256(REGISTRY_SLOT) + 3); // nextId sits alone in slot3's low 64 bits (no admittedCount packing)
-        assertEq(uint64(uint256(vm.load(address(sra), slot))), 1, "nextId starts at 1 (0 = sentinel)");
+        bytes32 slot = bytes32(uint256(REGISTRY_SLOT) + 3); // allocatedIds sits alone in slot3's low 64 bits (no admittedCount packing)
+        assertEq(uint64(uint256(vm.load(address(sra), slot))), 0, "allocatedIds starts at 0 (0 = sentinel)");
 
         address a = makeAddr("id-a");
         _admit(a);
-        assertEq(uint64(uint256(vm.load(address(sra), slot))), 2, "first admit consumes id 1");
+        assertEq(uint64(uint256(vm.load(address(sra), slot))), 1, "first admit consumes id 1");
 
         _remove(a);
         _admit(a); // re-admit allocates a NEW id (never reused)
-        assertEq(uint64(uint256(vm.load(address(sra), slot))), 3, "re-admit allocates a fresh id");
+        assertEq(uint64(uint256(vm.load(address(sra), slot))), 2, "re-admit allocates a fresh id");
 
         _admit(makeAddr("id-b"));
-        assertEq(uint64(uint256(vm.load(address(sra), slot))), 4, "ids increase strictly");
+        assertEq(uint64(uint256(vm.load(address(sra), slot))), 3, "ids increase strictly");
     }
 
     // ------------------------------------------------------------------------

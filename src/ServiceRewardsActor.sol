@@ -117,9 +117,6 @@ contract ServiceRewardsActor is UnanimousGovernance {
         SraStorage.SraStorageParams storage p = SraStorage.params();
         p.minLot = minLot;
         p.priceBand = priceBand;
-
-        // id allocator starts at 1: 0 is the unregistered sentinel (activeIdOf[addr] == 0)
-        SraStorage.registry().nextId = 1;
     }
 
     // ------------------------------------------------------------------------
@@ -300,8 +297,8 @@ contract ServiceRewardsActor is UnanimousGovernance {
         SraStorage.SraStorageRegistry storage r = SraStorage.registry();
         require(r.activeIdOf[orch] == 0, AlreadyAdmitted(orch));
         require(r.admittedIds.length < MAX_ORCHESTRATORS, AtCapacity());
-        uint64 id = r.nextId;
-        r.nextId = id + 1;
+        uint64 id = r.allocatedIds + 1;
+        r.allocatedIds = id;
         SraStorage.OrchestratorInfo storage o = r.orchestrators[id];
         o.wallet = orch;
         o.admitted = true;
