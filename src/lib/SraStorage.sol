@@ -25,7 +25,7 @@ library SraStorage {
         mapping(uint64 id => OrchestratorInfo) orchestrators; // id is the identity (monotonic, never reused)
         mapping(address orch => uint64 id) activeIdOf; // current effective address -> id (0 = unregistered sentinel)
         mapping(bytes32 pairId => uint64 id) bindings; // pairId = keccak256(abi.encode(payer, operator))
-        uint64 nextId; // id allocator
+        uint64 allocatedIds; // id allocator
         uint64[] admittedIds; // enumerable admitted (incl. frozen)
     }
 

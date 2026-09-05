@@ -16,6 +16,13 @@ cbor_metadata = false
 remappings = [
     'forge-std/=lib/forge-std/src/',
     'fvm-solidity/=lib/fvm-solidity/src/',
+    'erc8167/=lib/erc8167/src/',
+]
+
+fs_permissions = [
+    { access = "read", path = "./out/" },
+    { access = "read", path = "./lib/erc8167/out/" },
+    { access = "read", path = "./lib/ReservedAddress/" },
 ]
 
 # Fast invariant campaign for local iteration; CI overrides with FOUNDRY_PROFILE=ci.
@@ -30,9 +37,11 @@ depth = 500
 [lint]
 severity = ["high", "med", "low", "info", "gas", "code-size"]
 exclude_lints = [
+    "divide-before-multiply", # intentional for testing
     "incorrect-shift",
     "mixed-case-function",
     "multi-contract-file",
+    "unchecked-call", # false-positive when function is called call
     "unsafe-typecast",
     "unwrapped-modifier-logic",
 ]

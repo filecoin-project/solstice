@@ -14,6 +14,7 @@ import {SRATestBase} from "./SRATestBase.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {FixedU18} from "../src/lib/FixedU18.sol";
 import {ServiceRewardsActor} from "../src/ServiceRewardsActor.sol";
+import {FlatServiceRewardsActor} from "./FlatServiceRewardsActor.sol";
 import {Epoch} from "../src/lib/Epoch.sol";
 import {FilecoinPayVolume} from "../src/lib/SraTypes.sol";
 import {UnanimousGovernance} from "../src/lib/UnanimousGovernance.sol";
@@ -284,7 +285,7 @@ contract SRAGovernanceTest is SRATestBase {
     function test_Constructor_InvalidParams_Reverts() public {
         // priceBand > BASIS_POINTS
         vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.InvalidParameter.selector));
-        new ServiceRewardsActor(
+        new FlatServiceRewardsActor(
             owner1,
             owner2,
             Epoch.wrap(EPOCHS_PER_QUARTER),
@@ -298,7 +299,7 @@ contract SRAGovernanceTest is SRATestBase {
 
         // epochsPerQuarter == 0
         vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.InvalidParameter.selector));
-        new ServiceRewardsActor(
+        new FlatServiceRewardsActor(
             owner1,
             owner2,
             Epoch.wrap(0),

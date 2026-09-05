@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 pragma solidity ^0.8.36;
 
-import {ServiceRewardsActor, Share} from "../../src/ServiceRewardsActor.sol";
+import {FlatServiceRewardsActor as ServiceRewardsActor} from "../FlatServiceRewardsActor.sol";
 import {Epoch} from "../../src/lib/Epoch.sol";
 import {FixedU18} from "../../src/lib/FixedU18.sol";
+import {Share} from "../../src/lib/FVMRewardTypes.sol";
 
 /// @dev Differential test harness: inherits ServiceRewardsActor, exposing the internal
 ///      _computeShares (largest-remainder share allocation) via a public wrapper for the

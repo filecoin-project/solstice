@@ -37,9 +37,14 @@ library GateParamsLibrary {
     function nextThreshold(GateParams memory params) internal pure returns (FixedU18 fpvThreshold) {
         return params.target.base * params.target.stepRatio.exp(params.steps);
     }
+}
 
-    function init() internal {
-        GateParamsInfo storage slot = GateParamsLibrary.getGateParamsSlot();
+contract InitializableGateParams {
+    error AlreadyInitialized();
+
+    function initializeGateParams() external {
+        GateParamsLibrary.GateParamsInfo storage slot = GateParamsLibrary.getGateParamsSlot();
+        require(slot.lastCheckedQuarter == 0, AlreadyInitialized());
         slot.lastCheckedQuarter = 1;
         slot.params.target.base = VOL_TARGET_ENTRY;
         slot.params.target.stepRatio = VOL_TARGET_RATIO;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 pragma solidity ^0.8.36;
 
-import {ServiceRewardsActor} from "../../src/ServiceRewardsActor.sol";
+import {FlatServiceRewardsActor as ServiceRewardsActor} from "../FlatServiceRewardsActor.sol";
 import {Epoch} from "../../src/lib/Epoch.sol";
 
 /// @dev Halmos symbolic-verification harness: inherits ServiceRewardsActor, exposing the internal quarter-window
