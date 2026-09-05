@@ -57,7 +57,7 @@ contract DeployScript is Script {
     {
         operations = new SetDelegateOperation[](selectors.length);
         for (uint256 i = 0; i < selectors.length; i++) {
-            operations[i] = SetDelegateOperation(selectors[i], delegate);
+            operations[i] = SetDelegateOperation({selector: selectors[i], delegate: delegate});
         }
     }
 

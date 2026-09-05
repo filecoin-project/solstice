@@ -26,14 +26,14 @@ FixedU18 constant ZERO = FixedU18.wrap(0);
 uint256 constant MAX_DIVIDEND_WAD = 115792089237316195423570985008687907853269984665640564039457;
 FixedU18 constant MAX_DIVIDEND = FixedU18.wrap(MAX_DIVIDEND_WAD);
 
+// 0x7b5479ff
 error DividendTooLarge(FixedU18 dividend);
-bytes4 constant DIVIDEND_TOO_LARGE_SELECTOR = 0x7b5479ff;
 
 // @dev returns zero if divisor is zero
 function divDown(FixedU18 dividend, FixedU18 divisor) pure returns (FixedU18 quotient) {
     assembly ("memory-safe") {
         if gt(dividend, MAX_DIVIDEND_WAD) {
-            mstore(0, DIVIDEND_TOO_LARGE_SELECTOR)
+            mstore(0, 0x7b5479ff)
             mstore(32, dividend)
             revert(28, 36)
         }
@@ -45,7 +45,7 @@ function divDown(FixedU18 dividend, FixedU18 divisor) pure returns (FixedU18 quo
 function mod(FixedU18 dividend, FixedU18 divisor) pure returns (FixedU18 remainder) {
     assembly ("memory-safe") {
         if gt(dividend, MAX_DIVIDEND_WAD) {
-            mstore(0, DIVIDEND_TOO_LARGE_SELECTOR)
+            mstore(0, 0x7b5479ff)
             mstore(32, dividend)
             revert(28, 36)
         }

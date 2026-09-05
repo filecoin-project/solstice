@@ -2,9 +2,23 @@
 pragma solidity ^0.8.36;
 
 import {Test} from "forge-std/Test.sol";
-import {FixedU18, ONE} from "../src/lib/FixedU18.sol";
+import {DividendTooLarge, FixedU18, ONE} from "../src/lib/FixedU18.sol";
+
+contract Divide {
+    function divide(FixedU18 dividend, FixedU18 divisor) external pure returns (FixedU18 quotient) {
+        quotient = dividend / divisor;
+    }
+}
 
 contract FixedU18Test is Test {
+    function test_dividentTooLarge() public {
+        Divide divider = new Divide();
+
+        FixedU18 tooLarge = FixedU18.wrap(10 ** 77);
+        vm.expectRevert(abi.encodeWithSelector(DividendTooLarge.selector, tooLarge));
+        divider.divide(tooLarge, ONE);
+    }
+
     function test_exp_zeroExponent_isOne() public pure {
         assertTrue(FixedU18.wrap(2.7 ether).exp(0) == ONE);
         assertTrue(FixedU18.wrap(0.7 ether).exp(0) == ONE);

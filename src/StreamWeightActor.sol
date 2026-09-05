@@ -89,7 +89,7 @@ contract StreamWeightActor is UnanimousGovernance {
     /// @param op Kind of pending operation to cancel.
     function cancelPending(uint64 id, PendingOp op) external {
         // any owner can immediately cancel any pending operation
-        require(msg.sender.isOwner());
+        require(msg.sender.isOwner(), OwnersLibrary.NotOwner(msg.sender));
         FVMRewards.cancelPending(id, op);
     }
 
@@ -98,7 +98,7 @@ contract StreamWeightActor is UnanimousGovernance {
     /// @param op Weight operation to cancel.
     function cancelPendingWeight(PendingOp op) external {
         // any owner can immediately cancel any pending operation
-        require(msg.sender.isOwner());
+        require(msg.sender.isOwner(), OwnersLibrary.NotOwner(msg.sender));
         FVMRewards.cancelPendingWeight(op);
     }
 
