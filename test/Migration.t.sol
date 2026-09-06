@@ -68,6 +68,10 @@ contract MigrationTest is Test {
         vm.roll(vm.getBlockNumber() + 1);
 
         // now permissionless
+        vm.expectEmit(address(proxy));
+        emit Migratable.DiamondDelegateCall(migration, "");
+        vm.expectEmit(address(proxy));
+        emit IERC8167.SelectorDelegated(Bootstrap.configure.selector, address(0));
         proxy.migrate(migration);
 
         // Bootstrap.configure was uninstalled

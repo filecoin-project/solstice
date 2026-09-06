@@ -5,6 +5,8 @@ import {Epoch} from "./Epoch.sol";
 import {UnanimousGovernance} from "./UnanimousGovernance.sol";
 
 contract Migratable is UnanimousGovernance {
+    event DiamondDelegateCall(address indexed _delegate, bytes _delegateCalldata);
+
     Epoch private immutable HOLD;
 
     constructor(Epoch hold) {
@@ -12,6 +14,7 @@ contract Migratable is UnanimousGovernance {
     }
 
     function migrate(address migration) external unanimous(keccak256(msg.data), HOLD) {
+        emit DiamondDelegateCall(migration, "");
         assembly ("memory-safe") {
             if delegatecall(gas(), migration, 0, 0, 0, 0) {
                 returndatacopy(0, 0, returndatasize())
