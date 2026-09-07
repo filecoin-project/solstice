@@ -34,7 +34,18 @@ contract MigrationTest is Test {
 
         Bootstrap(proxyAddress)
             .configure(InitializableOwners.initializeOwners.selector, address(new InitializableOwners(owner1, owner2)));
+
+        // initializeOwners is selfUninstalling: it removes itself from dispatch on first use
+        vm.expectEmit(proxyAddress);
+        emit IERC8167.SelectorDelegated(InitializableOwners.initializeOwners.selector, address(0));
         InitializableOwners(proxyAddress).initializeOwners();
+
+        // a second call finds no delegate
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC8167.FunctionNotFound.selector, InitializableOwners.initializeOwners.selector)
+        );
+        InitializableOwners(proxyAddress).initializeOwners();
+
         Bootstrap(proxyAddress).configure(Migratable.migrate.selector, address(new Migratable(HOLD_EPOCHS)));
         proxy = Migratable(proxyAddress);
     }

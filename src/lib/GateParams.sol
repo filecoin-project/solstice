@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 pragma solidity ^0.8.36;
 
+import {SelfUninstalling} from "erc8167/lib/SelfUninstalling.sol";
 import {FixedU18} from "./FixedU18.sol";
 
 FixedU18 constant VOL_TARGET_ENTRY = FixedU18.wrap(3500 ether);
@@ -39,10 +40,10 @@ library GateParamsLibrary {
     }
 }
 
-contract InitializableGateParams {
+contract InitializableGateParams is SelfUninstalling {
     error AlreadyInitialized();
 
-    function initializeGateParams() external {
+    function initializeGateParams() external selfUninstalling {
         GateParamsLibrary.GateParamsInfo storage slot = GateParamsLibrary.getGateParamsSlot();
         require(slot.lastCheckedQuarter == 0, AlreadyInitialized());
         slot.lastCheckedQuarter = 1;
