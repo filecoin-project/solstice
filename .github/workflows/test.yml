@@ -10,6 +10,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    env:
+      # dio (evm assembler's fork tests) fetches mainnet state over JSON-RPC.
+      # Use a keyed endpoint when available; fall back to a public one for fork PRs.
+      ETH_RPC_URL: ${{ secrets.ETH_RPC_URL || 'https://eth.llamarpc.com' }}
+
     steps:
       - uses: actions/checkout@v7
 
