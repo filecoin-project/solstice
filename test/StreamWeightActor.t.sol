@@ -26,8 +26,7 @@ contract StreamWeightActorTest is MockRewardTest {
         owner2 = makeAddr("owner2");
 
         // mainnet hold: StreamWeightGate tests exercise the timelock boundary at MAINNET_TIMELOCK
-        actor =
-            new StreamWeightActor(owner1, owner2, IServiceRewardsActor(makeAddr("sra")), Epoch.wrap(MAINNET_TIMELOCK));
+        actor = new StreamWeightActor(owner1, owner2, IServiceRewardsActor(makeAddr("sra")), MAINNET_TIMELOCK);
         rewardActor().mockSwa(address(actor));
     }
 
@@ -40,7 +39,7 @@ contract StreamWeightActorTest is MockRewardTest {
     }
 
     function _activation() internal view returns (uint64) {
-        return uint64(block.number) + MAINNET_TIMELOCK;
+        return uint64(block.number) + Epoch.unwrap(MAINNET_TIMELOCK);
     }
 
     function _shares() internal pure returns (Share[] memory shares) {
@@ -64,7 +63,7 @@ contract StreamWeightActorTest is MockRewardTest {
         actor.registerStream(id, _record(0.1e18), WRITER, _shares(), _activation());
         vm.prank(owner2);
         actor.registerStream(id, _record(0.1e18), WRITER, _shares(), _activation());
-        vm.roll(block.number + MAINNET_TIMELOCK);
+        vm.roll(block.number + Epoch.unwrap(MAINNET_TIMELOCK));
     }
 
     /// @dev Whether f02 currently holds a queued per-stream op for `id` (reads the mock's state).
@@ -158,7 +157,7 @@ contract StreamWeightActorTest is MockRewardTest {
         assertTrue(found, "REGISTER queued for the stream");
 
         // Settling applies it as a live IMPLICIT stream.
-        vm.roll(block.number + MAINNET_TIMELOCK);
+        vm.roll(block.number + Epoch.unwrap(MAINNET_TIMELOCK));
         rewardActor().mockSettle();
 
         st = rewardActor().mockState();
@@ -325,7 +324,7 @@ contract StreamWeightActorTest is MockRewardTest {
         assertFalse(_hasPending(STREAM_ID, PendingOp.REGISTER), "pending slot cleared by the cancel");
 
         // Rolling past the registration's activation epoch applies nothing.
-        vm.roll(block.number + MAINNET_TIMELOCK);
+        vm.roll(block.number + Epoch.unwrap(MAINNET_TIMELOCK));
         rewardActor().mockSettle();
         assertEq(rewardActor().mockState().streams.length, 0, "cancelled registration never applies");
 

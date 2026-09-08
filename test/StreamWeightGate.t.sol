@@ -130,15 +130,17 @@ contract StreamWeightGateTest is StreamWeightActorTest {
         assertEq(steps, 0);
 
         // < HOLD: permissionless execution still gated.
-        vm.roll(modified + MAINNET_TIMELOCK - 1);
+        vm.roll(modified + Epoch.unwrap(MAINNET_TIMELOCK) - 1);
         vm.prank(makeAddr("stranger"));
         vm.expectRevert(
-            abi.encodeWithSelector(UnanimousGovernance.HoldUntil.selector, Epoch.wrap(modified + MAINNET_TIMELOCK))
+            abi.encodeWithSelector(
+                UnanimousGovernance.HoldUntil.selector, Epoch.wrap(modified + Epoch.unwrap(MAINNET_TIMELOCK))
+            )
         );
         actor.setGateParams(params);
 
         // == HOLD (exact boundary): execution becomes permissionless and the new params land.
-        vm.roll(modified + MAINNET_TIMELOCK);
+        vm.roll(modified + Epoch.unwrap(MAINNET_TIMELOCK));
         vm.prank(makeAddr("stranger"));
         actor.setGateParams(params);
 
@@ -177,7 +179,9 @@ contract StreamWeightGateTest is StreamWeightActorTest {
 
         vm.prank(makeAddr("stranger"));
         vm.expectRevert(
-            abi.encodeWithSelector(UnanimousGovernance.HoldUntil.selector, Epoch.wrap(modified + MAINNET_TIMELOCK))
+            abi.encodeWithSelector(
+                UnanimousGovernance.HoldUntil.selector, Epoch.wrap(modified + Epoch.unwrap(MAINNET_TIMELOCK))
+            )
         );
         actor.setGateParams(params);
 
@@ -208,7 +212,7 @@ contract StreamWeightGateTest is StreamWeightActorTest {
     function test_SetGateParams_StepsAboveGateCount_RevertsAndWritesNothing() public {
         GateParams memory params = _gateParams(4000 ether, 2.7 ether, 9); // 9 > 8 gate steps
         _submitGateParams(params); // both owners approve: the submission defers to the hold
-        vm.roll(block.number + MAINNET_TIMELOCK);
+        vm.roll(block.number + Epoch.unwrap(MAINNET_TIMELOCK));
 
         vm.prank(makeAddr("stranger"));
         vm.expectRevert(StreamWeightActor.StepsOutOfRange.selector);
@@ -225,7 +229,7 @@ contract StreamWeightGateTest is StreamWeightActorTest {
     function test_SetGateParams_StepsAtGateCount_LandsAfterTimelock() public {
         GateParams memory params = _gateParams(4000 ether, 2.7 ether, 8);
         _submitGateParams(params);
-        vm.roll(block.number + MAINNET_TIMELOCK);
+        vm.roll(block.number + Epoch.unwrap(MAINNET_TIMELOCK));
         vm.prank(makeAddr("stranger"));
         actor.setGateParams(params);
 
@@ -254,7 +258,7 @@ contract StreamWeightGateTest is StreamWeightActorTest {
 
         // The task is gone: after the hold would have elapsed, the same calldata starts a fresh
         // approval round instead of completing, and a stranger is not an owner.
-        vm.roll(block.number + MAINNET_TIMELOCK);
+        vm.roll(block.number + Epoch.unwrap(MAINNET_TIMELOCK));
         vm.prank(makeAddr("stranger"));
         vm.expectRevert(abi.encodeWithSelector(UnanimousGovernance.NotOwner.selector, makeAddr("stranger")));
         actor.setGateParams(params);
@@ -295,7 +299,7 @@ contract StreamWeightGateTest is StreamWeightActorTest {
 
         vm.prank(owner2);
         actor.setGateParams(params); // fresh second approval
-        vm.roll(block.number + MAINNET_TIMELOCK);
+        vm.roll(block.number + Epoch.unwrap(MAINNET_TIMELOCK));
         vm.prank(makeAddr("stranger"));
         actor.setGateParams(params); // permissionless completion
 
@@ -312,7 +316,7 @@ contract StreamWeightGateTest is StreamWeightActorTest {
         GateParams memory bad = _gateParams(4000 ether, 2.7 ether, 9); // 9 > 8 gate steps
         bytes32 badTaskId = keccak256(abi.encodePacked(StreamWeightActor.setGateParams.selector, abi.encode(bad)));
         _submitGateParams(bad);
-        vm.roll(block.number + MAINNET_TIMELOCK);
+        vm.roll(block.number + Epoch.unwrap(MAINNET_TIMELOCK));
 
         // Permissionless completion reverts at the bound; the task survives the failed execution
         // (whole-tx rollback) and stays pending -- a second attempt reverts identically.
@@ -336,7 +340,7 @@ contract StreamWeightGateTest is StreamWeightActorTest {
         // A fresh submission of legal params completes normally after the hold.
         GateParams memory good = _gateParams(4000 ether, 2.7 ether, 1);
         _submitGateParams(good);
-        vm.roll(block.number + MAINNET_TIMELOCK);
+        vm.roll(block.number + Epoch.unwrap(MAINNET_TIMELOCK));
         vm.prank(makeAddr("stranger"));
         actor.setGateParams(good);
 
@@ -367,7 +371,7 @@ contract StreamWeightGateTest is StreamWeightActorTest {
 
         // The step is queued to f02 as an uncancellable STEP_WEIGHT write and lands once the
         // mock's own timelock elapses: floor/vStart/cap = (0+3) * STEP, tStart = qEnd(2).
-        vm.roll(block.number + MAINNET_TIMELOCK);
+        vm.roll(block.number + Epoch.unwrap(MAINNET_TIMELOCK));
         rewardActor().mockSettle();
         (uint256 b, uint256 r, uint64 s,) = _storedGateParams();
         assertEq(b, 3500 ether);
@@ -409,7 +413,7 @@ contract StreamWeightGateTest is StreamWeightActorTest {
     function test_QuarterlyGateCheck_StepsComplete_Reverts() public {
         GateParams memory done = _gateParams(3500 ether, 2.7 ether, 8);
         _submitGateParams(done);
-        vm.roll(block.number + MAINNET_TIMELOCK);
+        vm.roll(block.number + Epoch.unwrap(MAINNET_TIMELOCK));
         actor.setGateParams(done);
 
         (,, uint64 steps,) = _storedGateParams();
@@ -476,7 +480,7 @@ contract StreamWeightGateTest is StreamWeightActorTest {
 
             // Settle the queued write so the next check's STEP_WEIGHT slot is free, then assert
             // the landed record is on the grid.
-            vm.roll(block.number + MAINNET_TIMELOCK);
+            vm.roll(block.number + Epoch.unwrap(MAINNET_TIMELOCK));
             rewardActor().mockSettle();
 
             MockState memory st = rewardActor().mockState();
