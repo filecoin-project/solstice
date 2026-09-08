@@ -26,9 +26,7 @@ contract StreamWeightActor is UnanimousGovernance {
     /// @param owner1 First owner.
     /// @param owner2 Second owner.
     /// @param sra Service Rewards Actor gating `quarterlyGateCheck`.
-    /// @param hold Timelock applied to unanimous `setGateParams` updates (epochs), fixed at
-    ///        deployment; per-network value (mainnet 20160 = 7 days at 30s/epoch; devnet/calibnet
-    ///        compress it). 0 = no delay (executes on unanimity).
+    /// @param hold Timelock applied to `unanimous` operations.
     constructor(address owner1, address owner2, IServiceRewardsActor sra, Epoch hold) {
         owner1.addOwner();
         owner2.addOwner();
@@ -118,8 +116,7 @@ contract StreamWeightActor is UnanimousGovernance {
         newOwner.addOwner();
     }
 
-    /// @notice Cancels a pending unanimous task before it executes (held gate updates, partial
-    /// approvals). Owner-only; lets either multisig withdraw a submission.
+    /// @notice An owner cancels a pending unanimous task before it executes.
     /// @param taskId The pending task's identifier, usually keccak256(msg.data) of its submission.
     function veto(bytes32 taskId) external {
         _veto(taskId);
@@ -128,13 +125,11 @@ contract StreamWeightActor is UnanimousGovernance {
     /// @notice All 8 gate steps have already been taken.
     error StepsComplete();
 
-    /// @notice Gate params exceed the gate count: steps must be at most GATE_STEPS.
+    /// @notice Gate params exceed GATE_STEPS.
     error StepsOutOfRange();
 
-    /// @notice A quarterly gate check consumed one quarter and reports whether the gate passed.
-    /// @dev Emitted on every check: `passed=true` means SERVICE_ID was stepped (steps carries the
-    ///      post-step count); `passed=false` means the volume cleared nothing. Shape pending #37;
-    ///      further fields, if any, append as non-indexed parameters.
+    /// @notice Reports the result of a successful quarterlyGateCheck
+    /// @param passed Whether the volume threshold was met
     event QuarterlyGateCheckResult(uint64 indexed quarter, bool passed, uint64 steps);
 
     /// @notice Advances the quarterly gate by one quarter, stepping SERVICE_ID's weight schedule
@@ -169,8 +164,6 @@ contract StreamWeightActor is UnanimousGovernance {
     }
 
     /// @notice Overwrites the quarterly gate's parameters; has a HOLD-epoch timelock after unanimity.
-    /// @dev The bound runs where params land (execution inside the unanimous modifier): an
-    ///      out-of-range task can sit pending but never completes, and an owner vetoes it.
     /// @param params New volume target and step state.
     function setGateParams(GateParams calldata params) external unanimous(keccak256(msg.data), HOLD) {
         require(params.steps <= GateParamsLibrary.GATE_STEPS, StepsOutOfRange());

@@ -35,9 +35,7 @@ uint64 constant FIRST_EXPORTED_METHOD_NUMBER = 1 << 24;
 /// @dev Same value as WAD, typed uint256, so summing shares needs no signed-to-unsigned cast.
 uint256 constant SHARE_TOTAL = 1e18;
 
-/// @dev Mainnet value of f02's activation timelock (swa_timelock_epochs): 7 days at 30s/epoch.
-/// Networks deploy their own value (devnet/calibnet compress it), so StreamWeightActor takes its
-/// hold as a constructor parameter; tests deploy the mainnet value to exercise the real boundary.
+/// @notice 7 days at 30s/epoch.
 uint64 constant MAINNET_TIMELOCK = 20160;
 
 struct LedgerRow {
