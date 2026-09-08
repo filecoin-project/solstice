@@ -12,6 +12,7 @@ import {
     SET_WEIGHT_RECORDS,
     STEP_WEIGHT_RECORDS,
     SET_SHARES,
+    REPLACE_ADDRESS,
     REGISTER_STREAM,
     REMOVE_STREAM,
     SET_DISTRIBUTION,
@@ -294,6 +295,7 @@ contract FVMRewardActor {
         if (method == SET_WEIGHT_RECORDS) return _queueWeightWrite(PendingOp.SET_WEIGHT, params);
         if (method == STEP_WEIGHT_RECORDS) return _queueWeightWrite(PendingOp.STEP_WEIGHT, params);
         if (method == SET_SHARES) return _setShares(params);
+        if (method == REPLACE_ADDRESS) return _replaceAddress(params);
         if (method == REGISTER_STREAM) return _registerStream(params);
         if (method == REMOVE_STREAM) return _removeStream(params);
         if (method == SET_DISTRIBUTION) return _setDistribution(params);
@@ -356,15 +358,49 @@ contract FVMRewardActor {
         // Params CBOR: [id, [[walletBytes, share]...]]
         (uint64 id, Share[] memory newShares) = _decodeSetSharesParams(params);
         Stream storage s = _streams[id];
-        if (!s.exists) return (USR_NOT_FOUND, 0, "");
-        if (s.kind != DistributionKind.EXPLICIT) return (USR_ILLEGAL_ARGUMENT, 0, "");
-        if (msg.sender != s.writer) return (USR_FORBIDDEN, 0, "");
+        uint32 gate = _writerGate(s);
+        if (gate != 0) return (gate, 0, "");
         if (!_sharesValid(newShares)) return (USR_ILLEGAL_ARGUMENT, 0, "");
 
         _foldAndBurnResidue(s);
-
         delete s.shares;
         _pushNonBurnShares(s.shares, newShares);
+        return (0, 0, "");
+    }
+
+    // -------------------------------------------------------------------------
+    // ReplaceAddress -- designated writer only, applied immediately; folds the closing period,
+    // then renames one recipient (carrying its payable balance) or, when newAddress is the burn
+    // sentinel, drops the recipient so its share reverts to burn.
+    // -------------------------------------------------------------------------
+
+    function _replaceAddress(bytes calldata params) internal returns (uint32, uint64, bytes memory) {
+        // Params CBOR: [id, oldAddress, newAddress]
+        (uint64 id, address oldAddr, address newAddr) = _decodeReplaceAddressParams(params);
+        Stream storage s = _streams[id];
+        uint32 gate = _writerGate(s);
+        if (gate != 0) return (gate, 0, "");
+
+        bool burning = newAddr == BURN_ADDRESS;
+        uint256 slot = _shareIndex(s, oldAddr);
+        if (slot == type(uint256).max) return (USR_ILLEGAL_ARGUMENT, 0, "");
+        if (!burning && _shareIndex(s, newAddr) != type(uint256).max) return (USR_ILLEGAL_ARGUMENT, 0, "");
+
+        _foldAndBurnResidue(s);
+        if (burning) {
+            // Drop the row so the stored total falls and later awards burn that fraction; the
+            // fold already left oldAddr its closed-period slice to claim.
+            s.shares[slot] = s.shares[s.shares.length - 1];
+            s.shares.pop();
+        } else {
+            s.shares[slot].wallet = newAddr;
+            // Same payee under a new address, so its carried balance follows.
+            uint256 carried = s.payableLedger.amount[oldAddr];
+            if (carried > 0) {
+                _ledgerRemove(s.payableLedger, oldAddr);
+                _ledgerIncrement(s.payableLedger, newAddr, carried);
+            }
+        }
         return (0, 0, "");
     }
 
@@ -680,6 +716,17 @@ contract FVMRewardActor {
         uint256 pos = _calldataPos(params) + 1; // 2-element tuple header
         (id, pos) = _decodeCborUint64(pos);
         (newShares, pos) = _decodeShares(pos);
+    }
+
+    function _decodeReplaceAddressParams(bytes calldata params)
+        private
+        pure
+        returns (uint64 id, address oldAddr, address newAddr)
+    {
+        uint256 pos = _calldataPos(params) + 1; // 3-element tuple header
+        (id, pos) = _decodeCborUint64(pos);
+        (oldAddr, pos) = _decodeAddress(pos);
+        (newAddr, pos) = _decodeAddress(pos);
     }
 
     /// @dev [[recipient, share], ...]
@@ -1269,6 +1316,23 @@ contract FVMRewardActor {
         for (uint256 i = 0; i < s.shares.length; i++) {
             if (s.shares[i].wallet == wallet) return FixedU18.unwrap(s.shares[i].share);
         }
+        return 0;
+    }
+
+    /// @dev Index of `wallet` in the stored map; type(uint256).max when absent.
+    function _shareIndex(Stream storage s, address wallet) internal view returns (uint256) {
+        for (uint256 i = 0; i < s.shares.length; i++) {
+            if (s.shares[i].wallet == wallet) return i;
+        }
+        return type(uint256).max;
+    }
+
+    /// @dev The gate SetShares and ReplaceAddress share: a live EXPLICIT stream whose designated
+    /// writer is the caller. Zero (success) when the write may proceed.
+    function _writerGate(Stream storage s) internal view returns (uint32) {
+        if (!s.exists) return USR_NOT_FOUND;
+        if (s.kind != DistributionKind.EXPLICIT) return USR_ILLEGAL_ARGUMENT;
+        if (msg.sender != s.writer) return USR_FORBIDDEN;
         return 0;
     }
 

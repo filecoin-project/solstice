@@ -13,6 +13,7 @@ uint64 constant SET_DISTRIBUTION = 3872725033;
 uint64 constant CANCEL_PENDING = 187585191;
 uint64 constant SET_SHARES = 2414422607;
 uint64 constant CLAIM = 4045527845;
+uint64 constant REPLACE_ADDRESS = 3068846150;
 
 /// @dev The activation timelock SWA writes to f02 are queued under: the mainnet default,
 /// 7 days in epochs (30s/epoch); migration-set per network, so the real actor also exposes it
