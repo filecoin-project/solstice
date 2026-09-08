@@ -7,7 +7,7 @@ import {StreamWeightActorTest} from "./StreamWeightActor.t.sol";
 import {StreamWeightActor} from "../src/StreamWeightActor.sol";
 import {ServiceRewardsActor} from "../src/ServiceRewardsActor.sol";
 import {IServiceRewardsActor} from "../src/interfaces/IServiceRewardsActor.sol";
-import {SERVICE_ID} from "../src/lib/FVMRewardTypes.sol";
+import {SERVICE_ID, WeightRecord} from "../src/lib/FVMRewardTypes.sol";
 import {Epoch} from "../src/lib/Epoch.sol";
 import {FixedU18} from "../src/lib/FixedU18.sol";
 import {FVMRewards} from "../src/lib/FVMRewards.sol";
@@ -499,14 +499,22 @@ contract StreamWeightGateTest is StreamWeightActorTest {
     }
 
     /// @dev If f02's queue-time validation rejects the gate write, the whole check reverts: steps
-    /// and lastCheckedQuarter do not advance, and clearing the fault lets the same quarter retry.
+    /// and lastCheckedQuarter do not advance, and once the blocking write settles the same quarter
+    /// retries through. The rejection is the real pending-slot collision, not a mock switch: a
+    /// STEP_WEIGHT batch already occupies the schedule-wide slot, and gate writes are
+    /// uncancellable, so only settling frees it for the retry.
     function test_QuarterlyGateCheck_F02RejectsStepWrite_WholeCallRollsBack() public {
         _registerAndActivate(SERVICE_ID);
         IServiceRewardsActor sra = _sraMock();
         _mockFpv(sra, 2, 3500 ether);
         _mockQEnd(sra, 2, 1000);
 
-        rewardActor().mockFailStepWeight(true);
+        // A STEP_WEIGHT batch still inside its timelock holds the schedule-wide slot, so the gate's
+        // own write is rejected at queue time (pending write exists) rather than admitted.
+        WeightRecord memory pendingStep =
+            WeightRecord({vStart: 0.15e18, slope: 0, tStart: Epoch.wrap(1000), floor: 0.15e18, cap: 0.15e18});
+        assertEq(rewardActor().mockQueueStepWeight(_singleWeightRecord(SERVICE_ID, pendingStep)), 0, "slot occupied");
+
         vm.expectRevert(
             abi.encodeWithSelector(FVMRewards.StepWeightRecordsFailed.selector, int256(uint256(USR_ILLEGAL_ARGUMENT)))
         );
@@ -517,8 +525,9 @@ contract StreamWeightGateTest is StreamWeightActorTest {
         assertEq(steps, 0, "step counter rolled back");
         assertEq(lastChecked, 1, "checked quarter rolled back");
 
-        // The fault cleared, the same quarter check goes through -- nothing was left queued.
-        rewardActor().mockFailStepWeight(false);
+        // Once the blocking write settles the slot is free and the same quarter check goes through.
+        vm.roll(block.number + Epoch.unwrap(MAINNET_TIMELOCK));
+        rewardActor().mockSettle();
         actor.quarterlyGateCheck();
         (,, steps, lastChecked) = _storedGateParams();
         assertEq(steps, 1, "retry takes the step");
