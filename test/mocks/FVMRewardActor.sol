@@ -18,7 +18,7 @@ import {
     CANCEL_PENDING,
     CLAIM
 } from "../../src/lib/FVMRewardMethod.sol";
-import {WeightRecord, DistributionKind, Share, PendingOp} from "../../src/lib/FVMRewardTypes.sol";
+import {WeightRecord, DistributionKind, Share, PendingOp, WeightRecordUpdate} from "../../src/lib/FVMRewardTypes.sol";
 import {Epoch} from "../../src/lib/Epoch.sol";
 import {FixedU18} from "../../src/lib/FixedU18.sol";
 
@@ -159,10 +159,6 @@ contract FVMRewardActor {
     ///      submitShares path. Etched storage starts zeroed, default false, other tests unaffected.
     bool public failSetShares;
 
-    /// @notice Test helper flag: when set, StepWeightRecords returns USR_ILLEGAL_ARGUMENT
-    /// unconditionally at queue time, exercising the SWA's rollback on gate-write rejection.
-    bool public failStepWeight;
-
     /// @notice Cumulative FIL minted through f02, all streams (T = position 9 / FilMined).
     uint256 public totalMintedReward;
     /// @notice Cumulative burn: w0 residual plus period-fold rounding dust (B).
@@ -217,11 +213,6 @@ contract FVMRewardActor {
     /// @notice Test helper: flip the SetShares failure-injection flag (A1).
     function mockFailSetShares(bool fail) external {
         failSetShares = fail;
-    }
-
-    /// @notice Test helper: flip the StepWeightRecords failure-injection flag.
-    function mockFailStepWeight(bool fail) external {
-        failStepWeight = fail;
     }
 
     /// @notice Test helper: simulates AwardBlockReward, splitting `br` by clamped weight into a
@@ -317,25 +308,48 @@ contract FVMRewardActor {
     // SetWeightRecords / StepWeightRecords -- SWA only, queued under separate ops.
     // -------------------------------------------------------------------------
 
+    /// @notice Test helper: queues a STEP_WEIGHT batch through the real queue-time validation so
+    /// the schedule-wide slot is occupied, as a gate step still inside its timelock would; the
+    /// next STEP_WEIGHT enqueue (the gate's own) is then refused by the pending-slot check.
+    /// @dev The SWA-only sender gate is skipped -- the caller is a test, not the SWA -- but
+    /// settling, validation, and storage run exactly as on the wire STEP_WEIGHT path.
+    function mockQueueStepWeight(WeightRecordUpdate[] memory updates) external returns (uint32 exitCode) {
+        uint64[] memory ids = new uint64[](updates.length);
+        WeightRecord[] memory records = new WeightRecord[](updates.length);
+        for (uint256 i = 0; i < updates.length; i++) {
+            ids[i] = updates[i].id;
+            records[i] = updates[i].record;
+        }
+        _settle();
+        return _enqueueWeightBatch(PendingOp.STEP_WEIGHT, ids, records);
+    }
+
     function _queueWeightWrite(PendingOp op, bytes calldata params) internal returns (uint32, uint64, bytes memory) {
         if (msg.sender != swa) return (USR_FORBIDDEN, 0, "");
-        // StepWeight failure injection: reject gate-originated writes, as queue-time schedule
-        // validation would (FIP-0118 §3.1.1 gate-write rejection). Discretionary writes unaffected.
-        if (op == PendingOp.STEP_WEIGHT && failStepWeight) return (USR_ILLEGAL_ARGUMENT, 0, "");
         // Params CBOR: [[id...], [[vStart,slope,tStart,floor,cap]...]]
         (uint64[] memory ids, WeightRecord[] memory records) = _decodeSetWeightRecordsParams(params);
-        if (ids.length != records.length) return (USR_ILLEGAL_ARGUMENT, 0, "");
+        return (_enqueueWeightBatch(op, ids, records), 0, "");
+    }
+
+    /// @dev Decoded-batch validation and storage shared by the wire path and mockQueueStepWeight,
+    /// so the fixture cannot drift from a real enqueue. The SWA-only sender gate stays in the wire
+    /// path (the fixture's caller is a test).
+    function _enqueueWeightBatch(PendingOp op, uint64[] memory ids, WeightRecord[] memory records)
+        private
+        returns (uint32 exitCode)
+    {
+        if (ids.length != records.length) return USR_ILLEGAL_ARGUMENT;
 
         // One slot per op for the whole schedule, so a pending batch blocks the next one outright.
-        if (_pendingWeightExists[op]) return (USR_ILLEGAL_ARGUMENT, 0, "");
-        if (ids.length == 0) return (USR_ILLEGAL_ARGUMENT, 0, "");
+        if (_pendingWeightExists[op]) return USR_ILLEGAL_ARGUMENT;
+        if (ids.length == 0) return USR_ILLEGAL_ARGUMENT;
 
         uint64 effectiveEpoch = uint64(block.number) + swaTimelockEpochs;
         for (uint256 i = 0; i < ids.length; i++) {
-            if (!_streams[ids[i]].exists) return (USR_NOT_FOUND, 0, "");
-            if (!_sane(records[i])) return (USR_ILLEGAL_ARGUMENT, 0, "");
+            if (!_streams[ids[i]].exists) return USR_NOT_FOUND;
+            if (!_sane(records[i])) return USR_ILLEGAL_ARGUMENT;
             for (uint256 j = 0; j < i; j++) {
-                if (ids[j] == ids[i]) return (USR_ILLEGAL_ARGUMENT, 0, "");
+                if (ids[j] == ids[i]) return USR_ILLEGAL_ARGUMENT;
             }
         }
         NewWrite memory proposed;
@@ -344,7 +358,7 @@ contract FVMRewardActor {
         proposed.effectiveEpoch = effectiveEpoch;
         proposed.batchIds = ids;
         proposed.batchRecords = records;
-        if (!_admits(proposed)) return (USR_ILLEGAL_ARGUMENT, 0, "");
+        if (!_admits(proposed)) return USR_ILLEGAL_ARGUMENT;
 
         WeightBatch storage batch = _pendingWeight[op];
         batch.effectiveEpoch = effectiveEpoch;
@@ -355,7 +369,7 @@ contract FVMRewardActor {
         _pendingWeightExists[op] = true;
         _pendingKeys.push(PendingKey({hasId: false, id: 0, op: op}));
         if (effectiveEpoch < nextTransitionEpoch) nextTransitionEpoch = effectiveEpoch;
-        return (0, 0, "");
+        return 0;
     }
 
     // -------------------------------------------------------------------------
