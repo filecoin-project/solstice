@@ -21,9 +21,10 @@ import {
     WAD,
     MAX_STREAMS,
     MAX_RECIPIENTS,
-    SHARE_TOTAL
+    SHARE_TOTAL,
+    MAINNET_TIMELOCK
 } from "./FVMRewardActor.sol";
-import {CLAIM, SWA_TIMELOCK} from "../../src/lib/FVMRewardMethod.sol";
+import {CLAIM} from "../../src/lib/FVMRewardMethod.sol";
 import {FVMRewards} from "../../src/lib/FVMRewards.sol";
 import {WeightRecordUpdate} from "../../src/lib/FVMRewardTypes.sol";
 import {Epoch} from "../../src/lib/Epoch.sol";
@@ -153,7 +154,7 @@ contract FVMRewardActorTest is MockRewardTest {
         internal
         returns (uint32)
     {
-        uint64 activation = uint64(block.number) + SWA_TIMELOCK;
+        uint64 activation = uint64(block.number) + Epoch.unwrap(MAINNET_TIMELOCK);
         if (kind == DistributionKind.IMPLICIT) return swaCaller.registerStream(id, record, activation);
         return swaCaller.registerStream(id, record, writer, _shares(RECIPIENT_A, SHARE_TOTAL), activation);
     }
@@ -182,7 +183,7 @@ contract FVMRewardActorTest is MockRewardTest {
     }
 
     function _warpPastTimelockAndSettle() internal {
-        vm.roll(block.number + SWA_TIMELOCK);
+        vm.roll(block.number + Epoch.unwrap(MAINNET_TIMELOCK));
         rewardActor().mockSettle();
     }
 
@@ -222,17 +223,17 @@ contract FVMRewardActorTest is MockRewardTest {
 
     // The objection window is 7 days; epochs are 30s.
     function test_SwaTimelock_IsSevenDaysOfEpochs() public pure {
-        assertEq(SWA_TIMELOCK, 7 * 24 * 60 * 60 / 30);
+        assertEq(Epoch.unwrap(MAINNET_TIMELOCK), 7 * 24 * 60 * 60 / 30);
     }
 
     function test_SwaTimelockEpochs_DefaultsToConstant() public view {
-        assertEq(rewardActor().swaTimelockEpochs(), SWA_TIMELOCK);
+        assertEq(rewardActor().swaTimelockEpochs(), Epoch.unwrap(MAINNET_TIMELOCK));
     }
 
     function test_MockSwaTimelockEpochs_Overrides() public {
         rewardActor().mockSwaTimelockEpochs(10);
 
-        // _registerStream hardcodes SWA_TIMELOCK, not the override, so call directly with a
+        // _registerStream hardcodes MAINNET_TIMELOCK, not the override, so call directly with a
         // 10-epoch activation instead.
         uint32 exitCode = swaCaller.registerStream(SERVICE_ID, _constantRecord(0.1e18), uint64(block.number) + 10);
         assertEq(exitCode, 0);
@@ -300,14 +301,16 @@ contract FVMRewardActorTest is MockRewardTest {
     }
 
     function test_RegisterStream_NotSwa_Forbidden() public {
-        uint32 exitCode =
-            randomCaller.registerStream(SERVICE_ID, _constantRecord(0.1e18), uint64(block.number) + SWA_TIMELOCK);
+        uint32 exitCode = randomCaller.registerStream(
+            SERVICE_ID, _constantRecord(0.1e18), uint64(block.number) + Epoch.unwrap(MAINNET_TIMELOCK)
+        );
         assertEq(exitCode, USR_FORBIDDEN);
     }
 
     function test_RegisterStream_ActivationTooSoon_IllegalArgument() public {
-        uint32 exitCode =
-            swaCaller.registerStream(SERVICE_ID, _constantRecord(0.1e18), uint64(block.number) + SWA_TIMELOCK - 1);
+        uint32 exitCode = swaCaller.registerStream(
+            SERVICE_ID, _constantRecord(0.1e18), uint64(block.number) + Epoch.unwrap(MAINNET_TIMELOCK) - 1
+        );
         assertEq(exitCode, USR_ILLEGAL_ARGUMENT);
     }
 
@@ -326,7 +329,7 @@ contract FVMRewardActorTest is MockRewardTest {
     function test_RegisterStream_FloorBelowZero_Reverts() public {
         WeightRecord memory r = _record(0.1e18, 0, 0, -1, WAD);
         vm.expectRevert(abi.encodeWithSelector(FVMRewards.ValueOutOfRange.selector, int256(-1)));
-        swaCaller.registerStream(SERVICE_ID, r, uint64(block.number) + SWA_TIMELOCK);
+        swaCaller.registerStream(SERVICE_ID, r, uint64(block.number) + Epoch.unwrap(MAINNET_TIMELOCK));
     }
 
     // validate_weight_record pins v_start inside the clamp band. Outside it the record still
@@ -348,7 +351,7 @@ contract FVMRewardActorTest is MockRewardTest {
             _constantRecord(0.1e18),
             address(writerCaller),
             new Share[](0),
-            uint64(block.number) + SWA_TIMELOCK
+            uint64(block.number) + Epoch.unwrap(MAINNET_TIMELOCK)
         );
         assertEq(exitCode, USR_ILLEGAL_ARGUMENT);
     }
@@ -362,7 +365,11 @@ contract FVMRewardActorTest is MockRewardTest {
         shares_[3] = Share({wallet: BURN_ADDRESS, share: FixedU18.wrap(SHARE_TOTAL - third * 3)});
 
         uint32 exitCode = swaCaller.registerStream(
-            SERVICE_ID, _constantRecord(WAD), address(writerCaller), shares_, uint64(block.number) + SWA_TIMELOCK
+            SERVICE_ID,
+            _constantRecord(WAD),
+            address(writerCaller),
+            shares_,
+            uint64(block.number) + Epoch.unwrap(MAINNET_TIMELOCK)
         );
         assertEq(exitCode, 0);
         _warpPastTimelockAndSettle();
@@ -1091,7 +1098,7 @@ contract FVMRewardActorTest is MockRewardTest {
         _warpPastTimelockAndSettle();
 
         assertEq(swaCaller.removeStream(SERVICE_ID), 0);
-        uint64 activation = uint64(block.number) + SWA_TIMELOCK + 10;
+        uint64 activation = uint64(block.number) + Epoch.unwrap(MAINNET_TIMELOCK) + 10;
         uint32 registered =
             swaCaller.registerStream(CONSENSUS_ID, _constantRecord(0.9e18), address(0), new Share[](0), activation);
         assertEq(registered, 0, "room exists while the removal is queued");
@@ -1115,7 +1122,7 @@ contract FVMRewardActorTest is MockRewardTest {
     // crossing put a sample on it.
     function test_Schedule_TransientPeakAtACrossingNeighbour_IllegalArgument() public {
         _twoStreams(0.1e18, 0.1e18);
-        uint64 f = uint64(block.number) + SWA_TIMELOCK;
+        uint64 f = uint64(block.number) + Epoch.unwrap(MAINNET_TIMELOCK);
 
         WeightRecordUpdate[] memory updates = new WeightRecordUpdate[](2);
         // Rises 3 per epoch to a cap of 11, so 11/3 truncates to 3 but the cap lands at 4.
@@ -1129,7 +1136,7 @@ contract FVMRewardActorTest is MockRewardTest {
     // A falling ramp selects the floor as its crossing bound rather than the cap.
     function test_Schedule_FallingRamp() public {
         _twoStreams(0.5e18, 0.1e18);
-        uint64 f = uint64(block.number) + SWA_TIMELOCK;
+        uint64 f = uint64(block.number) + Epoch.unwrap(MAINNET_TIMELOCK);
         assertEq(
             _setWeightRecords(swaCaller, CONSENSUS_ID, _record(0.5e18, -1e12, f, 0.1e18, 0.5e18)),
             0,
@@ -1146,7 +1153,7 @@ contract FVMRewardActorTest is MockRewardTest {
     // so the breach is at the anchor rather than anywhere the ramp reaches.
     function test_Schedule_AnchorAfterTheStart_IllegalArgument() public {
         _twoStreams(0.5e18, 0.1e18);
-        uint64 later = uint64(block.number) + SWA_TIMELOCK + 200_000;
+        uint64 later = uint64(block.number) + Epoch.unwrap(MAINNET_TIMELOCK) + 200_000;
         assertEq(
             _setWeightRecords(swaCaller, CONSENSUS_ID, _record(0.9e18, 1e12, later, 0.1e18, 0.9e18)),
             USR_ILLEGAL_ARGUMENT
