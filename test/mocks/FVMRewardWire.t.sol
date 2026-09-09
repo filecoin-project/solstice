@@ -153,6 +153,18 @@ contract FVMRewardWireTest is MockRewardWireTest {
         assertEq(_sent(), hex"82181880");
     }
 
+    // [24,byte[0065],byte[0066]] and
+    // [256,byte[008080808010],byte[040a1111...1111]] -- both address forms.
+    function test_ReplaceAddress_WalksBothAddressForms() public {
+        FVMRewards.tryReplaceAddress(24, FVMAddress.maskedAddress(101), FVMAddress.maskedAddress(102));
+        assertEq(_sent(), hex"831818420065420066");
+
+        FVMRewards.tryReplaceAddress(
+            256, FVMAddress.maskedAddress(4_294_967_296), 0x1111111111111111111111111111111111111111
+        );
+        assertEq(_sent(), hex"8319010046008080808010" hex"56040a1111111111111111111111111111111111111111");
+    }
+
     // [
     //   256,[[byte[0018],24],[byte[008002],256],
     //   [byte[00808004],65536],[byte[008080808010],4294967296]]

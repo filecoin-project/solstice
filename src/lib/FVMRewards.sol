@@ -10,14 +10,15 @@ import {EXIT_SUCCESS} from "fvm-solidity/FVMErrors.sol";
 import {Epoch} from "./Epoch.sol";
 import {FixedU18} from "./FixedU18.sol";
 import {
+    CANCEL_PENDING,
+    CLAIM,
     REGISTER_STREAM,
     REMOVE_STREAM,
+    REPLACE_ADDRESS,
     SET_WEIGHT_RECORDS,
-    STEP_WEIGHT_RECORDS,
     SET_DISTRIBUTION,
-    CANCEL_PENDING,
     SET_SHARES,
-    CLAIM
+    STEP_WEIGHT_RECORDS
 } from "./FVMRewardMethod.sol";
 import {WeightRecord, WeightRecordUpdate, Share, PendingOp} from "./FVMRewardTypes.sol";
 
@@ -37,6 +38,7 @@ library FVMRewards {
     error SetDistributionFailed(int256 exitCode);
     error CancelPendingFailed(int256 exitCode);
     error SetSharesFailed(int256 exitCode);
+    error ReplaceAddressFailed(int256 exitCode);
     error ClaimFailed(int256 exitCode);
 
     /// @dev A field does not fit the width f02 declares for it, so encoding it would silently
@@ -457,6 +459,30 @@ library FVMRewards {
     function setShares(uint64 id, Share[] memory shares) internal {
         int256 exitCode = trySetShares(id, shares);
         require(exitCode == EXIT_SUCCESS, SetSharesFailed(exitCode));
+    }
+
+    // -------------------------------------------------------------------------
+    // ReplaceAddress -- the stream's designated writer only
+    // -------------------------------------------------------------------------
+
+    /// @notice Swaps one recipient address in an explicit stream's share map for another, or for
+    /// the burn sentinel to drop it, without reverting on actor error. Applied immediately, like
+    /// SetShares.
+    /// @dev Params CBOR: `[id, oldAddress, newAddress]`.
+    function tryReplaceAddress(uint64 id, address oldAddress, address newAddress) internal returns (int256 exitCode) {
+        // [id, oldAddress, newAddress]
+        (uint256 base, uint256 p) = _begin(REPLACE_ADDRESS);
+        p = _writeArrayHeader(p, 3);
+        p = _writeUint(p, id);
+        p = _writeAddress(p, oldAddress);
+        p = _writeAddress(p, newAddress);
+        return _invoke(base, p);
+    }
+
+    /// @notice Swaps one recipient address in an explicit stream's share map, reverting on error.
+    function replaceAddress(uint64 id, address oldAddress, address newAddress) internal {
+        int256 exitCode = tryReplaceAddress(id, oldAddress, newAddress);
+        require(exitCode == EXIT_SUCCESS, ReplaceAddressFailed(exitCode));
     }
 
     // -------------------------------------------------------------------------
