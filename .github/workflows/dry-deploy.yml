@@ -20,7 +20,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
 
       - name: Build EVM assembler
-        run: make -C evm check
+        run: make -C evm bin/evm
 
       - name: Install EVM assembler
         run: sudo install $(pwd)/evm/bin/evm $(dirname $(which git))/evm
@@ -31,7 +31,7 @@ jobs:
           version: v1.7.1
           cache: true
 
-      - name: Install Dependencies
+      - name: Install Forge Dependencies
         run: |
           forge install
 

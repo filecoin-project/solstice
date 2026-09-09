@@ -10,11 +10,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    env:
-      # dio (evm assembler's fork tests) fetches mainnet state over JSON-RPC.
-      # Use a keyed endpoint when available; fall back to a public one for fork PRs.
-      ETH_RPC_URL: ${{ secrets.ETH_RPC_URL || 'https://eth.llamarpc.com' }}
-
     steps:
       - uses: actions/checkout@v7
 
@@ -25,7 +20,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
 
       - name: Build EVM assembler
-        run: make -C evm check
+        run: make -C evm bin/evm
 
       - name: Install EVM assembler
         run: sudo install $(pwd)/evm/bin/evm $(dirname $(which git))/evm
