@@ -144,7 +144,8 @@ contract StreamWeightActor is UnanimousGovernance {
         // NOTE this will enforce afterBinding()
         FixedU18 fpv = SRA.aggregatedFilecoinPayVolume(quarter);
 
-        if (fpv >= loaded.nextThreshold()) {
+        bool passed = fpv >= loaded.nextThreshold();
+        if (passed) {
             int256 next = (int256(uint256(loaded.steps)) + 3) * STEP;
 
             WeightRecordUpdate[] memory updates = new WeightRecordUpdate[](1);
@@ -156,11 +157,9 @@ contract StreamWeightActor is UnanimousGovernance {
             updates[0].record.slope = 0;
 
             gateParamsInfo.params.steps++;
-            emit QuarterlyGateCheckResult(quarter, true, gateParamsInfo.params.steps);
             FVMRewards.stepWeightRecords(updates);
-        } else {
-            emit QuarterlyGateCheckResult(quarter, false, loaded.steps);
         }
+        emit QuarterlyGateCheckResult(quarter, passed, loaded.steps + (passed ? 1 : 0));
     }
 
     /// @notice Overwrites the quarterly gate's parameters; has a HOLD-epoch timelock after unanimity.
