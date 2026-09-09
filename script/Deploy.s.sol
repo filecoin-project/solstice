@@ -2,6 +2,8 @@
 pragma solidity ^0.8.36;
 
 import {Bootstrap} from "erc8167/interfaces/Bootstrap.sol";
+import {IERC8167} from "erc8167/interfaces/IERC8167.sol";
+import {Migrate} from "erc8167/interfaces/Migrate.sol";
 import {Migration, SetDelegateOperation} from "erc8167/lib/Migration.sol";
 import {Script} from "forge-std/Script.sol";
 import {IDeployer} from "ReservedAddress/interfaces/IDeployer.sol";
@@ -90,6 +92,11 @@ contract DeployScript is Script {
         require(account.code.length != 0);
     }
 
+    function uninstallBootstrapConfigure() internal pure returns (SetDelegateOperation[] memory operations) {
+        operations = new SetDelegateOperation[](1);
+        operations[0] = SetDelegateOperation({selector: Bootstrap.configure.selector, delegate: address(0)});
+    }
+
     function createSraMigration(
         address serviceRewardsActor,
         address sraOwners,
@@ -107,6 +114,7 @@ contract DeployScript is Script {
             delegateAll(getSelectors("lib/erc8167/out/Implementation.evm/Implementation.json"), implementationMethod)
         );
         operations = concat(operations, delegateAll(getSelectors("out/Migratable.sol/Migratable.json"), migrateMethod));
+        operations = concat(operations, uninstallBootstrapConfigure());
         return operations.createMigration();
     }
 
@@ -132,6 +140,7 @@ contract DeployScript is Script {
             operations,
             delegateAll(getSelectors("out/GateParams.sol/InitializableGateParams.json"), initializeGateParamsMethod)
         );
+        operations = concat(operations, uninstallBootstrapConfigure());
         return operations.createMigration();
     }
 
@@ -175,7 +184,7 @@ contract DeployScript is Script {
 
         {
             address bootstrapMigrateMethod =
-                create(vm.getCode("lib/erc8167/out/Migrate.constructor.evm/Migrate.constructor.evm"));
+                create(vm.getCode("lib/erc8167/out/Migrate.constructor.evm/Migrate.constructor.json"));
             ROOT.call(
                 SRA,
                 abi.encodeWithSelector(
@@ -204,6 +213,7 @@ contract DeployScript is Script {
         address migrateMethod = address(new Migratable(epochsToHold)); // overwrites bootstrapping migrate method
         address initializeGateParamsMethod = address(new InitializableGateParams());
 
+        // these also uninstallBootstrapConfigure()
         address sraMigration = createSraMigration(serviceRewardsActor, sraOwners, implementationMethod, migrateMethod);
         address swaMigration = createSwaMigration(
             streamWeightActor, swaOwners, implementationMethod, migrateMethod, initializeGateParamsMethod
@@ -213,6 +223,15 @@ contract DeployScript is Script {
         Migratable(SRA).migrate(sraMigration);
         Migratable(SWA).migrate(swaMigration);
 
+        // verify that Bootstrap.configure was uninstalled
+        require(IERC8167(SRA).implementation(Bootstrap.configure.selector) == address(0));
+        require(IERC8167(SWA).implementation(Bootstrap.configure.selector) == address(0));
+        // verify that Migrate.migrate was overwritten
+        require(Migratable.migrate.selector == Migrate.migrate.selector);
+        require(IERC8167(SRA).implementation(Migratable.migrate.selector) == migrateMethod);
+        require(IERC8167(SWA).implementation(Migratable.migrate.selector) == migrateMethod);
+
+        // initialize
         InitializableOwners(SRA).initializeOwners();
         InitializableOwners(SWA).initializeOwners();
         InitializableGateParams(SWA).initializeGateParams();
