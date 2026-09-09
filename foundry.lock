@@ -1,6 +1,6 @@
 {
   "lib/erc8167": {
-    "rev": "c1faa5a1bcd93abc5ad7227bf1d1ef334fcf47dd"
+    "rev": "483de79d4ea51d7071c91808117c108c945f306d"
   },
   "lib/forge-std": {
     "tag": {
