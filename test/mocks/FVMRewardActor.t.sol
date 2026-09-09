@@ -21,9 +21,10 @@ import {
     WAD,
     MAX_STREAMS,
     MAX_RECIPIENTS,
+    MAX_PAYABLE_ROWS_PER_STREAM,
     SHARE_TOTAL
 } from "./FVMRewardActor.sol";
-import {CLAIM, SWA_TIMELOCK} from "../../src/lib/FVMRewardMethod.sol";
+import {CLAIM, REPLACE_ADDRESS, SWA_TIMELOCK} from "../../src/lib/FVMRewardMethod.sol";
 import {FVMRewards} from "../../src/lib/FVMRewards.sol";
 import {WeightRecordUpdate} from "../../src/lib/FVMRewardTypes.sol";
 import {Epoch} from "../../src/lib/Epoch.sol";
@@ -110,9 +111,13 @@ contract FVMRewardActorTest is MockRewardTest {
 
     uint64 constant SERVICE_ID = 1;
     uint64 constant CONSENSUS_ID = 2;
+    /// @dev A second explicit stream carrying the same weight and map as SERVICE_ID, so a
+    /// ReplaceAddress and the SetShares it should equal can run side by side.
+    uint64 constant MIRROR_ID = 3;
 
     address constant RECIPIENT_A = address(0xBEEF);
     address constant RECIPIENT_B = address(0xCAFE);
+    address constant RECIPIENT_C = address(0xF00D);
 
     function setUp() public override {
         super.setUp();
@@ -356,9 +361,10 @@ contract FVMRewardActorTest is MockRewardTest {
     function test_RegisterStream_StripsBurnSentinels_AndFloorsSurvivorPool() public {
         uint256 third = SHARE_TOTAL / 3;
         Share[] memory shares_ = new Share[](4);
-        shares_[0] = Share({wallet: RECIPIENT_A, share: FixedU18.wrap(third)});
+        // Wire order is descending by recipient, so the stored order below is the sort's doing.
+        shares_[0] = Share({wallet: RECIPIENT_B, share: FixedU18.wrap(third)});
         shares_[1] = Share({wallet: BURN_ADDRESS, share: FixedU18.wrap(third)});
-        shares_[2] = Share({wallet: RECIPIENT_B, share: FixedU18.wrap(third)});
+        shares_[2] = Share({wallet: RECIPIENT_A, share: FixedU18.wrap(third)});
         shares_[3] = Share({wallet: BURN_ADDRESS, share: FixedU18.wrap(SHARE_TOTAL - third * 3)});
 
         uint32 exitCode = swaCaller.registerStream(
@@ -551,7 +557,7 @@ contract FVMRewardActorTest is MockRewardTest {
         uint32 setExit = _setWeightRecords(swaCaller, SERVICE_ID, _constantRecord(0.2e18));
         assertEq(setExit, 0);
 
-        assertEq(_getState().pendingWrites.length, 2);
+        assertEq(_getState().pendingWritesQueue.length, 2);
     }
 
     function test_StepWeightRecords_OccupiedSlot_IllegalArgument() public {
@@ -570,9 +576,11 @@ contract FVMRewardActorTest is MockRewardTest {
         assertEq(exitCode, USR_FORBIDDEN);
     }
 
-    function test_SetShares_NonexistentStream_NotFound() public {
+    // A stream that was never registered and a stream that has no distribution have the same
+    // mode.
+    function test_SetShares_NonexistentStream_IllegalArgument() public {
         uint32 exitCode = writerCaller.setShares(SERVICE_ID, _shares(RECIPIENT_A, SHARE_TOTAL));
-        assertEq(exitCode, USR_NOT_FOUND);
+        assertEq(exitCode, USR_ILLEGAL_ARGUMENT);
     }
 
     function test_SetShares_ImplicitStream_IllegalArgument() public {
@@ -619,6 +627,37 @@ contract FVMRewardActorTest is MockRewardTest {
         }
         uint32 exitCode = writerCaller.setShares(SERVICE_ID, shares_);
         assertEq(exitCode, USR_ILLEGAL_ARGUMENT);
+    }
+
+    // The row cap is charged ahead of the writer check, so an oversized map from a stranger is
+    // rejected on its size and never reaches the question of who sent it.
+    function test_SetShares_TooManyRecipientsFromNonWriter_IllegalArgument() public {
+        _registerExplicit(SERVICE_ID, address(writerCaller));
+        uint256 n = MAX_RECIPIENTS + 1;
+        Share[] memory shares_ = new Share[](n);
+        for (uint256 i = 0; i < n; i++) {
+            shares_[i] = Share({wallet: address(uint160(i + 1)), share: FixedU18.wrap(SHARE_TOTAL / n)});
+        }
+        assertEq(randomCaller.setShares(SERVICE_ID, shares_), USR_ILLEGAL_ARGUMENT);
+    }
+
+    // Admission sorts by recipient, so the stored map has one shape whatever order it was sent in,
+    // and burn sentinels don't leave a gap in the map.
+    function test_SetShares_StoresRecipientOrder_RegardlessOfInputOrder() public {
+        _registerExplicit(SERVICE_ID, address(writerCaller));
+        uint256 quarter = SHARE_TOTAL / 4;
+        Share[] memory shares_ = new Share[](4);
+        shares_[0] = Share({wallet: RECIPIENT_B, share: FixedU18.wrap(quarter)});
+        shares_[1] = Share({wallet: BURN_ADDRESS, share: FixedU18.wrap(quarter)});
+        shares_[2] = Share({wallet: address(0xF00D), share: FixedU18.wrap(quarter)});
+        shares_[3] = Share({wallet: RECIPIENT_A, share: FixedU18.wrap(quarter)});
+        assertEq(writerCaller.setShares(SERVICE_ID, shares_), 0);
+
+        Share[] memory stored = rewardActor().getShares(SERVICE_ID);
+        assertEq(stored.length, 3);
+        assertEq(stored[0].wallet, RECIPIENT_A); // 0xBEEF
+        assertEq(stored[1].wallet, RECIPIENT_B); // 0xCAFE
+        assertEq(stored[2].wallet, address(0xF00D));
     }
 
     function test_SetShares_Valid_AppliesImmediately_NoTimelock() public {
@@ -708,8 +747,8 @@ contract FVMRewardActorTest is MockRewardTest {
         assertEq(randomCaller.replaceAddress(SERVICE_ID, RECIPIENT_A, RECIPIENT_B), USR_FORBIDDEN);
     }
 
-    function test_ReplaceAddress_NonexistentStream_NotFound() public {
-        assertEq(writerCaller.replaceAddress(SERVICE_ID, RECIPIENT_A, RECIPIENT_B), USR_NOT_FOUND);
+    function test_ReplaceAddress_NonexistentStream_IllegalArgument() public {
+        assertEq(writerCaller.replaceAddress(SERVICE_ID, RECIPIENT_A, RECIPIENT_B), USR_ILLEGAL_ARGUMENT);
     }
 
     function test_ReplaceAddress_ImplicitStream_IllegalArgument() public {
@@ -731,23 +770,24 @@ contract FVMRewardActorTest is MockRewardTest {
         assertEq(writerCaller.replaceAddress(SERVICE_ID, RECIPIENT_A, RECIPIENT_B), USR_ILLEGAL_ARGUMENT);
     }
 
-    function test_ReplaceAddress_RenamesInPlace_AppliesImmediately() public {
+    function test_ReplaceAddress_RenamesAndResorts_AppliesImmediately() public {
         _registerExplicit(SERVICE_ID, address(writerCaller));
         assertEq(
             writerCaller.setShares(SERVICE_ID, _pair(RECIPIENT_A, SHARE_TOTAL / 4, RECIPIENT_B, 3 * SHARE_TOTAL / 4)), 0
         );
 
         // No vm.roll: like SetShares, the writer's own write is not queued under the timelock.
-        assertEq(writerCaller.replaceAddress(SERVICE_ID, RECIPIENT_A, address(0xF00D)), 0);
+        assertEq(writerCaller.replaceAddress(SERVICE_ID, RECIPIENT_A, RECIPIENT_C), 0);
 
+        // Admission sorts, so the renamed row lands after RECIPIENT_B rather than in its old slot.
         Share[] memory got = rewardActor().getShares(SERVICE_ID);
         assertEq(got.length, 2);
-        assertEq(got[0].wallet, address(0xF00D));
-        assertEq(FixedU18.unwrap(got[0].share), SHARE_TOTAL / 4, "the renamed recipient keeps the old address's share");
-        assertEq(got[1].wallet, RECIPIENT_B);
+        assertEq(got[0].wallet, RECIPIENT_B);
+        assertEq(got[1].wallet, RECIPIENT_C);
+        assertEq(FixedU18.unwrap(got[1].share), SHARE_TOTAL / 4, "the renamed recipient keeps the old address's share");
     }
 
-    function test_ReplaceAddress_RenameFoldsPeriodAndCarriesBalance() public {
+    function test_ReplaceAddress_RenameFoldsPeriodAndLeavesBalance() public {
         _registerExplicit(SERVICE_ID, address(writerCaller)); // weight 0.1e18, RECIPIENT_A sole payee
         rewardActor().mockAwardBlockReward(1 ether); // service stream accrues 0.1 ether to RECIPIENT_A
 
@@ -755,18 +795,17 @@ contract FVMRewardActorTest is MockRewardTest {
 
         assertEq(_streams()[0].accrued, 0, "the period folds, as it does on SetShares");
         assertEq(
-            _payableRow(rewardActor().getPayable(SERVICE_ID), RECIPIENT_A), 0, "old address keeps nothing on a rename"
-        );
-        assertEq(
-            _payableRow(rewardActor().getPayable(SERVICE_ID), RECIPIENT_B),
+            _payableRow(rewardActor().getPayable(SERVICE_ID), RECIPIENT_A),
             0.1 ether,
-            "the folded balance follows the recipient to its new address"
+            "the fold leaves the period's earnings with the address that earned them"
         );
+        assertEq(_payableRow(rewardActor().getPayable(SERVICE_ID), RECIPIENT_B), 0, "the new address starts from zero");
 
-        // Future accrual and the carried balance are both claimable at the new address.
+        // Only the future share moves, so the next period alone is claimable at the new address.
         rewardActor().mockAwardBlockReward(1 ether);
-        (, uint256[] memory amounts) = _claim(SERVICE_ID, _wallets(RECIPIENT_B));
-        assertEq(amounts[0], 0.2 ether);
+        (, uint256[] memory amounts) = _claim(SERVICE_ID, _wallets(RECIPIENT_B, RECIPIENT_A));
+        assertEq(amounts[0], 0.1 ether);
+        assertEq(amounts[1], 0.1 ether, "the old address still claims what it earned");
     }
 
     function test_ReplaceAddress_ToBurnSentinel_DropsRecipientAndLeavesBalanceWithOld() public {
@@ -786,6 +825,118 @@ contract FVMRewardActorTest is MockRewardTest {
             0.025 ether,
             "the fold left the old address its closed-period slice to claim"
         );
+    }
+
+    // The new address must be free, and the old one holds a row, so a self-swap is refused.
+    function test_ReplaceAddress_OldEqualsNew_IllegalArgument() public {
+        _registerExplicit(SERVICE_ID, address(writerCaller)); // RECIPIENT_A is the sole payee
+        assertEq(writerCaller.replaceAddress(SERVICE_ID, RECIPIENT_A, RECIPIENT_A), USR_ILLEGAL_ARGUMENT);
+    }
+
+    // The burn sentinel is stripped at admission, so it is never a stored recipient and the
+    // old-address check refuses it.
+    function test_ReplaceAddress_BurnSentinelAsOld_IllegalArgument() public {
+        _registerExplicit(SERVICE_ID, address(writerCaller));
+        assertEq(writerCaller.replaceAddress(SERVICE_ID, BURN_ADDRESS, RECIPIENT_B), USR_ILLEGAL_ARGUMENT);
+    }
+
+    /// @dev FVMRewards emits only the two address forms a contract can hold, so the unresolvable
+    /// case is reachable through raw params alone: a protocol-1 address names no actor here.
+    // [1,byte[040a00..beef],byte[011111..1111]]
+    function test_ReplaceAddress_UnresolvableNewAddress_NotFound() public {
+        _registerExplicit(SERVICE_ID, address(writerCaller)); // RECIPIENT_A is the sole payee
+        (uint32 exitCode,) = writerCaller.call(
+            REPLACE_ADDRESS,
+            hex"830156040a000000000000000000000000000000000000beef" hex"55011111111111111111111111111111111111111111"
+        );
+        assertEq(exitCode, USR_NOT_FOUND);
+    }
+
+    /// @dev SERVICE_ID and MIRROR_ID carrying the same weight, map and accrual, so the only thing
+    /// separating them is the call each one takes next.
+    function _twinExplicitStreams() internal {
+        _registerExplicit(SERVICE_ID, address(writerCaller));
+        _registerExplicit(MIRROR_ID, address(writerCaller));
+        Share[] memory start = _pair(RECIPIENT_A, (SHARE_TOTAL * 3) / 10, RECIPIENT_B, (SHARE_TOTAL * 7) / 10);
+        assertEq(writerCaller.setShares(SERVICE_ID, start), 0);
+        assertEq(writerCaller.setShares(MIRROR_ID, start), 0);
+        rewardActor().mockAwardBlockReward(1 ether); // 0.1 ether accrues to each
+    }
+
+    function _assertSharesMatch(uint64 left, uint64 right) internal view {
+        Share[] memory a = rewardActor().getShares(left);
+        Share[] memory b = rewardActor().getShares(right);
+        assertEq(a.length, b.length, "share map lengths differ");
+        for (uint256 i = 0; i < a.length; i++) {
+            assertEq(a[i].wallet, b[i].wallet);
+            assertEq(FixedU18.unwrap(a[i].share), FixedU18.unwrap(b[i].share));
+        }
+    }
+
+    function _assertPayableMatch(uint64 left, uint64 right) internal view {
+        LedgerRow[] memory a = rewardActor().getPayable(left);
+        LedgerRow[] memory b = rewardActor().getPayable(right);
+        assertEq(a.length, b.length, "payable ledger lengths differ");
+        for (uint256 i = 0; i < a.length; i++) {
+            assertEq(a[i].wallet, b[i].wallet);
+            assertEq(a[i].amount, b[i].amount);
+        }
+    }
+
+    function test_ReplaceAddress_MatchesSetSharesOnTheRenamedMap() public {
+        _twinExplicitStreams();
+
+        assertEq(writerCaller.replaceAddress(SERVICE_ID, RECIPIENT_A, RECIPIENT_C), 0);
+        Share[] memory renamed = _pair(RECIPIENT_C, (SHARE_TOTAL * 3) / 10, RECIPIENT_B, (SHARE_TOTAL * 7) / 10);
+        assertEq(writerCaller.setShares(MIRROR_ID, renamed), 0);
+
+        _assertSharesMatch(SERVICE_ID, MIRROR_ID);
+        _assertPayableMatch(SERVICE_ID, MIRROR_ID);
+        assertEq(_payableRow(rewardActor().getPayable(SERVICE_ID), RECIPIENT_A), 0.03 ether);
+    }
+
+    function test_ReplaceAddress_BurnSentinelMatchesSetSharesWithAnF099Row() public {
+        _twinExplicitStreams();
+
+        assertEq(writerCaller.replaceAddress(SERVICE_ID, RECIPIENT_A, BURN_ADDRESS), 0);
+        Share[] memory burned = _pair(BURN_ADDRESS, (SHARE_TOTAL * 3) / 10, RECIPIENT_B, (SHARE_TOTAL * 7) / 10);
+        assertEq(writerCaller.setShares(MIRROR_ID, burned), 0);
+
+        assertEq(
+            rewardActor().getShares(SERVICE_ID).length, 1, "the dropped row leaves the map short of the denominator"
+        );
+        _assertSharesMatch(SERVICE_ID, MIRROR_ID);
+        _assertPayableMatch(SERVICE_ID, MIRROR_ID);
+    }
+
+    /// @dev A full map of equal shares, wallets numbered up from `first`.
+    function _fullMap(uint160 first) internal pure returns (Share[] memory arr) {
+        arr = new Share[](MAX_RECIPIENTS);
+        for (uint160 i = 0; i < MAX_RECIPIENTS; i++) {
+            arr[i] = Share({wallet: address(first + i), share: FixedU18.wrap(SHARE_TOTAL / MAX_RECIPIENTS)});
+        }
+    }
+
+    function test_ReplaceAddress_PayableUnionOverCap_IllegalArgument() public {
+        _registerExplicit(SERVICE_ID, address(writerCaller));
+        Share[] memory former = _fullMap(1000);
+        assertEq(writerCaller.setShares(SERVICE_ID, former), 0);
+        rewardActor().mockAwardBlockReward(1 ether);
+
+        // The fold gives all 64 former recipients a row and the incoming map reserves 64 more,
+        // which is the cap exactly.
+        Share[] memory current = _fullMap(2000);
+        assertEq(writerCaller.setShares(SERVICE_ID, current), 0);
+        rewardActor().mockAwardBlockReward(1 ether);
+
+        // This fold fills the table, so an address holding no row has nowhere to go.
+        assertEq(
+            writerCaller.replaceAddress(SERVICE_ID, current[0].wallet, address(uint160(3000))), USR_ILLEGAL_ARGUMENT
+        );
+        // A former recipient already holds a row, so the union stands at the cap.
+        assertEq(writerCaller.replaceAddress(SERVICE_ID, current[0].wallet, former[0].wallet), 0);
+        assertEq(rewardActor().getShares(SERVICE_ID).length, MAX_RECIPIENTS);
+        assertEq(rewardActor().getPayable(SERVICE_ID).length, MAX_PAYABLE_ROWS_PER_STREAM);
     }
 
     function test_RemoveStream_NotSwa_Forbidden() public {
@@ -956,7 +1107,7 @@ contract FVMRewardActorTest is MockRewardTest {
         updates[0] = WeightRecordUpdate({id: SERVICE_ID, record: _constantRecord(0.3e18)});
         updates[1] = WeightRecordUpdate({id: CONSENSUS_ID, record: _constantRecord(0.4e18)});
         assertEq(swaCaller.setWeightRecords(updates), 0);
-        assertEq(_getState().pendingWrites.length, 1, "a batch is one queue entry");
+        assertEq(_getState().pendingWritesQueue.length, 1, "a batch is one queue entry");
 
         _warpPastTimelockAndSettle();
         StreamView[] memory streams = _streams();

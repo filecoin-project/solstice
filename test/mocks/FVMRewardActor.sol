@@ -31,6 +31,10 @@ int256 constant WAD = 1e18;
 uint64 constant MAX_STREAMS = 8;
 uint256 constant MAX_RECIPIENTS = 64;
 
+/// @dev A stream's payable table is reserved for a full outgoing map beside a full incoming one,
+/// so installing a map is refused when the fold would leave more rows than this.
+uint256 constant MAX_PAYABLE_ROWS_PER_STREAM = 2 * MAX_RECIPIENTS;
+
 /// @dev FRC-0042's floor. Below it a method is internal API, closed to EVM callers.
 uint64 constant FIRST_EXPORTED_METHOD_NUMBER = 1 << 24;
 
@@ -131,7 +135,7 @@ struct MockState {
     uint64 swaTimelockEpochs;
     StreamView[] streams;
     TombstoneView[] tombstones;
-    PendingView[] pendingWrites;
+    PendingView[] pendingWritesQueue;
 }
 
 /// @notice Mock for the Filecoin Reward actor (f02), covering its stream-splitting methods.
@@ -357,21 +361,22 @@ contract FVMRewardActor {
         if (failSetShares) return (USR_FORBIDDEN, 0, "");
         // Params CBOR: [id, [[walletBytes, share]...]]
         (uint64 id, Share[] memory newShares) = _decodeSetSharesParams(params);
+        // The row cap is charged before the stream is even looked at, so an oversized map is
+        // rejected the same way whoever sends it.
+        if (newShares.length > MAX_RECIPIENTS) return (USR_ILLEGAL_ARGUMENT, 0, "");
         Stream storage s = _streams[id];
         uint32 gate = _writerGate(s);
         if (gate != 0) return (gate, 0, "");
         if (!_sharesValid(newShares)) return (USR_ILLEGAL_ARGUMENT, 0, "");
 
-        _foldAndBurnResidue(s);
-        delete s.shares;
-        _pushNonBurnShares(s.shares, newShares);
+        if (!_installShares(s, newShares)) return (USR_ILLEGAL_ARGUMENT, 0, "");
         return (0, 0, "");
     }
 
     // -------------------------------------------------------------------------
-    // ReplaceAddress -- designated writer only, applied immediately; folds the closing period,
-    // then renames one recipient (carrying its payable balance) or, when newAddress is the burn
-    // sentinel, drops the recipient so its share reverts to burn.
+    // ReplaceAddress -- designated writer only, applied immediately; SetShares on the stored map
+    // with one row renamed, or dropped when newAddress is the burn sentinel so its share reverts
+    // to burn. The old address keeps the balance it earned and the new one starts from zero.
     // -------------------------------------------------------------------------
 
     function _replaceAddress(bytes calldata params) internal returns (uint32, uint64, bytes memory) {
@@ -380,28 +385,39 @@ contract FVMRewardActor {
         Stream storage s = _streams[id];
         uint32 gate = _writerGate(s);
         if (gate != 0) return (gate, 0, "");
+        // Resolution sits behind the writer gate, so an unauthorized call is forbidden rather
+        // than not-found. An address in a form no contract can name decodes to zero here, which
+        // stands for f02's resolution failure.
+        if (oldAddr == address(0) || newAddr == address(0)) return (USR_NOT_FOUND, 0, "");
 
         bool burning = newAddr == BURN_ADDRESS;
-        uint256 slot = _shareIndex(s, oldAddr);
-        if (slot == type(uint256).max) return (USR_ILLEGAL_ARGUMENT, 0, "");
+        // f099 is never stored, so this check refuses it as the old address too.
+        if (_shareIndex(s, oldAddr) == type(uint256).max) return (USR_ILLEGAL_ARGUMENT, 0, "");
+        // The burn sentinel may repeat; every other address must be free, which is also what
+        // rejects naming the old address as the new one.
         if (!burning && _shareIndex(s, newAddr) != type(uint256).max) return (USR_ILLEGAL_ARGUMENT, 0, "");
 
-        _foldAndBurnResidue(s);
-        if (burning) {
-            // Drop the row so the stored total falls and later awards burn that fraction; the
-            // fold already left oldAddr its closed-period slice to claim.
-            s.shares[slot] = s.shares[s.shares.length - 1];
-            s.shares.pop();
-        } else {
-            s.shares[slot].wallet = newAddr;
-            // Same payee under a new address, so its carried balance follows.
-            uint256 carried = s.payableLedger.amount[oldAddr];
-            if (carried > 0) {
-                _ledgerRemove(s.payableLedger, oldAddr);
-                _ledgerIncrement(s.payableLedger, newAddr, carried);
+        if (!_installShares(s, _sharesWithRowReplaced(s, oldAddr, newAddr))) return (USR_ILLEGAL_ARGUMENT, 0, "");
+        return (0, 0, "");
+    }
+
+    /// @dev The stored map with `oldAddr`'s row renamed to `newAddr`, or dropped when that is the
+    /// burn sentinel. Admission sorts and strips, so the copy is handed over as it stands.
+    function _sharesWithRowReplaced(Stream storage s, address oldAddr, address newAddr)
+        internal
+        view
+        returns (Share[] memory next)
+    {
+        bool burning = newAddr == BURN_ADDRESS;
+        next = new Share[](burning ? s.shares.length - 1 : s.shares.length);
+        uint256 n;
+        for (uint256 i = 0; i < s.shares.length; i++) {
+            if (s.shares[i].wallet != oldAddr) {
+                next[n++] = s.shares[i];
+            } else if (!burning) {
+                next[n++] = Share({wallet: newAddr, share: s.shares[i].share});
             }
         }
-        return (0, 0, "");
     }
 
     /// @notice Test helper: the mock's whole state, read directly rather than through a method.
@@ -436,13 +452,13 @@ contract FVMRewardActor {
             tombstones[i] = TombstoneView({id: id, payableRows: _ledgerView(_tombstones[id].payableLedger)});
         }
 
-        PendingView[] memory pendingWrites = new PendingView[](_pendingKeys.length);
+        PendingView[] memory pendingWritesQueue = new PendingView[](_pendingKeys.length);
         for (uint256 i = 0; i < _pendingKeys.length; i++) {
             PendingKey memory k = _pendingKeys[i];
             if (!k.hasId) {
                 // A weight slot carries no per-stream payload; its records are the batch. Reading
                 // `_pending[0][op]` here would report an unrelated entry as this slot's payload.
-                pendingWrites[i] = PendingView({
+                pendingWritesQueue[i] = PendingView({
                     hasId: false,
                     id: 0,
                     op: k.op,
@@ -454,7 +470,7 @@ contract FVMRewardActor {
                 continue;
             }
             Pending storage p = _pending[k.id][k.op];
-            pendingWrites[i] = PendingView({
+            pendingWritesQueue[i] = PendingView({
                 hasId: true,
                 id: k.id,
                 op: k.op,
@@ -473,7 +489,7 @@ contract FVMRewardActor {
             swaTimelockEpochs: swaTimelockEpochs,
             streams: streams,
             tombstones: tombstones,
-            pendingWrites: pendingWrites
+            pendingWritesQueue: pendingWritesQueue
         });
     }
 
@@ -520,7 +536,7 @@ contract FVMRewardActor {
         if (!_admits(proposed)) return (USR_ILLEGAL_ARGUMENT, 0, "");
 
         delete _pendingShares[id];
-        _pushNonBurnShares(_pendingShares[id], shares);
+        _admitShares(_pendingShares[id], shares);
         _queueWrite(
             id,
             PendingOp.REGISTER,
@@ -1329,9 +1345,9 @@ contract FVMRewardActor {
 
     /// @dev The gate SetShares and ReplaceAddress share: a live EXPLICIT stream whose designated
     /// writer is the caller. Zero (success) when the write may proceed.
+    /// @dev Missing and implicit result in the same failure mode from f02.
     function _writerGate(Stream storage s) internal view returns (uint32) {
-        if (!s.exists) return USR_NOT_FOUND;
-        if (s.kind != DistributionKind.EXPLICIT) return USR_ILLEGAL_ARGUMENT;
+        if (!s.exists || s.kind != DistributionKind.EXPLICIT) return USR_ILLEGAL_ARGUMENT;
         if (msg.sender != s.writer) return USR_FORBIDDEN;
         return 0;
     }
@@ -1342,9 +1358,63 @@ contract FVMRewardActor {
         }
     }
 
-    function _pushNonBurnShares(Share[] storage target, Share[] memory shares) internal {
+    /// @dev admit_shares: strip the burn sentinel rows, then store what is left in recipient
+    /// order. f02 sorts resolved ID addresses numerically; here the masked ID address carries the
+    /// same order in its low bits, so the address itself is the key.
+    function _admitShares(Share[] storage target, Share[] memory shares) internal {
         for (uint256 i = 0; i < shares.length; i++) {
-            if (shares[i].wallet != BURN_ADDRESS) target.push(shares[i]);
+            if (shares[i].wallet == BURN_ADDRESS) continue;
+            target.push(shares[i]);
+            for (uint256 j = target.length - 1; j > 0; j--) {
+                if (uint160(target[j - 1].wallet) <= uint160(target[j].wallet)) break;
+                Share memory smaller = target[j];
+                target[j] = target[j - 1];
+                target[j - 1] = smaller;
+            }
+        }
+    }
+
+    /// @dev install_shares: closes the current period and installs `shares` for the next one.
+    /// False when the rows the fold would leave, together with the incoming map, overrun the
+    /// stream's payable reservation. The cap is checked first so a refusal leaves the period
+    /// open, the way f02's abort does.
+    function _installShares(Stream storage s, Share[] memory shares) internal returns (bool) {
+        if (_reservedPayableRows(s, shares) > MAX_PAYABLE_ROWS_PER_STREAM) return false;
+        _foldAndBurnResidue(s);
+        delete s.shares;
+        _admitShares(s.shares, shares);
+        return true;
+    }
+
+    /// @dev union_len: distinct wallets across the payable rows the fold leaves and the incoming
+    /// map. The burn sentinel is stripped at admission and stays out of the count.
+    function _reservedPayableRows(Stream storage s, Share[] memory shares) internal view returns (uint256 count) {
+        address[] memory folded = new address[](s.payableLedger.wallets.length + s.shares.length);
+        uint256 n;
+        for (uint256 i = 0; i < s.payableLedger.wallets.length; i++) {
+            folded[n++] = s.payableLedger.wallets[i];
+        }
+        uint256 pool = s.accrued;
+        uint256 shareTotal = _storedShareTotal(s);
+        for (uint256 i = 0; i < s.shares.length; i++) {
+            address wallet = s.shares[i].wallet;
+            if (s.payableLedger.indexPlusOne[wallet] != 0) continue;
+            if ((FixedU18.unwrap(s.shares[i].share) * pool) / shareTotal > s.claimedPeriod.amount[wallet]) {
+                folded[n++] = wallet;
+            }
+        }
+
+        count = n;
+        for (uint256 i = 0; i < shares.length; i++) {
+            if (shares[i].wallet == BURN_ADDRESS) continue;
+            bool held;
+            for (uint256 j = 0; j < n; j++) {
+                if (folded[j] == shares[i].wallet) {
+                    held = true;
+                    break;
+                }
+            }
+            if (!held) count++;
         }
     }
 

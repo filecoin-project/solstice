@@ -232,7 +232,8 @@ contract SRAggregateMirrorTest is SRATestBase {
         sra.submitShares(0);
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
         assertEq(shares.length, 2, "both q0 contributors from the mirror");
-        assertEq(shares[0].wallet, a, "posting order: a first (mirror of a's q0 value)");
+        // f02 stores shares in recipient order, so a's row is found by lookup, not by position.
+        assertEq(_shareOf(shares, a), uint256(1e18) / 3, "a weighted by its q0 value of 100, not its q1 value");
         assertEq(_shareOf(shares, a) + _shareOf(shares, b), 1e18, "shares sum to 100%");
     }
 
