@@ -468,7 +468,8 @@ library FVMRewards {
     /// @notice Swaps one recipient address in an explicit stream's share map for another, or for
     /// the burn sentinel to drop it, without reverting on actor error. Applied immediately, like
     /// SetShares.
-    /// @dev Params CBOR: `[id, oldAddress, newAddress]`.
+    /// @dev Params CBOR: `[id, oldAddress, newAddress]`. Only the future share moves: the old
+    /// address keeps the payable balance it earned and the new address starts from zero.
     function tryReplaceAddress(uint64 id, address oldAddress, address newAddress) internal returns (int256 exitCode) {
         // [id, oldAddress, newAddress]
         (uint256 base, uint256 p) = _begin(REPLACE_ADDRESS);
