@@ -46,9 +46,6 @@ contract ServiceRewardsActor is UnanimousGovernance {
     /// @dev protects against overflow in _computeShares
     FixedU18 private constant MAX_FILECOIN_PAY_VOLUME_USD = FixedU18.wrap(1e30);
 
-    /// @dev Sentinel for `frozenSince == 0` ("never frozen"), mirrors SraStorage's 0-means-not-frozen layout.
-    Epoch private constant NEVER = Epoch.wrap(0);
-
     Epoch public immutable EPOCHS_PER_QUARTER;
     Epoch private immutable POST_PERIOD;
     Epoch private immutable VERIFICATION_WINDOW;
@@ -70,9 +67,6 @@ contract ServiceRewardsActor is UnanimousGovernance {
 
     error NotAdmitted(address orch);
     error AlreadyAdmitted(address orch);
-    error NotFrozen(address orch);
-    error Frozen(address orch);
-    error AlreadyFrozen(address orch);
     error AtCapacity();
     error AlreadyBound(bytes32 pairId);
     error NotInPostingWindow(uint64 q);
@@ -248,7 +242,6 @@ contract ServiceRewardsActor is UnanimousGovernance {
         uint64 id = r.activeIdOf[msg.sender];
         SraStorage.OrchestratorInfo storage o = r.orchestrators[id];
         require(id != 0 && o.admitted, NotAdmitted(msg.sender));
-        require(o.frozenSince == NEVER, Frozen(msg.sender));
 
         for (uint256 i = 0; i < pairs.length; i++) {
             bytes32 pairId = _pairId(pairs[i].payer, pairs[i].operator);
@@ -272,7 +265,6 @@ contract ServiceRewardsActor is UnanimousGovernance {
         uint64 id = r.activeIdOf[msg.sender];
         SraStorage.OrchestratorInfo storage o = r.orchestrators[id];
         require(id != 0 && o.admitted, NotAdmitted(msg.sender));
-        require(o.frozenSince == NEVER, Frozen(msg.sender));
         require(_inPostingWindow(q), NotInPostingWindow(q));
 
         // The single USD total is the only on-chain input that feeds _computeShares;
@@ -347,8 +339,6 @@ contract ServiceRewardsActor is UnanimousGovernance {
             qt.totalUsd[qt.activeQuarter] = qt.totalUsd[qt.activeQuarter] - o.fpv;
         }
         o.admitted = false;
-        o.frozenSince = NEVER;
-        o.frozenAtPostEnd = false;
         r.activeIdOf[orch] = 0;
         uint64 idx = o.admittedIndex;
         uint64 lastId = r.admittedIds[r.admittedIds.length - 1];
@@ -477,16 +467,10 @@ contract ServiceRewardsActor is UnanimousGovernance {
         require(_inVerificationWindow(q), NotInVerificationWindow(q));
         uint64 id = _requireAdmittedId(orch);
 
-        // Freeze symmetry: postVolume gates on frozenSince (a frozen orchestrator cannot
-        // post); correctVolume is the governance path into the same FilecoinPayVolume storage, so it must not
-        // re-admit a suspended orchestrator — otherwise a freeze → correctVolume → advance sequence
-        // clears frozenAtPostEnd and the frozen orchestrator obtains shares in the next quarter.
-        SraStorage.OrchestratorInfo storage o = SraStorage.registry().orchestrators[id];
-        require(o.frozenSince == NEVER, Frozen(orch));
-
         // Same business-domain bound as postVolume (governance path into the same FilecoinPayVolume storage).
         require(value <= MAX_FILECOIN_PAY_VOLUME_USD, InvalidParameter());
 
+        SraStorage.OrchestratorInfo storage o = SraStorage.registry().orchestrators[id];
         SraStorage.SraStorageQuarter storage qt = SraStorage.quarter();
 
         // Time-correct the mirror cache first (gap quarters advance on the clock, not on
@@ -620,12 +604,6 @@ contract ServiceRewardsActor is UnanimousGovernance {
         SraStorage.SraStorageRegistry storage r = SraStorage.registry();
         uint64 id = r.activeIdOf[orch];
         return id != 0 && r.orchestrators[id].admitted;
-    }
-
-    function isFrozen(address orch) external view returns (bool) {
-        SraStorage.SraStorageRegistry storage r = SraStorage.registry();
-        uint64 id = r.activeIdOf[orch];
-        return id != 0 && !(r.orchestrators[id].frozenSince == NEVER);
     }
 
     function admittedCount() external view returns (uint64) {

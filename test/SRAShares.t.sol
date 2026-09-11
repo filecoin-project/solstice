@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 pragma solidity ^0.8.36;
 
-// SRA share computation tests — share rounding / freeze-semantics snapshot /
+// SRA share computation tests — share rounding /
 //   all-zero benign no-op (FIPs#1275) / SetShares encoding / f02 mock driving
 //
 // Verification means: after submitShares, read the mock's getShares(2) (the f02 service stream's share map).
@@ -115,99 +115,6 @@ contract SRASharesTest is SRATestBase {
         assertEq(shares.length, 1);
         assertEq(shares[0].wallet, address(sra)); // initial map unchanged
         assertEq(FixedU18.unwrap(shares[0].share), 1e18);
-    }
-
-    /// Strategy 4 variant: all orchestrators excluded (posted but all frozen within the posting period) -> total=0 -> no-op.
-    function test_SubmitShares_AllFrozen_NoOp_KeepsMap() public {
-        address a = _admitAndPost(100e18);
-        address b = _admitAndPost(200e18);
-        _freeze(a);
-        _freeze(b);
-
-        _rollTo(_qVerifyEnd(0) + 1);
-        sra.submitShares(0);
-
-        Share[] memory shares = rewardActor().getShares(SERVICE_ID);
-        assertEq(shares.length, 1);
-        assertEq(shares[0].wallet, address(sra)); // initial map unchanged
-        assertEq(FixedU18.unwrap(shares[0].share), 1e18);
-    }
-
-    // ------------------------------------------------------------------------
-    // freeze exclusion (incl. E+POST snapshot semantics)
-    // ------------------------------------------------------------------------
-
-    /// a frozen orchestrator is excluded — the share map contains only active orchestrators, Σ still exactly == 1e18.
-    function test_SubmitShares_FrozenExcluded_ExactSum() public {
-        address a = _admitAndPost(100e18);
-        address b = _admitAndPost(100e18);
-        _freeze(b); // frozen within the posting period (executed before E+POST)
-
-        _rollTo(_qVerifyEnd(0) + 1);
-        sra.submitShares(0);
-
-        Share[] memory shares = rewardActor().getShares(SERVICE_ID);
-        assertEq(shares.length, 1); // only a
-        assertEq(shares[0].wallet, a);
-        assertEq(FixedU18.unwrap(shares[0].share), 1e18);
-    }
-
-    /// Strategy 3/S5 snapshot: frozen in the posting period -> frozen at the E+POST instant -> unfrozen in the verification window -> still excluded.
-    /// (Strict E+POST snapshot: in-window changes do not affect the quarter)
-    function test_SubmitShares_FrozenAtPostEnd_UnfrozenInWindow_StillExcluded() public {
-        address a = _admitAndPost(100e18);
-        address b = _admitAndPost(100e18);
-
-        // freeze b within the posting period (two votes + hold, executed before E+POST)
-        vm.prank(owner1);
-        sra.freeze(b);
-        vm.prank(owner2);
-        sra.freeze(b);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        sra.freeze(b); // executed: b frozen, and still < E+POST
-
-        // unfreeze b within the verification window
-        vm.roll(_qPostEnd(0) + 1); // verification window
-        vm.prank(owner1);
-        sra.unfreeze(b);
-        vm.prank(owner2);
-        sra.unfreeze(b);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        sra.unfreeze(b); // executed: b currently unfrozen
-
-        _rollTo(_qVerifyEnd(0) + 1);
-        sra.submitShares(0);
-
-        // b was frozen at the E+POST instant -> excluded (even though currently unfrozen)
-        Share[] memory shares = rewardActor().getShares(SERVICE_ID);
-        assertEq(shares.length, 1);
-        assertEq(shares[0].wallet, a);
-        assertEq(FixedU18.unwrap(shares[0].share), 1e18);
-    }
-
-    /// Strategy 3/S5 snapshot counterexample: normal in the posting period -> frozen in the verification window -> unfrozen at E+POST -> still included.
-    function test_SubmitShares_UnfrozenAtPostEnd_FrozenInWindow_StillIncluded() public {
-        address a = _admitAndPost(100e18);
-        address b = _admitAndPost(100e18);
-
-        // freeze b within the verification window (does not affect the quarter: b not frozen at the E+POST instant)
-        vm.roll(_qPostEnd(0) + 1);
-        vm.prank(owner1);
-        sra.freeze(b);
-        vm.prank(owner2);
-        sra.freeze(b);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        sra.freeze(b); // b currently frozen, but not frozen at the snapshot instant
-
-        _rollTo(_qVerifyEnd(0) + 1);
-        sra.submitShares(0);
-
-        // b still counted in the quarter: both orchestrators get 50% each
-        Share[] memory shares = rewardActor().getShares(SERVICE_ID);
-        assertEq(shares.length, 2);
-        assertEq(_walletShare(shares, a), 500_000_000_000_000_000);
-        assertEq(_walletShare(shares, b), 500_000_000_000_000_000);
-        assertEq(_sumShares(shares), 1e18);
     }
 
     // ------------------------------------------------------------------------

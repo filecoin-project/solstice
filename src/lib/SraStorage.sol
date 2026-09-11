@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 pragma solidity ^0.8.36;
 
-import {Epoch} from "./Epoch.sol";
 import {FixedU18} from "./FixedU18.sol";
 
 library SraStorage {
@@ -26,7 +25,7 @@ library SraStorage {
         mapping(address orch => uint64 id) activeIdOf; // current effective address -> id (0 = unregistered sentinel)
         mapping(bytes32 pairId => uint64 id) bindings; // pairId = keccak256(abi.encode(payer, operator))
         uint64 nextId; // id allocator
-        uint64[] admittedIds; // enumerable admitted (incl. frozen)
+        uint64[] admittedIds; // enumerable admitted
     }
 
     /// @custom:storage-location erc7201:Solstice.SRA.Quarter
