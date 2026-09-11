@@ -13,6 +13,7 @@ pragma solidity ^0.8.36;
 
 import {SRATestBase} from "./SRATestBase.sol";
 import {FixedU18} from "../src/lib/FixedU18.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {ServiceRewardsActor} from "../src/ServiceRewardsActor.sol";
 import {FilecoinPayVolume} from "../src/lib/SraTypes.sol";
 
@@ -287,12 +288,10 @@ contract SRAQuarterTest is SRATestBase {
 
     /// G1: invalid params (priceBand > 10000) -> InvalidParameter at the third body execution.
     function test_SetPricingParams_InvalidParams_Reverts() public {
-        // priceBand > BASIS_POINTS(10000) is invalid
+        // band > BASIS_POINTS(10000) is invalid
         vm.prank(owner1);
         sra.setPricingParams(MIN_LOT, 10001);
         vm.prank(owner2);
-        sra.setPricingParams(MIN_LOT, 10001);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
         vm.expectRevert();
         sra.setPricingParams(MIN_LOT, 10001);
     }

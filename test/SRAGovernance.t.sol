@@ -261,20 +261,6 @@ contract SRAGovernanceTest is SRATestBase {
     /// E2: the constructor rejects invalid configuration — priceBand > BASIS_POINTS /
     ///     epochsPerQuarter=0 (each reverts InvalidParameter at deploy).
     function test_Constructor_InvalidParams_Reverts() public {
-        // priceBand > BASIS_POINTS
-        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.InvalidParameter.selector));
-        new ServiceRewardsActor(
-            owner1,
-            owner2,
-            Epoch.wrap(EPOCHS_PER_QUARTER),
-            Epoch.wrap(POST_PERIOD),
-            Epoch.wrap(VERIFICATION_WINDOW),
-            Epoch.wrap(SRA_CANCEL_HOLD),
-            Epoch.wrap(ACTIVATION_EPOCH),
-            MIN_LOT,
-            10001
-        );
-
         // epochsPerQuarter == 0
         vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.InvalidParameter.selector));
         new ServiceRewardsActor(

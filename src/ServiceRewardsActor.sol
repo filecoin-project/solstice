@@ -12,7 +12,7 @@ pragma solidity ^0.8.36;
 //
 // The SRA never receives or holds value.
 //
-// Storage: 3 ERC-7201 namespaces (Registry/Quarter/Params),
+// Storage: 2 ERC-7201 namespaces (Registry/Quarter),
 //       reusing Solstice.Owners (dual Safe) and Solstice.PendingTasks (governance queue).
 //       The allowlists are event-only (AdmittedListsUpdated is the authoritative snapshot).
 
@@ -34,7 +34,6 @@ contract ServiceRewardsActor is UnanimousGovernance {
     /// @dev Total share (f02 encoding constraint: Σ shares must be exactly == 1e18).
     FixedU18 private constant SHARE_TOTAL = ONE;
 
-    /// @dev PRICE_BAND in basis points (10000 = 100%).
     uint256 private constant BASIS_POINTS = 10_000;
 
     /// @dev D2: admitted orchestrator cap (incl. frozen), matching f02 MAX_RECIPIENTS.
@@ -101,8 +100,7 @@ contract ServiceRewardsActor is UnanimousGovernance {
         owner2.addOwner();
 
         require(
-            priceBand <= BASIS_POINTS && Epoch.unwrap(epochsPerQuarter) > 0 && Epoch.unwrap(postPeriod) > 0
-                && Epoch.unwrap(verificationWindow) > 0
+            Epoch.unwrap(epochsPerQuarter) > 0 && Epoch.unwrap(postPeriod) > 0 && Epoch.unwrap(verificationWindow) > 0
                 && uint256(Epoch.unwrap(postPeriod)) + uint256(Epoch.unwrap(verificationWindow))
                     < uint256(Epoch.unwrap(epochsPerQuarter)),
             InvalidParameter()
@@ -623,11 +621,6 @@ contract ServiceRewardsActor is UnanimousGovernance {
         if (q == activeQ) return FilecoinPayVolume({usd: o.fpv});
         if (activeQ > 0 && q == activeQ - 1) return FilecoinPayVolume({usd: o.prevFpv});
         return FilecoinPayVolume({usd: ZERO});
-    }
-
-    function getPricingParams() external view returns (uint256 minLot, uint256 priceBand) {
-        SraStorage.SraStorageParams storage p = SraStorage.params();
-        return (p.minLot, p.priceBand);
     }
 
     function orchestratorCount() external view returns (uint64) {

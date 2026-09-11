@@ -7,9 +7,8 @@ pragma solidity ^0.8.36;
 // and constructor parameters the implementation must match.
 //
 // Test assumptions:
-//   the constructor signature (9 params) is a test-side derivation
+//   the constructor signature (7 params) is a test-side derivation
 //   FilecoinPayVolume is a single USD total (FIP-0118 FIPs#1275: off-chain conversion)
-//   PRICE_BAND in basis points (2000 = allows ±20% deviation); authoritative for the off-chain indexer
 
 import {MockRewardTest} from "./mocks/MockRewardTest.sol";
 import {WAD} from "./mocks/FVMRewardActor.sol";
