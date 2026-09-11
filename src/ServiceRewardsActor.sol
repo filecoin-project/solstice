@@ -413,7 +413,20 @@ contract ServiceRewardsActor is UnanimousGovernance {
     {
         uint64 id = _requireAdmittedId(orch);
         SraStorage.registry().bindings[_pairId(payer, operator)] = id;
-        emit BindingReassigned(payer, operator, orch);
+        emit BindingReassigned(payer, operator, orch, inherit);
+    }
+
+    /// @notice Batch form of reassignBinding: each item reuses the single path's validation and
+    ///         event (per-item _requireAdmittedId, per-item BindingReassigned); atomicity comes
+    ///         from revert — any invalid item rolls the whole batch back.
+    function reassignBindings(Reassignment[] calldata rs) external unanimousNoHold(keccak256(msg.data)) {
+        require(rs.length <= MAX_PAIRS, TooManyPairs());
+        SraStorage.SraStorageRegistry storage r = SraStorage.registry();
+        for (uint256 i = 0; i < rs.length; i++) {
+            uint64 id = _requireAdmittedId(rs[i].orch);
+            r.bindings[_pairId(rs[i].payer, rs[i].operator)] = id;
+            emit BindingReassigned(rs[i].payer, rs[i].operator, rs[i].orch, rs[i].inherit);
+        }
     }
 
     /// @notice Owner rotation, effective immediately (unanimousNoHold path,
