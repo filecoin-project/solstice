@@ -33,7 +33,7 @@ contract StreamWeightActor is UnanimousGovernance {
 
         SRA = sra;
         QUARTER = sra.EPOCHS_PER_QUARTER();
-        HOLD = sra.SRA_CANCEL_HOLD();
+        HOLD = hold;
 
         GateParamsLibrary.init();
     }

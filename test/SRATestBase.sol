@@ -11,7 +11,7 @@ pragma solidity ^0.8.36;
 //   FilecoinPayVolume is a single USD total (FIP-0118 FIPs#1275: off-chain conversion)
 
 import {MockRewardTest} from "./mocks/MockRewardTest.sol";
-import {WAD} from "./mocks/FVMRewardActor.sol";
+import {WAD, MAINNET_TIMELOCK} from "./mocks/FVMRewardActor.sol";
 
 import {ServiceRewardsActor} from "../src/ServiceRewardsActor.sol";
 import {Epoch} from "../src/lib/Epoch.sol";
@@ -19,7 +19,10 @@ import {FixedU18} from "../src/lib/FixedU18.sol";
 import {Binding} from "../src/lib/SraTypes.sol";
 import {SERVICE_ID, Share, WeightRecord} from "../src/lib/FVMRewardTypes.sol";
 import {FVMRewards} from "../src/lib/FVMRewards.sol";
-import {SWA_TIMELOCK} from "../src/lib/FVMRewardMethod.sol";
+
+import {RESOLVE_ADDRESS} from "fvm-solidity/FVMPrecompiles.sol";
+import {FVMAddress} from "fvm-solidity/FVMAddress.sol";
+import {FVMActor as MockFVMActor} from "fvm-solidity/mocks/FVMActor.sol";
 
 /// @notice Common test base: deploys the SRA, builds owners, registers service stream 2, quarterly time utilities.
 contract SRATestBase is MockRewardTest {
@@ -28,10 +31,8 @@ contract SRATestBase is MockRewardTest {
     address internal owner2;
 
     // ---- small test window constants (constructor config) ----
-    // quarter 1000 epochs, posting 300, verification 400, hold 100; ACTIVATION = 100000
-    // keeps quarter 0's windows far from the "SWA_TIMELOCK(20160) advance required to register stream 2".
-    // POST_PERIOD(300) > 2×SRA_CANCEL_HOLD(200): guarantees two consecutive freezes within the posting
-    // period (each 2 votes + 100 hold) complete before E+POST (the timing prerequisite for all-frozen -> burn).
+    // quarter 1000 epochs, posting 300, verification 400; ACTIVATION = 100000
+    // keeps quarter 0's windows far from the 20160-epoch advance (MAINNET_TIMELOCK) required to register stream 2.
     uint64 internal constant EPOCHS_PER_QUARTER = 1000;
     uint64 internal constant POST_PERIOD = 300;
     uint64 internal constant VERIFICATION_WINDOW = 400;
@@ -58,7 +59,7 @@ contract SRATestBase is MockRewardTest {
 
     /// @dev migration pins service stream = 2, already registered with writer = SRA:
     /// the base contract temporarily acts as the swa, registers EXPLICIT stream 2 (writer = address(sra)),
-    /// advances past SWA_TIMELOCK and uses one mock dispatch to trigger _settle so the stream takes effect.
+    /// advances past MAINNET_TIMELOCK and uses one mock dispatch to trigger _settle so the stream takes effect.
     function _registerServiceStream() internal {
         rewardActor().mockSwa(address(this));
 
@@ -69,11 +70,11 @@ contract SRATestBase is MockRewardTest {
             WeightRecord({vStart: 0, slope: 0, tStart: Epoch.wrap(0), floor: 0, cap: WAD}),
             address(sra),
             initialShares,
-            uint64(block.number) + SWA_TIMELOCK
+            uint64(block.number) + MAINNET_TIMELOCK
         );
         require(exitCode == 0, "registerServiceStream failed");
 
-        vm.roll(block.number + SWA_TIMELOCK);
+        vm.roll(block.number + MAINNET_TIMELOCK);
         // trigger one dispatch: the mock's handle_filecoin_method entry runs _settle() first, applying the due registration.
         rewardActor().mockAwardBlockReward(0);
     }

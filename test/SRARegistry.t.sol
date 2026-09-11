@@ -52,17 +52,13 @@ contract SRARegistryTest is SRATestBase {
         assertEq(sra.admittedCount(), 64);
     }
 
-    /// Strategy 5/D2: Freeze does not release a slot — the frozen orchestrator still occupies an admitted slot.
-    function test_Admit_FrozenStillCountsTowardLimit() public {
-        for (uint256 i = 0; i < 64; i++) {
-            _admit(makeAddr(string.concat("orch-", vm.toString(i))));
-        }
-        // freeze one orchestrator
-        address frozenOrch = makeAddr("orch-0");
-        _freeze(frozenOrch);
-        assertTrue(sra.isFrozen(frozenOrch));
-        // freeze does not release a slot: admittedCount is still 64
-        assertEq(sra.admittedCount(), 64);
+    /// Pre-activation removal succeeds: setUp leaves block.number (≈ 1 + MAINNET_TIMELOCK) below
+    /// ACTIVATION_EPOCH, where no quarter has ever ended. The §3.2 guard must not block — nothing
+    /// can be pending before activation (removal touches only the admitted set).
+    function test_Remove_PreActivation_Succeeds() public {
+        assertLt(block.number, ACTIVATION_EPOCH, "setUp must leave the contract pre-activation");
+        address orch = makeAddr("pre-act");
+        _admit(orch, orch);
 
         _remove(orch);
 
