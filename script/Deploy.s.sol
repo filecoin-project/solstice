@@ -6,7 +6,7 @@ import {IERC8167} from "erc8167/interfaces/IERC8167.sol";
 import {Migrate} from "erc8167/interfaces/Migrate.sol";
 import {Migration, SetDelegateOperation} from "erc8167/lib/Migration.sol";
 import {Script} from "forge-std/Script.sol";
-import {IDeployer} from "ReservedAddress/interfaces/IDeployer.sol";
+import {DEPLOYER as ROOT, DEPLOYER_CREATOR as ROOT_DEPLOYER} from "ReservedAddress/lib/IDeployerLibrary.sol";
 
 import {ServiceRewardsActor} from "../src/ServiceRewardsActor.sol";
 import {IServiceRewardsActor} from "../src/interfaces/IServiceRewardsActor.sol";
@@ -19,8 +19,6 @@ import {Migratable} from "../src/lib/Migratable.sol";
 contract DeployScript is Script {
     using Migration for SetDelegateOperation[];
 
-    address constant ROOT_DEPLOYER = 0x3ef96E9f82CaFE4a05183b59e7671E39B6b26347;
-    IDeployer constant ROOT = IDeployer(0x000000000000c57CF0A1f923d44527e703F1ad70);
     address constant SRA = 0x888808e3e6888E8988E8178864cA861d8882e88A;
     address constant SWA = 0x88802aa46868868584802848988888C882888BE3;
 
