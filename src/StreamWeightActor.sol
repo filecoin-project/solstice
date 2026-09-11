@@ -23,19 +23,12 @@ contract StreamWeightActor is UnanimousGovernance {
     Epoch immutable QUARTER;
     Epoch immutable HOLD;
 
-    /// @notice Deploys the actor with its two initial owners, bound to a Service Rewards Actor.
-    /// @param owner1 First owner.
-    /// @param owner2 Second owner.
+    /// @notice Deploys the actor, bound to a Service Rewards Actor.
     /// @param sra Service Rewards Actor supplying QUARTER/HOLD and gating `quarterlyGateCheck`.
-    constructor(address owner1, address owner2, IServiceRewardsActor sra) {
-        owner1.addOwner();
-        owner2.addOwner();
-
+    constructor(IServiceRewardsActor sra, Epoch quarter, Epoch hold) {
         SRA = sra;
-        QUARTER = sra.EPOCHS_PER_QUARTER();
-        HOLD = sra.SRA_CANCEL_HOLD();
-
-        GateParamsLibrary.init();
+        QUARTER = quarter;
+        HOLD = hold;
     }
 
     /// @notice Queues a new implicit stream.
@@ -96,7 +89,7 @@ contract StreamWeightActor is UnanimousGovernance {
     /// @param op Kind of pending operation to cancel.
     function cancelPending(uint64 id, PendingOp op) external {
         // any owner can immediately cancel any pending operation
-        require(msg.sender.isOwner());
+        require(msg.sender.isOwner(), OwnersLibrary.NotOwner(msg.sender));
         FVMRewards.cancelPending(id, op);
     }
 
@@ -105,7 +98,7 @@ contract StreamWeightActor is UnanimousGovernance {
     /// @param op Weight operation to cancel.
     function cancelPendingWeight(PendingOp op) external {
         // any owner can immediately cancel any pending operation
-        require(msg.sender.isOwner());
+        require(msg.sender.isOwner(), OwnersLibrary.NotOwner(msg.sender));
         FVMRewards.cancelPendingWeight(op);
     }
 

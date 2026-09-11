@@ -9,10 +9,11 @@ pragma solidity ^0.8.36;
 // (aggCases) collapses to a simple sum, so both are replaced by a few hand-written
 // aggregation cases below. The largest-remainder share differential is kept.
 
-import {ServiceRewardsActor, Share} from "../../src/ServiceRewardsActor.sol";
+import {FlatServiceRewardsActor as ServiceRewardsActor} from "../FlatServiceRewardsActor.sol";
 import {Epoch} from "../../src/lib/Epoch.sol";
 import {SRATestBase} from "../SRATestBase.sol";
 import {FixedU18} from "../../src/lib/FixedU18.sol";
+import {Share} from "../../src/lib/FVMRewardTypes.sol";
 import {DifferentialCases} from "./DifferentialCases.sol";
 import {DifferentialSharesHarness} from "./DifferentialSharesHarness.sol";
 

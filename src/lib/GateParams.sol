@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 pragma solidity ^0.8.36;
 
+import {SelfUninstalling} from "erc8167/lib/SelfUninstalling.sol";
 import {FixedU18} from "./FixedU18.sol";
 
 FixedU18 constant VOL_TARGET_ENTRY = FixedU18.wrap(3500 ether);
@@ -37,9 +38,14 @@ library GateParamsLibrary {
     function nextThreshold(GateParams memory params) internal pure returns (FixedU18 fpvThreshold) {
         return params.target.base * params.target.stepRatio.exp(params.steps);
     }
+}
 
-    function init() internal {
-        GateParamsInfo storage slot = GateParamsLibrary.getGateParamsSlot();
+contract InitializableGateParams is SelfUninstalling {
+    error AlreadyInitialized();
+
+    function initializeGateParams() external selfUninstalling {
+        GateParamsLibrary.GateParamsInfo storage slot = GateParamsLibrary.getGateParamsSlot();
+        require(slot.lastCheckedQuarter == 0, AlreadyInitialized());
         slot.lastCheckedQuarter = 1;
         slot.params.target.base = VOL_TARGET_ENTRY;
         slot.params.target.stepRatio = VOL_TARGET_RATIO;

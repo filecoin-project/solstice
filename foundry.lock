@@ -1,4 +1,7 @@
 {
+  "lib/erc8167": {
+    "rev": "35e7159013bab0210f8046267d1246be147f7a76"
+  },
   "lib/forge-std": {
     "tag": {
       "name": "v1.16.2",

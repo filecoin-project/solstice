@@ -1,4 +1,4 @@
-name: Test
+name: Dry Deployment
 
 on:
   push:
@@ -31,12 +31,14 @@ jobs:
           version: v1.7.1
           cache: true
 
-      - name: Install Dependencies
+      - name: Install Forge Dependencies
         run: |
           forge install
 
-      - name: Run tests
+      - name: Make
         run: |
-          make test
-        env:
-          FOUNDRY_PROFILE: ci
+          make
+
+      - name: Dry run
+        run: |
+          forge script script/Deploy.s.sol 10 100 5 5 2000 1 1000
