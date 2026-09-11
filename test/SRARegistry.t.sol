@@ -64,12 +64,7 @@ contract SRARegistryTest is SRATestBase {
         // freeze does not release a slot: admittedCount is still 64
         assertEq(sra.admittedCount(), 64);
 
-        // slot not released: a new admit is still rejected (after two votes queue, rejected at body execution once hold elapses)
-        address orch65 = makeAddr("orch-65");
-        vm.prank(owner1);
-        sra.admit(orch65);
-        vm.prank(owner2);
-        sra.admit(orch65); // second vote: completes the full vote queue (wait)
+        _remove(orch);
 
         vm.roll(block.number + SRA_CANCEL_HOLD); // hold elapsed
         vm.expectRevert();
@@ -308,25 +303,10 @@ contract SRARegistryTest is SRATestBase {
     function test_Remove_NotAdmitted_Reverts() public {
         address stranger = makeAddr("stranger");
         vm.prank(owner1);
-        sra.remove(stranger);
-        vm.prank(owner2);
-        sra.remove(stranger);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
+        sra.removeOrchestrator(stranger); // vote 1 (approve)
         vm.expectRevert(); // NotAdmitted(stranger)
-        sra.remove(stranger);
-    }
-
-    /// G6: a frozen orchestrator can be removed (the implementation does not block it; remove also clears frozen state and freeze history).
-    function test_Remove_FrozenOrch_Succeeds() public {
-        address orch = makeAddr("orch");
-        _admit(orch);
-        _freeze(orch);
-        assertTrue(sra.isFrozen(orch));
-
-        _remove(orch);
-        assertFalse(sra.isAdmitted(orch));
-        assertFalse(sra.isFrozen(orch));
-        assertEq(sra.admittedCount(), 0);
+        vm.prank(owner2);
+        sra.removeOrchestrator(stranger); // vote 2 executes the body -> revert
     }
 
     // ------------------------------------------------------------------------

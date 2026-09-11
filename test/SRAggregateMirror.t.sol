@@ -335,12 +335,10 @@ contract SRAggregateMirrorTest is SRATestBase {
         // lag window: q=0 bound, submitShares(0) not yet called -> the permissionless execution call
         // (third step of the unanimous flow) hits the body guard and reverts; the two approvals persist.
         vm.prank(owner1);
-        sra.remove(b); // vote 1 (approve)
+        sra.removeOrchestrator(b); // vote 1 (approve)
+        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.PendingShares.selector, 1));
         vm.prank(owner2);
-        sra.remove(b); // vote 2 (approve)
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.PendingShares.selector, 0));
-        sra.remove(b); // permissionless execution: pending q=0 -> guard reverts
+        sra.removeOrchestrator(b); // vote 2 executes the body: ended q1 awaits its share map -> guard reverts (vote rolls back)
 
         // crank the pending quarter, then the *same* unanimous task's execution now lands
         sra.submitShares(0);
@@ -371,12 +369,10 @@ contract SRAggregateMirrorTest is SRATestBase {
 
         // Time-derived latest bound = 1 (unsubmitted) -> the second vote (body execution) reverts.
         vm.prank(owner1);
-        sra.remove(b); // vote 1 (approve)
-        vm.prank(owner2);
-        sra.remove(b); // vote 2 (approve)
-        vm.roll(block.number + SRA_CANCEL_HOLD);
+        sra.removeOrchestrator(b); // vote 1 (approve)
         vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.PendingShares.selector, 1));
-        sra.remove(b); // permissionless execution: gap-quarter pending -> guard reverts
+        vm.prank(owner2);
+        sra.removeOrchestrator(b); // vote 2 executes the body: gap-quarter pending -> guard reverts
     }
 
     /// @dev share of a wallet in the map (0 if absent).
@@ -440,12 +436,12 @@ contract SRAggregateMirrorTest is SRATestBase {
         _postAs(a, 0, _fpv(100e18));
         _postAs(b, 0, _fpv(200e18));
 
-        _remove(b); // still within E+POST (hold 100 < POST 300): contribution excluded
-
-        vm.roll(_qVerifyEnd(0) + 1); // Q0 binds — aggregate readable
-        assertEq(
-            FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(0)), 100e18, "removed pre-E+POST FilecoinPayVolume excluded"
-        );
+        // q0 ended and awaits its share map -> the second vote (body execution) reverts.
+        vm.prank(owner1);
+        sra.removeOrchestrator(b); // vote 1 (approve)
+        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.PendingShares.selector, 0));
+        vm.prank(owner2);
+        sra.removeOrchestrator(b); // vote 2 executes the body: guard reverts
     }
 
     /// Once the verification window closes, AggregatedFilecoinPayVolume(activeQ) is a fixed binding

@@ -327,17 +327,9 @@ contract ServiceRewardsActor is UnanimousGovernance {
         require(id != 0 && o.admitted, NotAdmitted(orch));
         (bool hasPending, uint64 pendingQ) = _pendingSharesQuarter();
         if (hasPending) revert PendingShares(pendingQ);
-        // Mirror: drop the active-quarter contribution from the aggregate while the quarter is not
-        // yet bound — an orchestrator removed before binding is excluded: omitted from the
-        // submitted share map (it leaves the admitted list, which submitShares collects) and its
-        // FilecoinPayVolume does not enter AggregatedFilecoinPayVolume(Q) (spec §2.2). Once the verification window has closed
-        // the aggregate is a binding snapshot (the read view exposes the bound values directly) and
-        // a later removal must not rewrite it. The boundary is binding (not E+POST — freeze's
-        // boundary): unlike freeze, removal drops the orchestrator from the admitted list, so the
-        // map and the aggregate must exclude it together for every pre-binding removal.
-        if (!_afterBinding(qt.activeQuarter) && !o.frozenAtPostEnd && o.fpv > ZERO) {
-            qt.totalUsd[qt.activeQuarter] = qt.totalUsd[qt.activeQuarter] - o.fpv;
-        }
+        // No aggregate deduction: the guard makes any removal post-binding (nextQuarter == nowQ + 1
+        // implies the active quarter was already submitted), so the aggregate is a binding snapshot;
+        // the orchestrator's exclusion from later quarters follows from it leaving the admitted list.
         o.admitted = false;
         r.activeIdOf[orch] = 0;
         uint64 idx = o.admittedIndex;

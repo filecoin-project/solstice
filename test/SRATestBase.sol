@@ -148,7 +148,7 @@ contract SRATestBase is MockRewardTest {
     /// @notice removeOrchestrator uses unanimousNoHold: the second vote executes, no roll needed.
     function _remove(address orch) internal {
         vm.prank(owner1);
-        sra.remove(orch);
+        sra.removeOrchestrator(orch);
         vm.prank(owner2);
         sra.remove(orch);
         vm.roll(block.number + SRA_CANCEL_HOLD);

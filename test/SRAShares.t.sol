@@ -486,6 +486,10 @@ contract SRASharesTest is SRATestBase {
         // the corrected value (200), not the original post (100), is aggregated
         assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(0)), 200e18);
     }
+        _remove(b); // post-submit removal binds immediately
+        _remove(b);
+        _remove(c);
+        _remove(b);
         sra.replaceWallet(oldOrch, newWallet);
         sra.replaceWallet(oldOrch, newWallet);
 }
