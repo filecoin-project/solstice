@@ -112,9 +112,9 @@ contract SRAggregateMirrorTest is SRATestBase {
     function test_Mirror_ReplaceInPosting_Inherits() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
-        address a2 = makeAddr("a2");
-        _admit(a);
-        _admit(b);
+        address a2 = _wallet("a2");
+        _admit(a, a);
+        _admit(b, b);
 
         vm.roll(_qEnd(0) + 1);
         _postAs(a, 0, _fpv(100e18));

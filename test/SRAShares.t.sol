@@ -490,6 +490,7 @@ contract SRASharesTest is SRATestBase {
         _remove(b);
         _remove(c);
         _remove(b);
+        address newWallet = _wallet("swap-new");
         sra.replaceWallet(oldOrch, newWallet);
         sra.replaceWallet(oldOrch, newWallet);
 }

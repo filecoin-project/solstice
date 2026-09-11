@@ -104,6 +104,17 @@ contract SRAInvariantHandler is SRATestBase {
         }
     }
 
+    /// @dev Admit is identity-form addOrchestrator(orch, orch), so every pool orchestrator doubles as a
+    ///      payout wallet and must resolve (FIP §2.4.4). Registration needs the mock RESOLVE precompile
+    ///      etched — that happens in super.setUp, which runs after this constructor — so the pools are
+    ///      registered here, not at construction.
+    function setUp() public override {
+        super.setUp();
+        for (uint256 i = 0; i < _orchPool.length; i++) {
+            _ensureResolvable(_orchPool[i]);
+        }
+    }
+
     // Governance operations (unanimous + hold three phases: owner1 vote -> owner2 vote -> roll(hold) -> third execution)
     // Precondition checks guarantee the third call succeeds (no concurrent insertion between the two votes; operation is atomic)
 

@@ -118,26 +118,60 @@ contract SRATestBase is MockRewardTest {
     // ------------------------------------------------------------------------
     // Governance operation helpers: two votes (unanimous + hold) -> roll past hold -> permissionless completion
     // ------------------------------------------------------------------------
+    // FIP §2.4.4 makes the SRA resolve every payout wallet on admission (a payout wallet must exist
+    // on-chain before the SRA names it). Forge has no real FVM registry behind that resolution: the
+    // mock RESOLVE precompile (fvm-solidity mocks/FVMActor, etched in MockFVMTest.setUp) reports
+    // exists=false for every address without a mockResolveAddress entry — so any test wallet an
+    // admission/replace resolves must be registered first, or the call reverts UnresolvedWallet.
+    // Registration writes a mock entry only; the address stays identical to makeAddr(name) (a pure
+    // derivation), so switching a wallet to _wallet never changes the address a test exercises.
+    uint64 internal constant AUTO_RESOLVE_ID_BASE = 1_000_000; // above every id this suite pins explicitly
+    uint64 internal _nextAutoResolveId = AUTO_RESOLVE_ID_BASE;
+    mapping(address => bool) internal _walletRegistered;
 
-    function _admit(address orch) internal {
-        vm.prank(owner1);
-        sra.admit(orch);
-        vm.prank(owner2);
-        sra.admit(orch);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        sra.admit(orch); // third call (permissionless) completes execution
+    /// @dev makeAddr(name) + a mock resolve registration to a deterministic auto id. Returns the
+    ///      exact address makeAddr(name) returns, so wallet-role declarations can switch over 1:1.
+    function _wallet(string memory name) internal returns (address) {
+        address wallet = makeAddr(name);
+        _ensureResolvable(wallet);
+        return wallet;
     }
 
-    function _freeze(address orch) internal {
-        vm.prank(owner1);
-        sra.freeze(orch);
-        vm.prank(owner2);
-        sra.freeze(orch);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        sra.freeze(orch);
+    /// @dev Registers `wallet` with the mock resolve precompile if not already registered. The memo
+    ///      keeps the auto id stable when the same address is admitted repeatedly (re-registering
+    ///      would reassign a fresh auto id and silently change the resolved actor of earlier rows).
+    function _ensureResolvable(address wallet) internal {
+        if (!_walletRegistered[wallet]) _registerResolve(wallet, _nextAutoResolveId++);
     }
 
-    function _unfreeze(address orch) internal {
+    /// @dev Pins an address to an explicit actor id (dual-spelling vectors: one actor id reachable
+    ///      through both the f410 spelling of an EOA address and the masked 0xff… spelling).
+    function _registerResolve(address wallet, uint64 id) internal {
+        MockFVMActor(RESOLVE_ADDRESS).mockResolveAddress(wallet, id);
+        _walletRegistered[wallet] = true;
+    }
+
+    /// @dev Registers the masked (0xff…) spelling of `id`: the library resolves a masked address by
+    ///      the f0(id) precompile key, not by its 20 bytes, so the f0 key is what must be mocked.
+    function _registerMaskedResolve(uint64 id) internal {
+        MockFVMActor(RESOLVE_ADDRESS).mockResolveAddress(FVMAddress.f0(id), id);
+    }
+
+    /// @dev A masked-ID wallet that resolves to `id` (0xff + 11 zero bytes + big-endian id).
+    function _maskedWallet(uint64 id) internal returns (address) {
+        _registerMaskedResolve(id);
+        return FVMAddress.maskedAddress(id);
+    }
+
+    // ------------------------------------------------------------------------
+    // Governance operation helpers: two votes (unanimousNoHold) — the second vote executes
+    // ------------------------------------------------------------------------
+
+    /// @notice addOrchestrator uses unanimousNoHold: the second vote executes, no roll needed.
+    /// @dev Registers the wallet with the mock RESOLVE precompile first: FIP §2.4.4 makes the
+    ///      admission body resolve the wallet, and forge has no real FVM registry behind it.
+    function _admit(address orch, address wallet) internal {
+        _ensureResolvable(wallet);
         vm.prank(owner1);
         sra.addOrchestrator(orch, wallet);
         vm.prank(owner2);

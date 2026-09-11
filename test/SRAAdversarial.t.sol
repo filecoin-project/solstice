@@ -158,12 +158,11 @@ contract SRAAdversarial is SRATestBase {
     /// Governance may admit the zero address (no zero-address guard in admit);
     /// it becomes an admitted orchestrator that can never post (no caller can be 0).
     function test_Admit_ZeroAddress_Accepted() public {
+        address wallet = _wallet("adversarial-zero-identity-wallet");
         vm.prank(owner1);
-        sra.admit(address(0));
+        sra.addOrchestrator(address(0), wallet); // vote 1 (approve)
         vm.prank(owner2);
-        sra.admit(address(0));
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        sra.admit(address(0));
+        sra.addOrchestrator(address(0), wallet); // vote 2 executes (unanimousNoHold)
         assertTrue(sra.isAdmitted(address(0)));
     }
 

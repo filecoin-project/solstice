@@ -130,8 +130,11 @@ contract DifferentialSharesTest is SRATestBase {
         );
     }
 
-    /// @dev Runs the governance three-phase admit on the given SRA instance (the base _admit always operates on the sra instance).
+    /// @dev Runs the governance two-vote admit on the given SRA instance (the base _admit always operates on the sra instance).
+    ///      Registers the orch address as resolvable first: these cases use wallet == orch, and the
+    ///      admission body resolves the wallet (FIP §2.4.4) against the mock RESOLVE precompile.
     function _admitOn(ServiceRewardsActor s, address orch) internal {
+        _ensureResolvable(orch);
         vm.prank(owner1);
         s.addOrchestrator(orch, orch);
         vm.prank(owner2);

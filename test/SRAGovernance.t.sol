@@ -21,9 +21,9 @@ contract SRAGovernanceTest is SRATestBase {
     // Two votes, immediate execution (unanimousNoHold)
     // ------------------------------------------------------------------------
 
-    /// after two votes + hold elapses, any keeper can trigger execution (admit takes effect).
-    function test_Admit_TwoApprovalsPlusHold_Executes() public {
-        address orch = makeAddr("orch");
+    /// after two votes, the second approval executes immediately (admit takes effect; no hold, no permissionless path).
+    function test_Admit_TwoApprovals_ExecutesImmediately() public {
+        address orch = _wallet("orch");
         assertFalse(sra.isAdmitted(orch));
 
         vm.prank(owner1);
@@ -63,8 +63,8 @@ contract SRAGovernanceTest is SRATestBase {
 
     /// after both Safes call the same governance method, the taskId record is identical (keccak256(msg.data)).
     function test_Admit_TaskIdIsKeccakOfCalldata() public {
-        address orch = makeAddr("orch");
-        bytes32 expectedTaskId = keccak256(abi.encodeWithSignature("admit(address)", orch));
+        address orch = _wallet("orch");
+        bytes32 expectedTaskId = keccak256(abi.encodeWithSignature("addOrchestrator(address,address)", orch, orch));
 
         // after owner1 approves: task exists (single vote); after owner2 approves the same calldata: full vote executes immediately
         vm.prank(owner1);
