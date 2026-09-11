@@ -185,18 +185,8 @@ contract DeployScript is Script {
         {
             address bootstrapMigrateMethod =
                 create(vm.getCode("lib/erc8167/out/Migrate.constructor.evm/Migrate.constructor.json"));
-            ROOT.call(
-                SRA,
-                abi.encodeWithSelector(
-                    Bootstrap.configure.selector, Migratable.migrate.selector, bootstrapMigrateMethod
-                )
-            );
-            ROOT.call(
-                SWA,
-                abi.encodeWithSelector(
-                    Bootstrap.configure.selector, Migratable.migrate.selector, bootstrapMigrateMethod
-                )
-            );
+            ROOT.call(SRA, abi.encodeCall(Bootstrap.configure, (Migratable.migrate.selector, bootstrapMigrateMethod)));
+            ROOT.call(SWA, abi.encodeCall(Bootstrap.configure, (Migratable.migrate.selector, bootstrapMigrateMethod)));
         }
 
         // deploy facets
