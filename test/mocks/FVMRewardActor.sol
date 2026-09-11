@@ -261,6 +261,7 @@ contract FVMRewardActor {
         return _streams[streamId].shares;
     }
 
+    /// @notice Test helper: the f099 share total stripped from the last SetShares
     function strippedBurnOf(uint64 streamId) external view returns (uint256) {
         return _streams[streamId].strippedBurn;
     }

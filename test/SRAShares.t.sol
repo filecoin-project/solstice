@@ -138,7 +138,7 @@ contract SRASharesTest is SRATestBase {
         assertTrue(_hasWallet(shares, c));
     }
 
-    /// Strategy 10/12: submitShares with a post of USD value from the off-chain conversion (FIPs#1275).
+    /// submitShares over a posted USD value (off-chain-converted FIL folded in, FIPs#1275).
     function test_SubmitShares_PostedUsd_Proportional() public {
         address a = makeAddr("orchA");
         _admit(a, a);
@@ -167,9 +167,9 @@ contract SRASharesTest is SRATestBase {
 
     /// @dev Admits and (in the current posting window) posts a pure-stablecoin FilecoinPayVolume; returns the orchestrator address.
     function _admitAndPost(uint256 stableUsd) internal returns (address orch) {
-        orch = makeAddr(string.concat("orch-", vm.toString(_orchSalt++))); // T5: increasing salt for unique addresses
-        _admit(orch);
-        vm.roll(_qEnd(0) + 1); // posting window
+        orch = makeAddr(string.concat("orch-", vm.toString(_orchSalt++)));
+        _admit(orch, orch);
+        vm.roll(_quarterStart(0) + 1); // posting window
         _postAs(orch, 0, _fpv(stableUsd));
     }
 
@@ -194,10 +194,10 @@ contract SRASharesTest is SRATestBase {
     }
 
     // ------------------------------------------------------------------------
-    // G2: 64-full + submitShares combination (mock MAX_RECIPIENTS boundary + map traversal cap)
+    // 64-full + submitShares combination (mock MAX_RECIPIENTS boundary + map traversal cap)
     // ------------------------------------------------------------------------
 
-    /// G2: all 64 posted -> submitShares share map has exactly 64 recipients (mock boundary), Σ exact.
+    /// All 64 posted -> submitShares share map has exactly 64 recipients (mock boundary), Σ exact.
     /// The 64-way split divides evenly (1e18 % 64 == 0) -> each share exactly == 1e18/64, no remainder top-up.
     function test_SubmitShares_AtFullCapacity_SixtyFourRecipients() public {
         for (uint256 i = 0; i < 64; i++) {
@@ -217,10 +217,10 @@ contract SRASharesTest is SRATestBase {
     }
 
     // ------------------------------------------------------------------------
-    // G5: multi-quarter share map isolation
+    // multi-quarter share map isolation
     // ------------------------------------------------------------------------
 
-    /// G5: quarter 0 posts A/B -> quarter 1 only C posts -> quarter 1's share map contains only C (no residue from quarter-0 orchestrators).
+    /// Quarter 0 posts A/B -> quarter 1 only C posts -> quarter 1's share map contains only C (no residue from quarter-0 orchestrators).
     function test_SubmitShares_MultiQuarter_Isolated() public {
         // Quarter 0: A (100e18), B (200e18)
         address a = makeAddr("orchA-q0");
@@ -292,13 +292,12 @@ contract SRASharesTest is SRATestBase {
     }
 
     // ------------------------------------------------------------------------
-    // G7: fuzz — arbitrary share combinations always have Σ exactly == SHARE_TOTAL
+    // Fuzz — arbitrary share combinations always have Σ exactly == SHARE_TOTAL
     // ------------------------------------------------------------------------
 
-    /// G7: core invariant of share computation with 3 random usdValues: Σ shares always exactly == 1e18.
-    /// Sampling domain (0, 1e30) aligns with the code-enforced MAX_STABLE_USD (audit V1/V2/V3 fix):
-    /// _validateFpvBounds rejects stableUSD > 1e30 at postVolume, so this fuzz domain equals the
-    /// contract's enforced input domain — not a test-side shrink to dodge overflow (S3 evidence-condition fix).
+    /// Core invariant of share computation with 3 random usdValues: Σ shares always exactly == 1e18.
+    /// Sampling domain (0, 1e30) equals the code-enforced input domain — postVolume rejects totals
+    /// above MAX_FILECOIN_PAY_VOLUME_USD (1e30), so this fuzz domain is not a test-side shrink.
     function test_SubmitShares_Fuzz_SumAlwaysExact(uint256 v1, uint256 v2, uint256 v3) public {
         vm.assume(v1 > 0 && v1 < 1e30);
         vm.assume(v2 > 0 && v2 < 1e30);
@@ -320,12 +319,11 @@ contract SRASharesTest is SRATestBase {
     }
 
     // ------------------------------------------------------------------------
-    // P2 coverage closure (CV3): submitShares NotBound before binding
+    // submitShares NotBound before binding
     // ------------------------------------------------------------------------
 
-    /// Strategy 10/CV3: submitShares before binding (verification window right boundary inclusive) -> NotBound revert.
-    /// (finalizeConversion's NotBound was already tested; submitShares's own first-line require
-    /// was uncovered — coverage line 508's revert branch missing)
+    /// submitShares before binding -> NotBound revert: the last verification epoch
+    /// (E+POST+VERIFY-1) is still not bound.
     function test_SubmitShares_BeforeBinding_Reverts() public {
         address orch = makeAddr("orch");
         _admit(orch, orch);
@@ -354,10 +352,10 @@ contract SRASharesTest is SRATestBase {
     }
 
     // ------------------------------------------------------------------------
-    // A1: system-call failure injection (SetSharesFailed) — the SRA's only external interaction point with f02
+    // System-call failure injection (SetSharesFailed) — the SRA's only external interaction point with f02
     // ------------------------------------------------------------------------
 
-    /// A1: the mock injects a setShares failure (failSetShares flag -> USR_FORBIDDEN exit code) ->
+    /// The mock injects a setShares failure (failSetShares flag -> USR_FORBIDDEN exit code) ->
     /// the whole submitShares path reverts SetSharesFailed (an f02 failure must roll back the quarter's shares, no half-state residue).
     /// Control: with the injection off, a normal submit in the same quarter succeeds (proving the failure comes only from injection, SRA state not polluted).
     function test_SubmitShares_SetSharesFailed_Reverts() public {
@@ -467,6 +465,7 @@ contract SRASharesTest is SRATestBase {
     }
 
     // ------------------------------------------------------------------------
+    // immediate f099 map push (FIPs#1277 §2.4.4) — removeOrchestrator / replaceWallet
     // after a submit re-push the f02 map at once; the LastShares snapshot drives it.
     // The spec §3.2 guard makes remove callable only outside an ended-quarter window, so all
     // remove-push scenarios are constructed after SubmitShares has run.

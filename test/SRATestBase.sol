@@ -119,7 +119,7 @@ contract SRATestBase is MockRewardTest {
     }
 
     // ------------------------------------------------------------------------
-    // Governance operation helpers: two votes (unanimous + hold) -> roll past hold -> permissionless completion
+    // Wallet resolve registry
     // ------------------------------------------------------------------------
     // FIP §2.4.4 makes the SRA resolve every payout wallet on admission (a payout wallet must exist
     // on-chain before the SRA names it). Forge has no real FVM registry behind that resolution: the

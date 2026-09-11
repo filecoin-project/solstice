@@ -1,24 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 pragma solidity ^0.8.36;
 
-// Adversarial input matrix for the external write surface (S1, QA system fix)
-//
-// Background: the V1/V2/V3 overflow audit exposed a
-// structural QA gap — every verification layer (deterministic/fuzz/invariant/
-// differential) exercised inputs inside the "business domain" and none probed
-// malicious extreme inputs. This suite is the adversarial layer (S1): for each
-// external write function it enumerates the boundary values of every numeric /
-// address / array parameter and asserts the exact revert (or acceptance) —
-// locking the code-enforced input domain as executable behavior.
+// Adversarial input matrix for the external write surface: for each external write function it
+// enumerates the boundary values of every numeric / address / array parameter and asserts the
+// exact revert (or acceptance) — locking the code-enforced input domain as executable behavior.
 //
 // Principles:
 //   * every revert assertion uses an exact error selector (no bare expectRevert)
-//   * existing coverage is NOT duplicated: V1/V2/V3 max-value rejects live in
-//     SRAOverflowDoS.t.sol; B1 minLot upper bound in SRAQuarter; C1/F2 array
-//     length bounds in SRARegistry/SRAGovernance; E1/E2 in SRAGovernance.
-//     This file adds: q-parameter window boundaries, fpv exact-limit accept /
-//     limit+1 reject, zero-address probes, setPricingParams full boundary grid,
-//     empty-array semantics, and the multi-orchestrator aggregate bound.
+//   * existing coverage is NOT duplicated: max-value rejects live in SRAOverflowDoS.t.sol;
+//     array-length bounds in SRARegistry/SRAGovernance; governance edge cases in SRAGovernance.
+//     This file adds: q-parameter window boundaries, fpv exact-limit accept / limit+1 reject,
+//     zero-address probes, setPricingParams parameter grid, empty-array semantics, and the
+//     multi-orchestrator aggregate bound.
 
 import {SERVICE_ID, Share} from "../src/lib/FVMRewardTypes.sol";
 import {Vm} from "forge-std/Vm.sol";
@@ -45,8 +38,8 @@ contract SRAAdversarial is SRATestBase {
         sra.postVolume(10, FixedU18.wrap(_fpv(100e18)));
     }
 
-    /// q = uint64.max: with Epoch now uint64 (cherry-picked 8c3eff9), uint64.max × 1000 ≈ 2^83 > 2^64,
-    /// so the _qEnd range guard fires -> InvalidParameter (this is the guard becoming the rejection
+    /// q = uint64.max: with Epoch now uint64, uint64.max × 1000 ≈ 2^83 > 2^64,
+    /// so the _quarterStart range guard fires -> InvalidParameter (this is the guard becoming the rejection
     /// path for MaxQuarter probes; the huge-EPOCHS_PER_QUARTER simulation below remains as an extra
     /// direct guard test).
     function test_PostVolume_MaxQuarter_RangeGuard_InvalidParameter() public {
@@ -153,8 +146,9 @@ contract SRAAdversarial is SRATestBase {
     // 3. Zero-address probes (address-parameter adversarial cases)
     // ------------------------------------------------------------------------
 
-    /// Governance may admit the zero address (no zero-address guard in admit);
-    /// it becomes an admitted orchestrator that can never post (no caller can be 0).
+    /// Governance may admit the zero address as an orchestrator identity (no zero-identity guard);
+    /// its payout wallet must still resolve and be non-zero, so the admit pairs identity 0 with a
+    /// normal registered wallet. The identity can never post (no caller can be 0).
     function test_Admit_ZeroAddress_Accepted() public {
         address wallet = _wallet("adversarial-zero-identity-wallet");
         vm.prank(owner1);
@@ -186,6 +180,7 @@ contract SRAAdversarial is SRATestBase {
     function test_RegisterPairs_BindingOf_ReturnsIdentity_NotWallet() public {
         address orch = makeAddr("orch");
         address wallet = makeAddr("distinct-wallet");
+        _admit(orch, wallet); // identity != payout wallet
 
         Binding[] memory pairs = new Binding[](1);
         pairs[0] = Binding({payer: makeAddr("payer"), operator: makeAddr("operator")});
@@ -298,7 +293,7 @@ contract SRAAdversarial is SRATestBase {
 
     // ------------------------------------------------------------------------
     // 5. Array-parameter edges (empty arrays)
-    //    (C1/F2 already cover the over-long side; the empty side locks the
+    //    (array-length over-bound cases live in SRARegistry/SRAGovernance; the empty side locks the
     //     no-op / clear semantics)
     // ------------------------------------------------------------------------
 
@@ -346,9 +341,9 @@ contract SRAAdversarial is SRATestBase {
     // 6. Multi-orchestrator aggregate boundary
     // ------------------------------------------------------------------------
 
-    /// Two orchestrators each posting MAX_STABLE_USD: total = 2e30 stays far below
+    /// Two orchestrators each posting MAX_FILECOIN_PAY_VOLUME_USD: total = 2e30 stays far below
     /// 2^256 and _computeShares' usds[i] * 1e18 = 1e48 does not overflow — shares
-    /// still sum to exactly 1e18 (multi-party V3 variant stays safe).
+    /// still sum to exactly 1e18.
     function test_MultiOrchestrator_AtMaxStableUsd_ConservesShares() public {
         address a = makeAddr("agg-a");
         address b = makeAddr("agg-b");

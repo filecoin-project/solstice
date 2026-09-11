@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 pragma solidity ^0.8.36;
 
-// SRA invariant tests (P1) — random operation sequences + persistent invariant verification
+// SRA invariant tests — random operation sequences + persistent invariant verification
 //
 // 3 core invariants:
 //   I1 Share conservation: after any operation sequence (the most recent successful submitShares),
@@ -19,8 +19,8 @@ pragma solidity ^0.8.36;
 //   - 12 random operations (fuzzer targets): admit/remove/replace/
 //     reassignBinding/registerPairs/cancelBinding/postVolume/correctVolume/
 //     submitShares/parkAdmit/completeParked/rollForward
-//     (finalizeConversion removed by FIPs#1275)
-//   - time model: governance operations internally roll(block.number + SRA_CANCEL_HOLD) to complete the three phases;
+//     (FIL→USD finalization is off-chain; FIPs#1275)
+//   - time model: governance operations execute on the second vote (unanimousNoHold, no hold window);
 //     business operations explicitly roll to the target quarter window (posting/verification/post-bound)
 //   - every operation's precondition check keeps the "expected success" path reachable (invalid calls return directly, no state pollution)
 //
@@ -231,9 +231,8 @@ contract SRAInvariantHandler is SRATestBase {
     function postVolume(uint256 q, uint256 orchIdx, uint256 usd) external {
         uint64 qq = uint64(bound(q, 0, MAX_Q));
         address orch = _pickOrch(orchIdx);
-        if (!sra.isAdmitted(orch) || sra.isFrozen(orch) || _posted[qq][orch]) return;
-        // S3: bound(1, 1e30) aligns with the code-enforced MAX_STABLE_USD (postVolume rejects > 1e30) —
-        // the invariant's sampling domain equals the contract's enforced input domain.
+        if (!sra.isAdmitted(orch) || _posted[qq][orch]) return;
+        // Sampling domain bound(1, 1e30) equals the contract's enforced input domain (postVolume rejects above 1e30).
         uint256 stableUsd = bound(usd, 1, 1e30);
         uint256 target = _quarterStart(qq) + uint64(bound(usd, 0, POST_PERIOD - 1));
         if (block.number < target) vm.roll(target); // monotonic: real time never rewinds (mirror slots hold strictly later quarter tags)
@@ -247,8 +246,7 @@ contract SRAInvariantHandler is SRATestBase {
         uint64 qq = uint64(bound(q, 0, MAX_Q));
         address orch = _pickOrch(orchIdx);
         if (!sra.isAdmitted(orch)) return;
-        if (sra.isFrozen(orch)) return; // freeze symmetry: the implementation's correctVolume gates on frozenSince
-        // S3: bound(1, 1e30) aligns with the code-enforced MAX_FILECOIN_PAY_VOLUME_USD (correctVolume rejects > 1e30).
+        // Sampling domain bound(1, 1e30) equals the contract's enforced input domain (correctVolume rejects above 1e30).
         uint256 stableUsd = bound(usd, 1, 1e30);
         uint256 target = _postEnd(qq) + uint64(bound(usd, 0, VERIFICATION_WINDOW - 1));
         if (block.number < target) vm.roll(target); // monotonic
@@ -360,15 +358,7 @@ contract SRAInvariantHandler is SRATestBase {
         return _lastSubmitQ;
     }
 
-    function lastFrozenCount() external view returns (uint256) {
-        return _lastFrozenWallets.length;
-    }
-
-    function lastFrozenWallet(uint256 i) external view returns (address) {
-        return _lastFrozenWallets[i];
-    }
-
-    /// @dev A3: POST-instant aggregation of the most recent submit quarter (total / active count).
+    /// @dev POST-instant aggregation of the most recent submit quarter (total / active count).
     function lastTotals() external view returns (uint256 total, uint256 count) {
         return (_lastTotal, _lastActiveCount);
     }
@@ -425,7 +415,7 @@ contract SRAInvariantHandler is SRATestBase {
     }
 
     /// @dev Reads the PendingTask approved bitmask (PendingTask{modified:Epoch, approvals:uint160} packed into one slot;
-    ///      Epoch is uint64 post-8c3eff9, so approvals sits at bit offset 64).
+    ///      Epoch is uint64, so approvals sits at bit offset 64).
     function approvalsOf(bytes32 taskId) external view returns (uint160) {
         bytes32 slot = keccak256(abi.encode(taskId, PENDING_TASKS_SLOT));
         return uint160(uint256(vm.load(address(sra), slot)) >> 64);
@@ -517,8 +507,8 @@ contract SRAInvariantTest is Test {
         targetContract(address(handler));
         // explicitly limit the handler's operation function set — excluding setUp() (public; otherwise the fuzzer would
         // treat it as a target and randomly call it, resetting the sra instance and diverging the handler's expected state
-        // from reality; also the root cause of non-contract mock errors)
-        bytes4[] memory selectors = new bytes4[](13);
+        // from reality)
+        bytes4[] memory selectors = new bytes4[](12);
         selectors[0] = SRAInvariantHandler.admit.selector;
         selectors[1] = SRAInvariantHandler.remove.selector;
         selectors[2] = SRAInvariantHandler.replace.selector;
@@ -604,8 +594,8 @@ contract SRAInvariantTest is Test {
         }
     }
 
-    /// A3 All-zero no-op (FIP-0118 FIPs#1275): in the most recent submit quarter,
-    /// if the Σ of non-frozen with usd>0 at the POST instant is 0 -> submitShares is a benign no-op:
+    /// All-zero no-op (FIP-0118 FIPs#1275): in the most recent submit quarter,
+    /// if the Σ of active with usd>0 at the POST instant is 0 -> submitShares is a benign no-op:
     /// SplitRule is not evaluated and the existing share map stands (covered by the SRAShares unit
     /// tests; here the invariant only needs to assert the map stays valid for the Σ>0 branch).
     /// If Σ>0 -> the map is a non-empty subset of the active orchestrators (zero-share entries trimmed),
@@ -619,11 +609,16 @@ contract SRAInvariantTest is Test {
         if (total > 0) {
             // The implementation trims zero-share entries (largest-remainder can floor a tiny
             // usd to 0 when the residue top-up round count is smaller than the active count),
-            // so the map holds a non-empty subset of the active orchestrators, all non-zero.
-            assertGt(shares.length, 0, "A3: non-zero total must produce at least one share");
-            assertLe(shares.length, count, "A3: share count must not exceed active orchestrator count");
+            // so the map holds a non-empty subset of the active orchestrators, all non-zero —
+            // unless a later removeOrchestrator f099 push burned every stored entry (f099 rows are
+            // stripped from storage, spec §2.4.4); then the stripped total carries the shares.
+            if (shares.length == 0) {
+                assertGt(handler.lastStrippedBurn(), 0, "all shares burned must be recorded as stripped f099");
+                return;
+            }
+            assertLe(shares.length, count, "share count must not exceed active orchestrator count");
             for (uint256 i = 0; i < shares.length; i++) {
-                assertGt(FixedU18.unwrap(shares[i].share), 0, "A3: trimmed map must contain only non-zero shares");
+                assertGt(FixedU18.unwrap(shares[i].share), 0, "trimmed map must contain only non-zero shares");
             }
         }
     }

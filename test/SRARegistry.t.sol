@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 pragma solidity ^0.8.36;
 
-// SRA registry tests — freeze semantics / cap rejection (D2)
+// SRA registry tests
 //
-//   - orchestrator admission/cap: 64-full rejection, Remove release, Freeze non-release (D2)
-//   - registerPairs: uniqueness, admission/freeze gating, re-claimable after Remove release
-//   - freeze/unfreeze: suspend/restore operation capability
-//   - replace: operator identity transfer; reassignBinding: binding reassignment
+//   - orchestrator admission/cap: 64-full rejection, Remove release
+//   - registerPairs: uniqueness, admission gating, re-claimable after Remove release
+//   - replaceWallet: payout-wallet swap, identity does not move (spec §3.2); reassignBinding: binding reassignment
 
 import {SRATestBase} from "./SRATestBase.sol";
 import {FixedU18} from "../src/lib/FixedU18.sol";
@@ -20,10 +19,31 @@ bytes32 constant REGISTRY_SLOT = 0xb7fd4b054ced95f43476af93bf71636318271f9e64f76
 
 contract SRARegistryTest is SRATestBase {
     // ------------------------------------------------------------------------
-    // D2 cap (strategy 5)
+    // Orchestrator admission
     // ------------------------------------------------------------------------
 
-    /// Strategy 5/D2: once the admitted total reaches 64, the 65th admit is rejected.
+    /// addOrchestrator carries a distinct payout wallet (no default wallet=orch); the
+    /// OrchestratorAdmitted event carries the wallet, while bindingOf resolves the pair to the
+    /// admit-time orchestrator identity (identity and wallet are separate concepts).
+    function test_Admit_WalletDistinctFromOrch_EmitsWallet() public {
+        address orch = makeAddr("orch");
+        address wallet = _wallet("wallet"); // distinct payout wallet
+        vm.prank(owner1);
+        sra.addOrchestrator(orch, wallet); // vote 1 (approve)
+        vm.expectEmit(true, false, false, true, address(sra));
+        emit ServiceRewardsActor.OrchestratorAdmitted(orch, wallet);
+        vm.prank(owner2);
+        sra.addOrchestrator(orch, wallet); // vote 2 executes the body
+
+        assertTrue(sra.isAdmitted(orch));
+        Binding[] memory pairs = new Binding[](1);
+        pairs[0] = _pair(makeAddr("payer"), makeAddr("operator"));
+        _registerPairsAs(orch, pairs);
+        assertEq(sra.bindingOf(makeAddr("payer"), makeAddr("operator")), orch); // identity, not wallet
+        assertNotEq(sra.bindingOf(makeAddr("payer"), makeAddr("operator")), wallet);
+    }
+
+    /// Once the admitted total reaches 64, the 65th admit is rejected.
     function test_Admit_AtCapacity_Reverts() public {
         for (uint256 i = 0; i < 64; i++) {
             _admit(makeAddr(string.concat("orch-", vm.toString(i))), makeAddr(string.concat("orch-", vm.toString(i))));
@@ -38,7 +58,7 @@ contract SRARegistryTest is SRATestBase {
         sra.addOrchestrator(orch65, orch65);
     }
 
-    /// Strategy 5/D2: after Remove frees a slot, a new orchestrator can be admitted.
+    /// After Remove frees a slot, a new orchestrator can be admitted.
     function test_Admit_RemoveFreesSlot() public {
         for (uint256 i = 0; i < 64; i++) {
             _admit(makeAddr(string.concat("orch-", vm.toString(i))), makeAddr(string.concat("orch-", vm.toString(i))));
@@ -67,7 +87,7 @@ contract SRARegistryTest is SRATestBase {
     }
 
     // ------------------------------------------------------------------------
-    // registerPairs (strategy 3)
+    // registerPairs
     // ------------------------------------------------------------------------
 
     /// an admitted orchestrator can register binding pairs.
@@ -123,7 +143,7 @@ contract SRARegistryTest is SRATestBase {
         sra.registerPairs(pairs);
     }
 
-    /// C1: registerPairs with more than MAX_PAIRS (64) pairs reverts TooManyPairs (array-length bound, audit C1).
+    /// registerPairs with more than MAX_PAIRS (64) pairs reverts TooManyPairs (array-length bound).
     function test_RegisterPairs_TooManyPairs_Reverts() public {
         address orch = makeAddr("orch");
         _admit(orch, orch);
@@ -139,7 +159,7 @@ contract SRARegistryTest is SRATestBase {
         sra.registerPairs(pairs);
     }
 
-    /// C1 control: exactly MAX_PAIRS (64) pairs is accepted (boundary value).
+    /// Control: exactly MAX_PAIRS (64) pairs is accepted (boundary value).
     function test_RegisterPairs_MaxPairs_Accepted() public {
         address orch = makeAddr("orch");
         _admit(orch, orch);
@@ -252,7 +272,7 @@ contract SRARegistryTest is SRATestBase {
         _registerPairsAs(orchA, pairs);
         assertEq(sra.bindingOf(makeAddr("payer"), makeAddr("operator")), orchA);
 
-        // governance reassignBinding(payer, operator, orchB)
+        // governance reassignBinding(payer, operator, orchB); inherit carried in the event only
         vm.prank(owner1);
         sra.reassignBinding(makeAddr("payer"), makeAddr("operator"), orchB, true);
         vm.expectEmit(true, true, true, true, address(sra));
@@ -264,12 +284,28 @@ contract SRARegistryTest is SRATestBase {
     }
 
     // ------------------------------------------------------------------------
-    // G6: failure-path closure (governance operations unanimous+hold: errors thrown at the third permissionless body execution)
+    // Governance failure-path closure (replaceWallet / reassignBinding / removeOrchestrator body-revert branches)
     // ------------------------------------------------------------------------
 
-    /// G6: replace target already admitted (admitted=true) -> AlreadyAdmitted revert at the third execution.
-    /// (The replace tests cover the target-unadmitted + binding-transfer path; this test covers the "target already admitted" reverse branch)
-    function test_Replace_AlreadyAdmittedTarget_Reverts() public {
+    /// A new wallet colliding with any admitted orchestrator's wallet -> DuplicateWallet revert.
+    /// (Replace does not re-check the identity namespace — wallet and identity are decoupled; newWallet is
+    /// admitted with _admit(x,x), so its wallet == itself and collides with the row being replaced.)
+    function test_Replace_DuplicateWalletTarget_Reverts() public {
+        address oldOrch = makeAddr("oldOrch");
+        address newWallet = makeAddr("newWallet");
+        _admit(oldOrch, oldOrch);
+        _admit(newWallet, newWallet); // admitted: its wallet == itself -> collides with the new wallet
+
+        vm.prank(owner1);
+        sra.replaceWallet(oldOrch, newWallet); // vote 1 (approve)
+        vm.expectRevert(); // DuplicateWallet(newWallet)
+        vm.prank(owner2);
+        sra.replaceWallet(oldOrch, newWallet); // vote 2 executes the body -> revert
+    }
+
+    /// The new wallet equals another orchestrator's *identity* address (wallet/identity decoupled) ->
+    /// succeeds, as long as the wallet field itself does not collide with another orchestrator's wallet.
+    function test_Replace_WalletEqualsOtherIdentity_Succeeds() public {
         address oldOrch = makeAddr("oldOrch");
         address orchB = _wallet("orchB"); // another orchestrator's identity address
         _admit(oldOrch, makeAddr("old-wallet")); // oldOrch's wallet is distinct
@@ -284,7 +320,7 @@ contract SRARegistryTest is SRATestBase {
         assertTrue(sra.isAdmitted(orchB), "orchB identity unaffected");
     }
 
-    /// G6: reassignBinding target not admitted -> NotAdmitted revert at the third execution.
+    /// reassignBinding target not admitted -> NotAdmitted revert at the body execution.
     function test_ReassignBinding_NotAdmittedTarget_Reverts() public {
         address orchA = makeAddr("orchA");
         _admit(orchA, orchA);
@@ -301,7 +337,7 @@ contract SRARegistryTest is SRATestBase {
         sra.reassignBinding(makeAddr("payer"), makeAddr("operator"), stranger, false); // vote 2 executes the body -> revert
     }
 
-    /// G6: remove on a non-orchestrator (unadmitted) -> NotAdmitted revert at the third execution.
+    /// remove on a non-orchestrator (unadmitted) -> NotAdmitted revert at the body execution.
     function test_Remove_NotAdmitted_Reverts() public {
         address stranger = makeAddr("stranger");
         vm.prank(owner1);
@@ -312,11 +348,10 @@ contract SRARegistryTest is SRATestBase {
     }
 
     // ------------------------------------------------------------------------
-    // P2 coverage closure (CV4-CV7): governance failure branches + read-only view
+    // Governance failure branches + read-only view
     // ------------------------------------------------------------------------
 
-    /// Strategy 5/CV4: re-admitting the same address -> AlreadyAdmitted revert at the third body execution.
-    /// (G2 covered AtCapacity-full; the "same address re-admitted" branch was uncovered — coverage line 346)
+    /// Re-admitting the same address -> AlreadyAdmitted revert at the body execution.
     function test_Admit_AlreadyAdmitted_Reverts() public {
         address orch = makeAddr("orch");
         _admit(orch, orch);
@@ -329,8 +364,7 @@ contract SRARegistryTest is SRATestBase {
         sra.addOrchestrator(orch, orch); // vote 2 executes the body -> revert
     }
 
-    /// Strategy 3/CV6: replace with an unadmitted old address -> NotAdmitted(oldOrch) revert.
-    /// (G6 covered the "target already admitted" reverse branch; old unadmitted was uncovered — coverage line 396)
+    /// Replace with an unadmitted old address -> NotAdmitted(oldOrch) revert.
     function test_Replace_OldNotAdmitted_Reverts() public {
         address stranger = makeAddr("stranger"); // old address never admitted
         address newWallet = makeAddr("newWallet");
@@ -342,8 +376,7 @@ contract SRARegistryTest is SRATestBase {
         sra.replaceWallet(stranger, newWallet); // vote 2 executes the body -> revert
     }
 
-    /// Strategy 5/CV7: the orchestratorCount read-only view reflects admission/removal counts (consistent with admittedCount).
-    /// (coverage lines 596-597 never called — the read-only view had no tests)
+    /// orchestratorCount reflects admission/removal counts (consistent with admittedCount).
     function test_OrchestratorCount_ReflectsAdmissions() public {
         assertEq(sra.orchestratorCount(), 0);
 

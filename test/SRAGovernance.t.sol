@@ -6,7 +6,7 @@ pragma solidity ^0.8.36;
 //   - two votes, immediate execution (unanimousNoHold — no permissionless path)
 //   - single vote does not execute; non-owner rejected
 //   - NO_HOLD (correctVolume) full-vote immediate execution
-//   - taskId = keccak256(msg.data): different array parameter order -> different taskId -> no merge (I2 risk)
+//   - taskId = keccak256(msg.data): different array parameter order -> different taskId -> no merge
 
 import {SRATestBase} from "./SRATestBase.sol";
 import {Vm} from "forge-std/Vm.sol";
@@ -122,9 +122,10 @@ contract SRAGovernanceTest is SRATestBase {
     // taskId consistency: array parameter normalization (I2 risk)
     // ------------------------------------------------------------------------
 
-    /// Strategy 6/I2: different setAdmittedLists array orders -> different calldata -> different taskIds
-    /// -> the two Safes approve different tasks, each with only one vote; the change does not take effect
-    /// (task deadlock risk). With the allowlist event-only, "not taking effect" = no AdmittedListsUpdated emitted.
+    /// Different setAdmittedLists array orders -> different calldata -> different taskIds:
+    /// the two Safes approve different tasks, each with only one vote, so neither reaches a full
+    /// vote and the change does not take effect (no-merge deadlock). With the allowlist event-only,
+    /// "not taking effect" = no AdmittedListsUpdated emitted.
     function test_TaskId_DifferentArrayOrder_DoesNotMerge() public {
         address usdc = makeAddr("usdc");
         address usdt = makeAddr("usdt");
@@ -136,8 +137,7 @@ contract SRAGovernanceTest is SRATestBase {
         // owner2 submits the reverse order: different calldata -> different taskId -> no merge
         sra.setAdmittedLists(_asArray(usdt, usdc), _asArray(address(0), address(0)));
 
-        // the two votes are spread across two different tasks, each unable to reach a full vote -> the change never takes effect (I2 deadlock)
-        vm.roll(block.number + SRA_CANCEL_HOLD + 1000);
+        // the two votes are spread across two different tasks, each unable to reach a full vote -> the change never takes effect
         Vm.Log[] memory logs = vm.getRecordedLogs();
         for (uint256 i = 0; i < logs.length; i++) {
             assertTrue(
@@ -147,8 +147,9 @@ contract SRAGovernanceTest is SRATestBase {
         }
     }
 
-    /// Strategy 6/I2 control: same order (same calldata) -> two votes + hold -> execution takes effect.
-    function test_TaskId_SameArrayOrder_Executes() public {
+    /// Control: same order (same calldata) -> one task reaches a full vote and the
+    /// second approval executes immediately (unanimousNoHold), emitting the new allowlist.
+    function test_TaskId_SameArrayOrder_SecondApprovalExecutes() public {
         address usdc = makeAddr("usdc");
         address[] memory stablecoins = _asArray(usdc, address(0));
 
@@ -164,10 +165,10 @@ contract SRAGovernanceTest is SRATestBase {
     }
 
     // ------------------------------------------------------------------------
-    // E1: replaceOwner (owner rotation, unanimousNoHold path — aligned with upstream SWA)
+    // replaceOwner (owner rotation, unanimousNoHold path — aligned with upstream SWA)
     // ------------------------------------------------------------------------
 
-    /// E1: replaceOwner uses unanimousNoHold — the second approval executes immediately,
+    /// replaceOwner uses unanimousNoHold — the second approval executes immediately,
     ///     revoking the old owner and adding the new one; the old owner can no longer vote,
     ///     the new owner can (behavioral ownership assertion, matching SWA which exposes no isOwner view).
     function test_ReplaceOwner_SecondApproval_ExecutesImmediately() public {
@@ -209,7 +210,7 @@ contract SRAGovernanceTest is SRATestBase {
         sra.addOrchestrator(makeAddr("orch-eoa-vote"), makeAddr("orch-eoa-vote")); // no revert => eoaOwner is an owner
     }
 
-    /// E1: a non-owner calling replaceOwner is rejected on the first vote (NotOwner).
+    /// A non-owner calling replaceOwner is rejected on the first vote (NotOwner).
     function test_ReplaceOwner_NonOwner_Reverts() public {
         address stranger = makeAddr("stranger");
         vm.prank(stranger);
@@ -218,11 +219,11 @@ contract SRAGovernanceTest is SRATestBase {
     }
 
     // ------------------------------------------------------------------------
-    // E2: constructor parameter validation (deployment-time bounds, aligned with setPricingParams)
+    // constructor parameter validation (deployment-time bounds)
     // ------------------------------------------------------------------------
 
-    /// E2: the constructor rejects invalid configuration — priceBand > BASIS_POINTS /
-    ///     epochsPerQuarter=0 (each reverts InvalidParameter at deploy).
+    /// The constructor rejects invalid configuration — epochsPerQuarter=0
+    ///     (reverts InvalidParameter at deploy).
     function test_Constructor_InvalidParams_Reverts() public {
         // epochsPerQuarter == 0
         vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.InvalidParameter.selector));
@@ -238,10 +239,11 @@ contract SRAGovernanceTest is SRATestBase {
     }
 
     // ------------------------------------------------------------------------
-    // F2: setAdmittedLists allowlist array-length bound
+    // setAdmittedLists allowlist array-length bound
     // ------------------------------------------------------------------------
 
-    /// F2: setAdmittedLists with an allowlist array above MAX_ALLOWLIST (64) reverts InvalidParameter at body execution.
+    /// setAdmittedLists with an allowlist array above MAX_ALLOWLIST (64) reverts InvalidParameter
+    /// at body execution — the second approval (full vote) executes the body and reverts.
     function test_SetAdmittedLists_TooManyEntries_Reverts() public {
         address[] memory stablecoins = new address[](65);
         for (uint256 i = 0; i < stablecoins.length; i++) {

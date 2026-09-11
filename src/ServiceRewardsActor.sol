@@ -31,9 +31,9 @@ import {FVMActor} from "fvm-solidity/FVMActor.sol";
 import {OwnersLibrary} from "./lib/Owners.sol";
 import {UnanimousGovernance} from "./lib/UnanimousGovernance.sol";
 // Top-level SRA types (Binding / FilecoinPayVolume) and the ERC-7201 storage layout live in
-// separate library files (SraTypes.sol / SraStorage.sol) — extracted to simplify
-// the #5 proxy refactor; test files import the types from SraTypes.sol.
-import {Binding, FilecoinPayVolume} from "./lib/SraTypes.sol";
+// separate library files (SraTypes.sol / SraStorage.sol), so the proxy and implementation share
+// the same storage layout (single source of truth); test files import the types from SraTypes.sol.
+import {Binding, FilecoinPayVolume, Reassignment} from "./lib/SraTypes.sol";
 import {SraStorage} from "./lib/SraStorage.sol";
 
 contract ServiceRewardsActor is UnanimousGovernance {
@@ -186,42 +186,86 @@ contract ServiceRewardsActor is UnanimousGovernance {
         }
     }
 
-    /// @dev Time-correct the mirror cache before a write: if the active quarter lags the time
-    ///      quarter (a gap quarter with no writes), advance in one step — gap quarters carry no
-    ///      data, so prevFpv becomes 0 (one-step jump semantics, keeping the prevFpv == activeQ-1
-    ///      invariant). Idempotent when already current. Keeps the slot semantics (fpv/prevFpv
-    ///      ownership) aligned with the clock so no time judgment ever reads a stale cache.
-    function _syncMirror(SraStorage.SraStorageQuarter storage qt) internal {
+    /// @dev True while the just-ended time quarter awaits its share map: the submission line
+    ///      (nextQuarter) has not advanced past it (nextQuarter != nowQ + 1). FIP-0118 §3.2 gates
+    ///      RemoveOrchestrator on this state — removal reverts until the ended quarter's SubmitShares
+    ///      has run.
+    function _pendingSharesQuarter() internal view returns (bool hasPending, uint64 q) {
+        SraStorage.SraStorageQuarter storage qt = SraStorage.quarter();
+        if (currentEpoch() < ACTIVATION_EPOCH) return (false, 0);
         uint64 nowQ = _quarterOf(currentEpoch());
-        if (qt.activeQuarter < nowQ) _advanceMirror(qt, nowQ);
+        if (qt.nextQuarter != nowQ + 1) return (true, nowQ);
+        return (false, 0);
     }
 
-    /// @dev Mirror advance: the first write of a new quarter (postVolume or correctVolume
-    ///      with q != activeQ) backs the previous active-quarter contributions up into the previous-
-    ///      quarter mirror — exclusion-fixed (frozenAtPostEnd ? 0 : fpv), because the freeze state
-    ///      of the previous quarter's E+POST is no longer derivable once the quarter has advanced —
-    ///      and clears the active slots for the new quarter. When q skips quarters (q > activeQ + 1,
-    ///      a gap quarter with no volume — necessarily unwritten, postVolume rejects zero), the
-    ///      mirror jumps in one step: quarter q-1 is a gap with no data, so prevFpv is zero; the
-    ///      previous active-quarter data is superseded (that quarter has no legal submission path
-    ///      once the gap quarter has bound — NotLatestQuarter). O(n) per write regardless of gap size.
-    function _advanceMirror(SraStorage.SraStorageQuarter storage qt, uint64 q) internal {
+    // ------------------------------------------------------------------------
+    // A/B mirror slots — each of the two slots carries its own quarter tag (SraStorageQuarter
+    // .mirrorAQuarter/.mirrorBQuarter). Tags store quarter + 1, so the never-written slot owns
+    // tag 0 exclusively: quarter 0's data (tag 1) is never confusable with vacancy. Writes target
+    // _slotForWrite; reads match by tag (_slotQuarterOf).
+    // ------------------------------------------------------------------------
+
+    /// @dev True when slot tag `tag` names quarter q: tags store q + 1, so tag 0 (never written)
+    ///      matches no quarter, and decoding runs tag-first (tag - 1) — an unbounded caller q
+    ///      (fpvOf is a raw view) can never overflow q + 1.
+    function _tagMatches(uint64 tag, uint64 q) internal pure returns (bool) {
+        return tag != 0 && tag - 1 == q;
+    }
+
+    /// @dev Matches a quarter to its tagged slot (A before B). Tag 0 (never written) matches no
+    ///      quarter, so an empty slot is never "hit" — collecting it as a quarter's input is
+    ///      impossible by construction.
+    function _slotQuarterOf(uint64 q) internal view returns (bool hit, uint8 slot) {
+        SraStorage.SraStorageQuarter storage qt = SraStorage.quarter();
+        if (_tagMatches(qt.mirrorAQuarter, q)) return (true, 0);
+        if (_tagMatches(qt.mirrorBQuarter, q)) return (true, 1);
+        return (false, 0);
+    }
+
+    function _mirrorOf(SraStorage.OrchestratorInfo storage o, uint8 slot) internal view returns (FixedU18) {
+        return slot == 0 ? o.mirrorA : o.mirrorB;
+    }
+
+    function _setMirror(SraStorage.OrchestratorInfo storage o, uint8 slot, FixedU18 value) internal {
+        if (slot == 0) o.mirrorA = value;
+        else o.mirrorB = value;
+    }
+
+    /// @dev Zeros slot `slot` on every admitted row (the rebuild of a reused slot).
+    function _eraseSlot(uint8 slot) internal {
         SraStorage.SraStorageRegistry storage r = SraStorage.registry();
         for (uint256 i = 0; i < r.admittedIds.length; i++) {
             _setMirror(r.orchestrators[r.admittedIds[i]], slot, ZERO);
         }
-        qt.activeQuarter = q;
+    }
+
+    /// @dev The single write-path slot target for quarter q: reuse q's own tagged slot (tag q+1),
+    ///      or build a fresh one — erase the slot with the smallest tag and tag it q+1. Tags order
+    ///      by sacrificability directly: 0 (never written) sorts below any written quarter, so a
+    ///      vacant slot is always erased first (no content scan needed — the q+1 encoding reserves
+    ///      0 for "never written"). Between two written slots the older tag is dropped — that can
+    ///      only be a superseded quarter: the latest bound quarter's slot survives until submission,
+    ///      because a fresh write happens in a strictly later time quarter, by which the previous
+    ///      one has bound.
+    function _slotForWrite(uint64 q) internal returns (uint8 slot) {
+        SraStorage.SraStorageQuarter storage qt = SraStorage.quarter();
+        if (_tagMatches(qt.mirrorAQuarter, q)) return 0;
+        if (_tagMatches(qt.mirrorBQuarter, q)) return 1;
+        // no slot tagged q+1 — erase the most sacrificable (smallest tag; 0 = never written first)
+        slot = qt.mirrorAQuarter <= qt.mirrorBQuarter ? 0 : 1;
+        _eraseSlot(slot);
+        if (slot == 0) qt.mirrorAQuarter = q + 1;
+        else qt.mirrorBQuarter = q + 1;
+        return slot;
     }
 
     // ------------------------------------------------------------------------
     // Orchestrator operations (called by self, no governance)
     // ------------------------------------------------------------------------
 
-    /// @notice An admitted, non-frozen orchestrator declares binding pairs; reverts if the pair is already bound to another (uniqueness).
-    /// @dev C1: parameter uses a named struct Binding[] (inline tuple-array params are illegal in Solidity).
+    /// @notice An admitted orchestrator declares binding pairs; reverts if the pair is already bound to another (uniqueness).
     function registerPairs(Binding[] calldata pairs) external {
-        require(pairs.length <= MAX_PAIRS, TooManyPairs()); // batch bound
-        // single storage pointer — avoids hashing the orchestrators mapping twice
+        require(pairs.length <= MAX_PAIRS, TooManyPairs());
         SraStorage.SraStorageRegistry storage r = SraStorage.registry();
         uint64 id = r.activeIdOf[msg.sender];
         SraStorage.OrchestratorInfo storage o = r.orchestrators[id];
@@ -261,7 +305,6 @@ contract ServiceRewardsActor is UnanimousGovernance {
     /// @notice During posting, at most one posting per quarter; the value is a single USD total
     ///         (FilecoinPayVolume_i(Q): stablecoin face USD + off-chain-converted FIL volume, FIP-0118 FIPs#1275).
     function postVolume(uint64 q, FixedU18 fpv) external {
-        // single storage pointer — avoids hashing the orchestrators mapping twice
         SraStorage.SraStorageRegistry storage r = SraStorage.registry();
         uint64 id = r.activeIdOf[msg.sender];
         SraStorage.OrchestratorInfo storage o = r.orchestrators[id];
@@ -454,25 +497,16 @@ contract ServiceRewardsActor is UnanimousGovernance {
         SraStorage.OrchestratorInfo storage o = SraStorage.registry().orchestrators[id];
         SraStorage.SraStorageQuarter storage qt = SraStorage.quarter();
 
-        // Time-correct the mirror cache first (gap quarters advance on the clock, not on
-        // writes): the window checks bound q to the current time quarter, and _syncMirror
-        // advances activeQ to it — correctVolume can be the first writer of a quarter
-        // (supplying recomputed figures for a quarter nobody posted); the sync's advance backs
-        // the previous quarter's data up into prevFpv.
-        _syncMirror(qt);
+        // Slot target: the quarter's own tagged slot (reused across posters/corrections), or a fresh
+        // slot built by erasing the most sacrificable one (smallest tag — _slotForWrite).
+        // correctVolume can be the first writer of a quarter — a fresh slot reads oldUsd = 0, so the
+        // counter receives the full value and no previous quarter's value can leak into this
+        // quarter's counter.
+        uint8 slot = _slotForWrite(q);
+        FixedU18 oldUsd = _mirrorOf(o, slot);
+        _setMirror(o, slot, value); // value==0 clears (equivalent to not posted)
 
-        // Read the old value *after* the advance: on an advance the previous
-        // quarter's fpv has already been backed up into prevFpv and fpv cleared, so oldUsd = 0
-        // and the counter receives the full value; without an advance oldUsd is the current
-        // quarter's value and the counter is adjusted by (value - oldUsd).
-        FixedU18 oldUsd = o.fpv;
-        o.fpv = value; // FixedU18 — 18-decimal USD; value==0 clears (equivalent to not posted)
-
-        // E+POST has passed (verification window): frozenAtPostEnd is final — a frozen-at-E+POST
-        // orchestrator never enters the aggregate (its value is recorded, not counted).
-        if (!o.frozenAtPostEnd) {
-            qt.totalUsd[q] = qt.totalUsd[q] + value - oldUsd;
-        }
+        qt.totalUsd[q] = qt.totalUsd[q] + value - oldUsd;
 
         emit VolumeCorrected(q, orch, value);
     }
