@@ -7,8 +7,9 @@ pragma solidity ^0.8.36;
 //   I1 Share conservation: after any operation sequence (the most recent successful submitShares),
 //      the f02 share map Σ is always == 1e18
 //   I2 Binding uniqueness: any (payer, operator) pair always has at most 1 valid bound orchestrator;
-//      the handler-recorded last binder (resolved along the replace chain) must == sra.bindingOf()
-//      — a third-party grab after replace is exactly the kind of invariant this breaks
+//      the handler-recorded last binder must == sra.bindingOf() (bindings resolve to the admit-time
+//      identity, which a replaceWallet does not move) — a third-party grab after replace is exactly
+//      the kind of invariant this breaks
 //   I3 Governance consistency: the approved bitmask is consistent with orchestrator state —
 //      parked tasks (one vote, not executed) have a non-zero bitmask and state not landed;
 //      executed tasks have a zeroed bitmask (deleted after execution); handler-expected state == sra actual
@@ -154,40 +155,9 @@ contract SRAInvariantHandler is SRATestBase {
         _recordExecuted(taskId);
     }
 
-    /// @notice Atomic freeze.
-    function freeze(uint256 idx) external {
-        address orch = _pickOrch(idx);
-        if (!sra.isAdmitted(orch) || sra.isFrozen(orch)) return;
-        bytes32 taskId = _taskId(sra.freeze.selector, abi.encode(orch));
-        vm.prank(owner1);
-        sra.freeze(orch);
-        vm.prank(owner2);
-        sra.freeze(orch);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        sra.freeze(orch);
-        _frozen[orch] = true;
-        _freezeAt[orch].push(uint64(block.number));
-        _recordExecuted(taskId);
-    }
-
-    /// @notice Atomic unfreeze.
-    function unfreeze(uint256 idx) external {
-        address orch = _pickOrch(idx);
-        if (!sra.isAdmitted(orch) || !sra.isFrozen(orch)) return;
-        bytes32 taskId = _taskId(sra.unfreeze.selector, abi.encode(orch));
-        vm.prank(owner1);
-        sra.unfreeze(orch);
-        vm.prank(owner2);
-        sra.unfreeze(orch);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        sra.unfreeze(orch);
-        _frozen[orch] = false;
-        _unfreezeAt[orch].push(uint64(block.number));
-        _recordExecuted(taskId);
-    }
-
-    /// @notice Identity transfer: old invalidated, new becomes the id's wallet (O(1) wallet re-point in the id-keyed model);
-    ///         frozen state and freeze history follow the id, now reachable via newOrch.
+    /// @notice Payout-wallet swap (spec §3.2): the orchestrator identity does not move — only the id's
+    ///         wallet is re-pointed, so every current-generation pair bound to it keeps resolving to the
+    ///         same identity (bindingOf reads orchestrators[id].orchestrator). _admitted / _idGen stay unchanged.
     function replace(uint256 oldIdx, uint256 newIdx) external {
         address oldOrch = _pickOrch(oldIdx);
         address newWallet = _pickOrch(newIdx);
@@ -200,35 +170,10 @@ contract SRAInvariantHandler is SRATestBase {
         vm.prank(owner1);
         sra.replaceWallet(oldOrch, newWallet);
         vm.prank(owner2);
-        sra.replace(oldOrch, newOrch);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        sra.replace(oldOrch, newOrch);
-        _admitted[oldOrch] = false;
-        _admitted[newOrch] = true;
-        _frozen[newOrch] = _frozen[oldOrch];
-        _frozen[oldOrch] = false;
-        _idGen[newOrch] = _idGen[oldOrch]; // the id (identity) transfers to the new wallet — same generation
-        // freeze-history migration: the id's history is now reachable via newOrch (old's is cleared) —
-        // the key alignment for A2 freeze-snapshot determination
-        delete _freezeAt[newOrch];
-        delete _unfreezeAt[newOrch];
-        for (uint256 i = 0; i < _freezeAt[oldOrch].length; i++) {
-            _freezeAt[newOrch].push(_freezeAt[oldOrch][i]);
-        }
-        for (uint256 i = 0; i < _unfreezeAt[oldOrch].length; i++) {
-            _unfreezeAt[newOrch].push(_unfreezeAt[oldOrch][i]);
-        }
-        delete _freezeAt[oldOrch];
-        delete _unfreezeAt[oldOrch];
-        // bindings follow the id: every pair bound to the id's previous wallet (old) now resolves to new.
-        // Only the *current generation*'s pairs move — pairs bound to an earlier identity of the same address
-        // (e.g. a removed id whose wallet was also old) keep resolving to that id's wallet (the implementation's
-        // bindingOf reads orchestrators[bindings[pairId]].wallet, which a removed id keeps).
-        for (uint256 i = 0; i < _pairs.length; i++) {
-            if (_pairs[i].boundOrch == oldOrch && _pairs[i].gen == _idGen[oldOrch]) {
-                _pairs[i].boundOrch = newOrch;
-            }
-        }
+        sra.replaceWallet(oldOrch, newWallet); // second vote executes (unanimousNoHold)
+        // wallet swap: the id keeps its identity (spec §3.2); nothing on the identity side re-points —
+        // bindingOf resolves to the admit-time identity, so all current-generation pairs bound to the
+        // id keep reading the same orchestrator.
         _recordExecuted(taskId);
     }
 
@@ -420,9 +365,15 @@ contract SRAInvariantHandler is SRATestBase {
         return (_pairs[i].payer, _pairs[i].operator, _pairs[i].boundOrch);
     }
 
+    /// @dev The identity a live bound record resolves to (its admit-time orchestrator); address(0) when
+    ///      the pair is unclaimed — binder removed or its identity superseded by a re-admit. The identity
+    ///      generation distinguishes a live binding from a stale one (an address can host successive
+    ///      identities); a live record's bound id resolves to the current generation's identity.
+    function liveBoundIdentity(uint256 i) external view returns (address) {
         PairRecord storage p = _pairs[i];
         if (!_admitted[p.boundOrch]) return address(0);
         if (_idGen[p.boundOrch] != p.gen) return address(0);
+        return p.boundOrch;
     }
 
     function parkedCount() external view returns (uint256) {
@@ -569,14 +520,20 @@ contract SRAInvariantTest is Test {
         assertEq(sum, 1e18, "I1: sum of shares must equal SHARE_TOTAL");
     }
 
-    /// I2 Binding uniqueness: every pair's bindingOf must == the handler-recorded last binder
-    /// (synced on replace — the id-keyed model re-points the wallet, so bindingOf returns the new wallet directly).
+    /// I2 Binding uniqueness: every live pair's bindingOf must == the handler-recorded binder's identity
+    /// (bindingOf reads orchestrators[id].orchestrator, the admit-time identity — a replace re-points
+    /// only the wallet, so the bound identity stays put).
     /// Catches: a third-party grab of the same pair after replace (overwriting the binding),
     ///        registerPairs bypassing the uniqueness check, reassignBinding writes inconsistent with the record.
+    /// Unclaimed pairs (binder removed or identity superseded) are skipped: bindingOf returns 0 for a
+    /// removed id (admitted=false) and the record tracks a superseded identity's pairs as unclaimed,
+    /// so the resolved value is address(0) on both sides of the comparison.
     function invariant_OneBindingPerPair() public view {
         uint256 n = handler.knownPairsLength();
         for (uint256 i = 0; i < n; i++) {
-            (address payer, address operator, address boundOrch) = handler.pairRecordAt(i);
+            (address payer, address operator,) = handler.pairRecordAt(i);
+            address expected = handler.liveBoundIdentity(i);
+            if (expected == address(0)) continue; // unclaimed pair — skip
             assertEq(
                 handler.sraInstance().bindingOf(payer, operator),
                 expected,
@@ -658,7 +615,7 @@ contract SRAInvariantTest is Test {
             uint256 word = uint256(vm.load(address(sra), wordSlot));
             uint64 id = uint64(word >> ((i % 4) * 64));
             bytes32 base = keccak256(abi.encode(uint64(id), REGISTRY_SLOT));
-            uint64 idx = uint64(uint256(vm.load(address(sra), bytes32(uint256(base) + 3))));
+            uint64 idx = uint64(uint256(vm.load(address(sra), bytes32(uint256(base) + 4))));
             assertEq(idx, i, "I6: admittedIndex must equal array position");
         }
     }

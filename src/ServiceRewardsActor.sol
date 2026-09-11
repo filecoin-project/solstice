@@ -306,7 +306,8 @@ contract ServiceRewardsActor is UnanimousGovernance {
         uint64 id = r.nextId;
         r.nextId = id + 1;
         SraStorage.OrchestratorInfo storage o = r.orchestrators[id];
-        o.wallet = orch;
+        o.orchestrator = orch;
+        o.wallet = wallet;
         o.admitted = true;
         o.admittedIndex = uint64(r.admittedIds.length);
         r.activeIdOf[orch] = id;
@@ -614,7 +615,8 @@ contract ServiceRewardsActor is UnanimousGovernance {
     function bindingOf(address payer, address operator) external view returns (address) {
         SraStorage.SraStorageRegistry storage r = SraStorage.registry();
         uint64 id = r.bindings[_pairId(payer, operator)];
-        return id == 0 ? address(0) : r.orchestrators[id].wallet; // unbound (0) -> address(0); bound id -> current wallet
+        if (id == 0 || !r.orchestrators[id].admitted) return address(0);
+        return r.orchestrators[id].orchestrator;
     }
 
     function fpvOf(uint64 q, address orch) external view returns (FilecoinPayVolume memory) {

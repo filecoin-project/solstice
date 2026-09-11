@@ -174,6 +174,9 @@ contract SRARegistryTest is SRATestBase {
         _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
         _remove(orchA);
 
+        // released binding reads as unclaimed immediately (bindingOf returns 0 for a removed id)
+        assertEq(sra.bindingOf(makeAddr("payer"), makeAddr("operator")), address(0));
+
         // original orchestrator removed; B can claim the same pair
         _registerPairsAs(orchB, pairs);
         assertEq(sra.bindingOf(makeAddr("payer"), makeAddr("operator")), orchB);
@@ -183,8 +186,10 @@ contract SRARegistryTest is SRATestBase {
     // replace / reassignBinding
     // ------------------------------------------------------------------------
 
-    /// replace transfers the operator identity (the new address gains admission and bindings; the old address becomes invalid).
-    function test_Replace_TransfersIdentity() public {
+    /// replaceWallet swaps the payout wallet (spec §3.2): the identity does not move — oldOrch stays
+    /// admitted, and bindingOf keeps resolving to the same orchestrator identity (only the payout
+    /// wallet reads as newWallet).
+    function test_Replace_SwapsWallet() public {
         address oldOrch = makeAddr("oldOrch");
         address newWallet = _wallet("newWallet");
         _admit(oldOrch, oldOrch);
@@ -201,10 +206,11 @@ contract SRARegistryTest is SRATestBase {
         vm.prank(owner2);
         sra.replaceWallet(oldOrch, newWallet); // second vote executes (unanimousNoHold)
 
-        assertFalse(sra.isAdmitted(oldOrch));
-        assertTrue(sra.isAdmitted(newOrch));
-        // bindings follow the identity transfer
-        assertEq(sra.bindingOf(makeAddr("payer"), makeAddr("operator")), newOrch);
+        assertTrue(sra.isAdmitted(oldOrch), "identity does not move (spec 3.2)");
+        assertFalse(sra.isAdmitted(newWallet), "the new wallet is not an orchestrator identity");
+        // the binding stays with the same orchestrator; bindingOf reads its identity, which a
+        // replaceWallet does not move (issue #34: bindingOf returns the identity, not the wallet)
+        assertEq(sra.bindingOf(makeAddr("payer"), makeAddr("operator")), oldOrch);
     }
 
     /// After replace, a third party cannot grab the binding pair — registerPairs's AlreadyBound
@@ -227,10 +233,11 @@ contract SRARegistryTest is SRATestBase {
         vm.prank(owner2);
         sra.replaceWallet(orchA, orchB); // second vote executes (unanimousNoHold)
 
-        assertTrue(sra.isAdmitted(orchB));
-        assertFalse(sra.isAdmitted(orchA));
-        // bindings follow the identity transfer (id-keyed: the wallet re-point keeps the binding)
-        assertEq(sra.bindingOf(makeAddr("payer"), makeAddr("operator")), orchB);
+        assertTrue(sra.isAdmitted(orchA), "identity does not move (spec 3.2)");
+        assertFalse(sra.isAdmitted(orchB), "the new wallet is not an orchestrator identity");
+        // the binding stays with the same orchestrator; bindingOf reads its identity, which a
+        // replaceWallet does not move (issue #34: bindingOf returns the identity, not the wallet)
+        assertEq(sra.bindingOf(makeAddr("payer"), makeAddr("operator")), orchA);
 
         // third party orchC tries to grab the same pair -> expect AlreadyBound revert
         vm.prank(orchC);
@@ -434,7 +441,7 @@ contract SRARegistryTest is SRATestBase {
     /// @dev orchestrators mapping at REGISTRY_SLOT; struct word 3 = admittedIndex (added after prevFpv).
     function _admittedIndexOf(uint64 id) internal view returns (uint64 idx) {
         bytes32 base = keccak256(abi.encode(uint64(id), REGISTRY_SLOT));
-        idx = uint64(uint256(vm.load(address(sra), bytes32(uint256(base) + 3))));
+        idx = uint64(uint256(vm.load(address(sra), bytes32(uint256(base) + 4))));
     }
 
     /// OrchestratorInfo invariant: every admitted id's admittedIndex == its position in admittedIds.

@@ -179,6 +179,23 @@ contract SRAAdversarial is SRATestBase {
         assertEq(sra.bindingOf(address(0), operator), orch);
     }
 
+    // ------------------------------------------------------------------------
+    // bindingOf identity semantics (issue #34: bindingOf returns the identity, not the payout wallet)
+    // ------------------------------------------------------------------------
+
+    /// bindingOf resolves the bound pair to the admit-time orchestrator identity: a pair bound by an
+    /// orchestrator that admitted a distinct payout wallet reads the identity (and never the wallet).
+    function test_RegisterPairs_BindingOf_ReturnsIdentity_NotWallet() public {
+        address orch = makeAddr("orch");
+        address wallet = makeAddr("distinct-wallet");
+
+        Binding[] memory pairs = new Binding[](1);
+        pairs[0] = Binding({payer: makeAddr("payer"), operator: makeAddr("operator")});
+        _registerPairsAs(orch, pairs);
+        assertEq(sra.bindingOf(pairs[0].payer, pairs[0].operator), orch);
+        assertNotEq(sra.bindingOf(pairs[0].payer, pairs[0].operator), wallet);
+    }
+
     /// replaceOwner with the zero address as newOwner is ACCEPTED
     /// There are no guards against bad msig or address shapes, so unanimity is the only
     /// protection against rotating ownership into an unrecoverable address. Locked as behaviour.

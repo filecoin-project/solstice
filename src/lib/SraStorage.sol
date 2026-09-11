@@ -5,6 +5,7 @@ import {FixedU18} from "./FixedU18.sol";
 
 library SraStorage {
     struct OrchestratorInfo {
+        address orchestrator; // admit-time identity; does not move with the wallet — 20B
         address wallet; // current effective wallet — 20B
         bool admitted; // admitted — 1B
         // Frozen-at-E+POST flag: exactly "was this orchestrator frozen at the close of the
