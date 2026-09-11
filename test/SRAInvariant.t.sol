@@ -622,7 +622,8 @@ contract SRAInvariantTest is Test {
     /// I6 admittedIndex ↔ array position: every id in admittedIds has its orchestrators[id].admittedIndex ==
     /// its position (the O(1) removal bookkeeping invariant). Reads raw ERC-7201 slots:
     ///   admittedIds (uint64[] at REGISTRY_SLOT+4) elements are packed 4 per 32B word, low-bytes first;
-    ///   orchestrators[id] at keccak256(abi.encode(id, REGISTRY_SLOT)), admittedIndex = struct word 3.
+    ///   orchestrators[id] at keccak256(abi.encode(id, REGISTRY_SLOT)), admittedIndex = struct word 4
+    ///   (the admit-time orchestrator field heads the struct, shifting admittedIndex past mirrorA/mirrorB).
     /// Catches: swap double-write omission (a swapped id keeps its stale index), wrong index write on
     ///        remove/admit, index drift under repeated remove + re-admit.
     function invariant_AdmittedIndex_MatchesArrayPosition() public view {

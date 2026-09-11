@@ -85,9 +85,9 @@ contract ServiceRewardsActor is UnanimousGovernance {
     error NotInVerificationWindow(uint64 q);
     error NotBound(uint64 q);
     error AlreadyPosted(uint64 q);
+    error PendingShares(uint64 q); // FIP-0118 §3.2: RemoveOrchestrator reverts while an ended quarter awaits its share map
     error AlreadySubmitted(uint64 q);
     error NotLatestQuarter(uint64 q); // FIP-0118 §4.2: an older quarter's shares can never overwrite a newer quarter's
-    error PendingShares(uint64 q); // FIP-0118 §3.2: RemoveOrchestrator reverts while an ended quarter awaits its share map
     error TooManyPairs(); // registerPairs batch exceeds MAX_PAIRS
     error ZeroWallet(address wallet); // the zero address is never a valid payout wallet
     error UnresolvedWallet(address wallet); // wallet does not resolve to an existing actor (FIP §2.4.4)
@@ -191,10 +191,10 @@ contract ServiceRewardsActor is UnanimousGovernance {
 
     /// @dev Quarter containing `nowE`, derived from the clock alone:
     ///      E(q) = ACTIVATION_EPOCH + q * EPOCHS_PER_QUARTER, so the time quarter is a pure
-    ///      function of the epoch. Unlike the activeQ mirror cache (which advances only on
-    ///      writes), this never lags: a gap quarter with no volume is still a *time* quarter.
-    ///      Pre-activation epochs (possible in test environments; the contract itself starts at
-    ///      ACTIVATION_EPOCH) saturate to quarter 0, matching the initial activeQ = 0.
+    ///      function of the epoch. Unlike the slot tags (which advance only on writes), this never
+    ///      lags: a gap quarter with no volume is still a *time* quarter. Pre-activation epochs
+    ///      (possible in test environments; the contract itself starts at ACTIVATION_EPOCH)
+    ///      saturate to quarter 0, matching the initial submission line (nextQuarter = 0).
     function _quarterOf(Epoch nowE) internal view returns (uint64) {
         if (nowE < ACTIVATION_EPOCH) return 0;
         unchecked {
@@ -226,12 +226,8 @@ contract ServiceRewardsActor is UnanimousGovernance {
     ///      once the gap quarter has bound — NotLatestQuarter). O(n) per write regardless of gap size.
     function _advanceMirror(SraStorage.SraStorageQuarter storage qt, uint64 q) internal {
         SraStorage.SraStorageRegistry storage r = SraStorage.registry();
-        bool adjacent = q == qt.activeQuarter + 1;
         for (uint256 i = 0; i < r.admittedIds.length; i++) {
-            SraStorage.OrchestratorInfo storage o = r.orchestrators[r.admittedIds[i]];
-            o.prevFpv = adjacent ? (o.frozenAtPostEnd ? ZERO : o.fpv) : ZERO;
-            o.fpv = ZERO;
-            o.frozenAtPostEnd = false; // new quarter: E+POST not reached, nothing frozen yet
+            _setMirror(r.orchestrators[r.admittedIds[i]], slot, ZERO);
         }
         qt.activeQuarter = q;
     }
@@ -299,12 +295,11 @@ contract ServiceRewardsActor is UnanimousGovernance {
 
         SraStorage.SraStorageQuarter storage qt = SraStorage.quarter();
 
-        // Time-correct the mirror cache first (a gap quarter advances on the clock, not on
-        // writes): the window checks bound q to the current time quarter, and _syncMirror
-        // advances activeQ to it, so the write target is the active quarter.
-        _syncMirror(qt);
-        require(o.fpv == ZERO, AlreadyPosted(q));
-        o.fpv = fpv;
+        // Slot target: the quarter's own tagged slot (reused across posters/corrections), or a
+        // fresh slot built by erasing the most sacrificable one (smallest tag — _slotForWrite).
+        uint8 slot = _slotForWrite(q);
+        require(_mirrorOf(o, slot) == ZERO, AlreadyPosted(q));
+        _setMirror(o, slot, fpv);
         qt.totalUsd[q] = qt.totalUsd[q] + fpv;
 
         emit VolumePosted(q, msg.sender, fpv);
@@ -340,15 +335,10 @@ contract ServiceRewardsActor is UnanimousGovernance {
     /// @notice Permanent removal; releases all bindings (pairs return to unclaimed) (spec §4.2).
     /// @dev Timing guard (spec §3.2): RemoveOrchestrator reverts while an ended quarter awaits
     ///      its share map — from the end of a quarter until that quarter's SubmitShares has run.
-    ///      This guarantees the submitted map's collection (current admitted ids + prevFpv/fpv
-    ///      snapshot) is always consistent with the quarter counter: no removal can bind between the
-    ///      close of the posting period and SubmitShares, so a bound quarter's contributors are
-    ///      exactly the orchestrators its map is computed over. Governance clears the pending quarter
-    ///      by cranking SubmitShares first, then removes in a later message.
-    /// @dev The id record is kept (wallet/fpv/prevFpv retained for audit); only the address mapping is
-    ///      cleared, so a removed id is never reachable from an address and its pairs read as unclaimed.
-    function remove(address orch) external unanimous(keccak256(msg.data), SRA_CANCEL_HOLD) {
-        SraStorage.SraStorageQuarter storage qt = SraStorage.quarter();
+    ///      Governance clears the pending quarter by cranking SubmitShares first, then removes in a
+    ///      later message (spec keeps the flows separate: SubmitShares is the only moment survivors
+    ///      gain from a removal, FIP-0118 §3.2).
+    function removeOrchestrator(address orch) external unanimousNoHold(keccak256(msg.data)) {
         SraStorage.SraStorageRegistry storage r = SraStorage.registry();
         uint64 id = r.activeIdOf[orch];
         SraStorage.OrchestratorInfo storage o = r.orchestrators[id];
@@ -370,51 +360,18 @@ contract ServiceRewardsActor is UnanimousGovernance {
         emit OrchestratorRemoved(orch);
     }
 
-    /// @notice Freeze: suspends, zeroes shares, excludes FilecoinPayVolume (spec §4.2). Freeze does not release a slot.
-    function freeze(address orch) external unanimous(keccak256(msg.data), SRA_CANCEL_HOLD) {
-        SraStorage.SraStorageQuarter storage qt = SraStorage.quarter();
-        SraStorage.SraStorageRegistry storage r = SraStorage.registry();
-        uint64 id = r.activeIdOf[orch];
-        SraStorage.OrchestratorInfo storage o = r.orchestrators[id];
-        require(id != 0 && o.admitted, NotAdmitted(orch));
-        require(o.frozenSince == NEVER, AlreadyFrozen(orch));
-        Epoch nowE = currentEpoch();
-        o.frozenSince = nowE;
-        // fpv-effectiveness: a freeze before the posting window closes excludes the active
-        // quarter (E+POST snapshot); from the verification window onward the quarter is fixed.
-        uint64 q = qt.activeQuarter;
-        if (nowE <= _qEnd(q) + POST_PERIOD && o.fpv > ZERO) {
-            qt.totalUsd[q] = qt.totalUsd[q] - o.fpv; // fpv retained as unfreeze restore source
-            o.frozenAtPostEnd = true;
-        }
-        emit OrchestratorFrozen(orch);
-    }
-
-    /// @notice Exact restoration (spec §4.2).
-    function unfreeze(address orch) external unanimous(keccak256(msg.data), SRA_CANCEL_HOLD) {
-        SraStorage.SraStorageQuarter storage qt = SraStorage.quarter();
-        SraStorage.SraStorageRegistry storage r = SraStorage.registry();
-        uint64 id = r.activeIdOf[orch];
-        SraStorage.OrchestratorInfo storage o = r.orchestrators[id];
-        require(id != 0 && o.admitted, NotAdmitted(orch));
-        require(!(o.frozenSince == NEVER), NotFrozen(orch));
-        Epoch nowE = currentEpoch();
-        o.frozenSince = NEVER;
-        // Symmetric with freeze: an unfreeze before the posting window closes re-includes the
-        // active-quarter contribution (if posted); from the verification window onward it is fixed.
-        uint64 q = qt.activeQuarter;
-        if (nowE <= _qEnd(q) + POST_PERIOD && o.fpv > ZERO) {
-            qt.totalUsd[q] = qt.totalUsd[q] + o.fpv;
-            o.frozenAtPostEnd = false;
-        }
-        emit OrchestratorUnfrozen(orch);
-    }
-
-    /// @notice Operator address change (spec §4.2). Identity (frozen state, contribution slots) and all bindings transfer to newOrch.
-    /// @dev O(1) wallet re-point: the id (identity) stays put, only the address mapping and the wallet field
-    ///      change. bindings/fpv/freeze state all key on the id, so they follow the identity automatically —
-    ///      no enumeration, no alias chain, and historical quarter FilecoinPayVolume remains aggregated.
-    function replace(address oldOrch, address newOrch) external unanimous(keccak256(msg.data), SRA_CANCEL_HOLD) {
+    /// @notice Swaps the payout wallet (spec §3.2): the Orchestrator identity does not move — bindings,
+    ///         accrued volumes, and contribution slots stay with the same orchestrator.
+    /// @dev O(1) wallet re-point: only the id's wallet field changes. bindings and quarterly mirror
+    ///      state both key on the id, so they keep resolving to the same orchestrator (the identity
+    ///      never moves), and historical quarter FilecoinPayVolume remains aggregated. Strictly
+    ///      prospective (spec §3.2): the swap is not gated on the submission line — an ended quarter
+    ///      awaiting its share map keeps the old wallet for the already-bound map; the new wallet
+    ///      pays from the next submission onward.
+    /// @dev The new payout wallet must be non-zero, resolve to an existing actor's id, and its
+    ///      resolved id must not duplicate any other admitted row's (the row being replaced is
+    ///      exempt — re-spelling its own actor is a single row; FIP §2.4.4).
+    function replaceWallet(address oldOrch, address newWallet) external unanimousNoHold(keccak256(msg.data)) {
         SraStorage.SraStorageRegistry storage r = SraStorage.registry();
         uint64 id = r.activeIdOf[oldOrch];
         require(id != 0 && r.orchestrators[id].admitted, NotAdmitted(oldOrch));
@@ -552,23 +509,16 @@ contract ServiceRewardsActor is UnanimousGovernance {
         SraStorage.SraStorageQuarter storage qt = SraStorage.quarter();
         require(q + 1 != qt.nextQuarter, AlreadySubmitted(q));
 
-        // q is the latest bound quarter. The mirror has advanced only as far as the last written
-        // quarter (activeQ): q == activeQ reads the active slot (fpv); q == activeQ - 1 reads the
-        // previous-quarter mirror (prevFpv, exclusion-fixed at the advance). A q beyond activeQ
-        // bound with no write (posting/verification elapsed with no postVolume/correctVolume) has
-        // no data — an all-zero no-op: the quarter still counts as submitted, the existing map
-        // stands.
-        bool usePrev;
-        if (q == qt.activeQuarter) {
-            usePrev = false;
-        } else if (qt.activeQuarter > 0 && q == qt.activeQuarter - 1) {
-            usePrev = true;
-        } else {
+        // Slot selection by quarter tag: the slot tagged q+1 holds this quarter's
+        // input; a bound quarter with no tagged slot (gap — posting/verification elapsed with no
+        // write) has no data and submits as an all-zero no-op: it still counts as submitted, the
+        // existing map stands.
+        (bool hit, uint8 slot) = _slotQuarterOf(q);
+        if (!hit) {
             qt.nextQuarter = q + 1;
             return;
         }
         Share[] memory shares = new Share[](r.admittedIds.length);
-        uint256 count = 0;
         // Sum over the collected entries (the current admitted ids) — self-consistent with the
         // collection. The quarter counter (totalUsd) is a binding snapshot that can outlive a
         // lag-window remove, so it must not drive the largest-remainder split
@@ -658,12 +608,12 @@ contract ServiceRewardsActor is UnanimousGovernance {
         SraStorage.SraStorageRegistry storage r = SraStorage.registry();
         uint64 id = r.activeIdOf[orch];
         SraStorage.OrchestratorInfo storage o = r.orchestrators[id];
-        uint64 activeQ = SraStorage.quarter().activeQuarter;
-        // Mirror slots retain only the active and the previous quarter (spec: CorrectVolume is
-        // bounded by the verification window, so no historical per-orchestrator corrections
-        // exist); earlier quarters return 0 — the aggregate is the only historical read (totalUsd).
-        if (q == activeQ) return FilecoinPayVolume({usd: o.fpv});
-        if (activeQ > 0 && q == activeQ - 1) return FilecoinPayVolume({usd: o.prevFpv});
+        // Tag match: read the slot tagged q+1 (quarter q's own slot). A quarter with no live slot
+        // (never written, or its slot erased by a newer write) reads 0 — the aggregate (totalUsd)
+        // is the only historical read.
+        SraStorage.SraStorageQuarter storage qt = SraStorage.quarter();
+        if (_tagMatches(qt.mirrorAQuarter, q)) return FilecoinPayVolume({usd: o.mirrorA});
+        if (_tagMatches(qt.mirrorBQuarter, q)) return FilecoinPayVolume({usd: o.mirrorB});
         return FilecoinPayVolume({usd: ZERO});
     }
 
@@ -674,6 +624,47 @@ contract ServiceRewardsActor is UnanimousGovernance {
     // ------------------------------------------------------------------------
     // Internal logic
     // ------------------------------------------------------------------------
+
+    /// @dev Collects the full quarterly input of mirror slot `slot` over the *current* admitted ids
+        SraStorage.SraStorageRegistry storage r = SraStorage.registry();
+        for (uint256 i = 0; i < r.admittedIds.length; i++) {
+            uint64 id = r.admittedIds[i];
+            SraStorage.OrchestratorInfo storage o = r.orchestrators[id];
+            FixedU18 usd = _mirrorOf(o, slot);
+            if (usd == ZERO) continue;
+            shares[count] = Share({wallet: o.wallet, share: usd});
+            total = total + usd;
+            count++;
+        }
+    }
+
+    /// @dev Submits a computed share map (submitShares' tail): trims zero-share rows
+    ///      (largest-remainder can floor a tiny usd to 0 when the residue top-up round count is
+    ///      smaller than the active count; real f02 SetShares rejects share==0 entries, as does the
+    function _submitMap(
+        SraStorage.SraStorageQuarter storage qt,
+        uint64 q,
+        Share[] memory shares,
+        uint256 count,
+        FixedU18 total
+    ) internal {
+        uint256 kept = 0;
+        for (uint256 i = 0; i < count; i++) {
+            if (shares[i].share > ZERO) {
+                shares[kept] = shares[i];
+                kept++;
+            }
+        }
+        if (kept < shares.length) {
+            assembly ("memory-safe") {
+                mstore(shares, kept)
+            }
+        }
+
+        qt.nextQuarter = q + 1; // CEI: mark before the external call
+        FVMRewards.setShares(SERVICE_ID, shares);
+        emit SharesSubmitted(q, shares.length, total); // totalUsd as FixedU18 (18-decimal USD)
+    }
 
     /// @dev SplitRule share computation: floor + largest-remainder (remainder descending, first residue entries +1).
     ///      Writes the share field of each entry in place; the wallet field is filled by the caller.

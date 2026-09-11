@@ -8,15 +8,9 @@ library SraStorage {
         address orchestrator; // admit-time identity; does not move with the wallet — 20B
         address wallet; // current effective wallet — 20B
         bool admitted; // admitted — 1B
-        // Frozen-at-E+POST flag: exactly "was this orchestrator frozen at the close of the
-        // posting period of the active quarter" — the fpv-effectiveness test. It changes only
-        // before E+POST (freeze/unfreeze in the posting window set/clear it); from the
-        // verification window onward it is fixed.
-        bool frozenAtPostEnd; // 1B
-        Epoch frozenSince; // 0 means not frozen — 8B
-        // word 0: the four fields above pack into one 32B word (30B)
-        FixedU18 fpv; // active quarter
-        FixedU18 prevFpv; // previous quarter
+        // word 0: orchestrator (20B); word 1: wallet + admitted pack into one 32B word (21B)
+        FixedU18 mirrorA; // A/B mirror slot values; the owning quarter tag lives in SraStorageQuarter (mirrorAQuarter/mirrorBQuarter)
+        FixedU18 mirrorB;
         uint64 admittedIndex; // position in admittedIds
     }
 
@@ -31,8 +25,9 @@ library SraStorage {
 
     /// @custom:storage-location erc7201:Solstice.SRA.Quarter
     struct SraStorageQuarter {
-        uint64 activeQuarter;
-        uint64 nextQuarter; // last submitted quarter + 1
+        uint64 nextQuarter; // last submitted quarter + 1 (the submission line)
+        uint64 mirrorAQuarter; // slot A's quarter tag: quarter q stored as q + 1; 0 = never written
+        uint64 mirrorBQuarter; // slot B's quarter tag: quarter q stored as q + 1; 0 = never written
         mapping(uint64 quarter => FixedU18) totalUsd;
     }
 

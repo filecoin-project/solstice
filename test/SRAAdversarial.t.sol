@@ -394,12 +394,9 @@ contract SRAAdversarial is SRATestBase {
         );
     }
 
-    /// A write must target the active or the next quarter: skipping a quarter (q > activeQ + 1)
-    /// would misalign the prevFpv mirror (it can only hold activeQ - 1's data) — rejected by the
-    /// mirror-window guard.
-    /// A write may skip a gap quarter (a quarter with no volume is necessarily
-    /// unwritten — postVolume rejects zero). The mirror jumps in one step, keeping prevFpv =
-    /// activeQ-1's data (0 for a gap).
+    /// A write may skip a gap quarter (a quarter with no volume is necessarily unwritten —
+    /// postVolume rejects zero): the write targets the current quarter's own tagged slot, and a
+    /// gap quarter never gets one — fpvOf reads 0 for it.
     function test_PostVolume_SkipsGapQuarter() public {
         address orch = makeAddr("orch");
         _admit(orch, orch);

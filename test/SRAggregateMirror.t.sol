@@ -213,8 +213,8 @@ contract SRAggregateMirrorTest is SRATestBase {
     }
 
     /// Lagging SubmitShares (spec: operates on the latest bound quarter, up to one quarter of lag):
-    /// after the mirror advances into q=1, submitShares(0) reads the previous-quarter mirror slot
-    /// (prevFpv) — an orchestrator that posted in both quarters is picked up from its mirror value.
+    /// q=0's mirror slot keeps its quarter tag while q=1 writes into the other slot, so the lagging
+    /// submitShares(0) matches the q=0 tag and collects both contributors from that slot.
     function test_Mirror_SubmitShares_Lagging_ReadsPrevSlot() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
@@ -229,7 +229,7 @@ contract SRAggregateMirrorTest is SRATestBase {
         vm.roll(_qEnd(1) + 1);
         _postAs(a, 1, _fpv(50e18));
 
-        // q=0 is still the latest bound quarter (q=1 not bound yet): lagging submit reads prevFpv
+        // q=0 is still the latest bound quarter (q=1 not bound yet): lagging submit matches the q=0 tag
         sra.submitShares(0);
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
         assertEq(shares.length, 2, "both q0 contributors from the mirror");
@@ -238,32 +238,8 @@ contract SRAggregateMirrorTest is SRATestBase {
         assertEq(_shareOf(shares, a) + _shareOf(shares, b), 1e18, "shares sum to 100%");
     }
 
-    /// A freeze before E+POST is exclusion-fixed into the mirror at the advance: the lagging
-    /// submit of that quarter reads prevFpv = 0 for the frozen orchestrator (no post-E+POST
-    /// freeze-state derivation is possible, so the flag must be snapshotted at the advance).
-    function test_Mirror_FrozenAtPostEnd_ExcludedInPrevSlot() public {
-        address a = makeAddr("a");
-        address b = makeAddr("b");
-        _admit(a);
-        _admit(b);
-
-        vm.roll(_qEnd(0) + 1);
-        _postAs(a, 0, _fpv(100e18));
-        _postAs(b, 0, _fpv(200e18));
-        _freeze(a); // posting window: excludes q=0 (frozenAtPostEnd), totalUsd 300 -> 200
-
-        vm.roll(_qEnd(1) + 1);
-        _postAs(b, 1, _fpv(50e18)); // advance: a's prevFpv is fixed to 0 (excluded), b's to 200
-
-        sra.submitShares(0); // lagging: q=0 latest bound, reads prevFpv
-        Share[] memory shares = rewardActor().getShares(SERVICE_ID);
-        assertEq(shares.length, 1, "frozen-at-E+POST excluded from the mirror");
-        assertEq(shares[0].wallet, b, "only b remains");
-        assertEq(FixedU18.unwrap(shares[0].share), 1e18, "b gets 100%");
-    }
-
-    /// correctVolume can be the first writer of a quarter (backfill): it triggers the mirror
-    /// advance, and a backfill for an unposted orchestrator keeps the already-posted ones.
+    /// correctVolume can be the first writer of a quarter (backfill): the quarter gets its own
+    /// tagged slot, and a backfill for an unposted orchestrator joins the already-posted ones.
     function test_Mirror_CorrectVolume_FirstWrite_Advances() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
@@ -288,9 +264,9 @@ contract SRAggregateMirrorTest is SRATestBase {
         assertEq(FixedU18.unwrap(shares[0].share), 1e18);
     }
 
-    /// correctVolume backfill advancing the quarter must not leak the previous quarter's value
-    /// into the new quarter's counter: the old value is read *after* the advance,
-    /// so a backfill with value < oldUsd must not underflow and value > oldUsd lands exactly.
+    /// correctVolume backfill into a fresh tagged slot must not leak the previous quarter's value
+    /// into the new quarter's counter: the old value is read from the quarter's own slot (0 for a
+    /// fresh one), so a backfill with value < oldUsd cannot underflow and value > oldUsd lands exactly.
     function test_Mirror_CorrectVolume_Advance_NoLeak() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
@@ -333,15 +309,16 @@ contract SRAggregateMirrorTest is SRATestBase {
         vm.roll(_qEnd(1) + 1);
         _postAs(a, 1, _fpv(50e18));
 
-        // lag window: q=0 bound, submitShares(0) not yet called -> the permissionless execution call
-        // (third step of the unanimous flow) hits the body guard and reverts; the two approvals persist.
+        // lag window: q0 bound, submitShares(0) not yet called -> the second vote (which executes
+        // the body under unanimousNoHold) hits the guard and reverts; the first approval persists.
         vm.prank(owner1);
         sra.removeOrchestrator(b); // vote 1 (approve)
         vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.PendingShares.selector, 1));
         vm.prank(owner2);
         sra.removeOrchestrator(b); // vote 2 executes the body: ended q1 awaits its share map -> guard reverts (vote rolls back)
 
-        // crank the pending quarter, then the *same* unanimous task's execution now lands
+        // crank the pending quarters — q0 then q1 (both ended, q1's map holds a's contribution) —
+        // then the same unanimous task completes on the second vote.
         sra.submitShares(0);
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
         assertEq(shares.length, 2, "both q0 contributors submitted while still admitted");
@@ -349,10 +326,11 @@ contract SRAggregateMirrorTest is SRATestBase {
         assertEq(sra.isAdmitted(b), false, "removed after the pending quarter is cleared");
     }
 
-    /// The remove guard's latest-bound determination is *time-driven* (via
-    /// _quarterOf), not derived from the activeQ cache — the cache advances only on writes, so a
-    /// gap quarter (bound but unwritten) would be missed: q1 bound, nobody wrote, activeQ still 0,
-    /// the cache-based guard wrongly reports latest = 0 (already submitted) and lets removal pass.
+    /// The remove guard's latest-bound determination is *time-driven* (via _quarterOf), not derived
+    /// from the slot tags — the tags advance only on writes, so a gap quarter (bound but unwritten)
+    /// would be missed: q1 bound, nobody wrote, no slot tagged q1, a tag-based reading wrongly
+    /// reports latest = 0 (already submitted) and lets removal pass. The time-derived guard reverts
+    /// until submitShares(1) (an all-zero no-op) clears q1.
     function test_Remove_PendingShares_GapWindow() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
@@ -384,12 +362,10 @@ contract SRAggregateMirrorTest is SRATestBase {
         return 0;
     }
 
-    /// invariant_NonZeroTotal_ValidShareMap regression (CI seed 0x8104...): submitShares(q) with q beyond the mirror's activeQ —
-    /// a quarter bound but never written (posting/verification elapsed with no contribution) —
-    /// must be an all-zero no-op, not a stale prevFpv submission. The previous code treated any
-    /// q != activeQ as the previous-quarter mirror (usePrev = q != activeQ), so submitting a
-    /// future bound quarter collected the *older* quarter's prevFpv and overwrote the share map
-    /// with a quarter-misaligned distribution (CI: share map 2 recipients > snapshot count 1).
+    /// invariant_NonZeroTotal_ValidShareMap regression (CI seed 0x8104...): submitShares(q) for a
+    /// quarter bound but never written (posting/verification elapsed with no contribution) —
+    /// must be an all-zero no-op. Tag matching finds no slot for the gap quarter, so the map can
+    /// never be collected from an unrelated older slot (the stale-prevFpv class of bug).
     function test_Mirror_SubmitShares_FutureBoundQuarter_NoOp() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
@@ -412,7 +388,7 @@ contract SRAggregateMirrorTest is SRATestBase {
         assertEq(shares.length, 1, "q1 map = a only");
         assertEq(shares[0].wallet, a);
 
-        // q2 binds with no contribution ever (the mirror never advanced to 2): submitShares(2)
+        // q2 binds with no contribution ever (no q2 slot exists): submitShares(2)
         // must be an all-zero no-op — map unchanged, the quarter still counts as submitted.
         vm.roll(_qVerifyEnd(2) + 1);
         sra.submitShares(2);
@@ -445,7 +421,8 @@ contract SRAggregateMirrorTest is SRATestBase {
         sra.removeOrchestrator(b); // vote 2 executes the body: guard reverts
     }
 
-    /// Once the verification window closes, AggregatedFilecoinPayVolume(activeQ) is a fixed binding
+    /// Once the verification window closes, AggregatedFilecoinPayVolume of the just-bound quarter is
+    /// a fixed binding
     /// snapshot (spec §2.2: the read view exposes the bound values directly). A removal after
     /// binding must not rewrite it — only a pre-E+POST removal excludes the contribution.
     function test_Mirror_Remove_AfterBinding_KeepsSnapshot() public {
@@ -501,8 +478,8 @@ contract SRAggregateMirrorTest is SRATestBase {
         );
     }
 
-    /// A gap quarter (no writes, zero volume) submits as an all-zero no-op — the mirror
-    /// jump keeps prevFpv = 0 for it, so submitShares reads zero and the existing map stands.
+    /// A gap quarter (no writes, zero volume) submits as an all-zero no-op — no slot carries its
+    /// tag, submitShares reads nothing and the existing map stands.
     function test_GapQuarter_SubmitShares_NoOp() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
