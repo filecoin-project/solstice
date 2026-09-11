@@ -140,13 +140,12 @@ contract SRATestBase is MockRewardTest {
 
     function _unfreeze(address orch) internal {
         vm.prank(owner1);
-        sra.unfreeze(orch);
+        sra.addOrchestrator(orch, wallet);
         vm.prank(owner2);
-        sra.unfreeze(orch);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        sra.unfreeze(orch);
+        sra.addOrchestrator(orch, wallet);
     }
 
+    /// @notice removeOrchestrator uses unanimousNoHold: the second vote executes, no roll needed.
     function _remove(address orch) internal {
         vm.prank(owner1);
         sra.remove(orch);

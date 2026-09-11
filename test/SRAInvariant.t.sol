@@ -10,7 +10,7 @@ pragma solidity ^0.8.36;
 //      the handler-recorded last binder (resolved along the replace chain) must == sra.bindingOf()
 //      — a third-party grab after replace is exactly the kind of invariant this breaks
 //   I3 Governance consistency: the approved bitmask is consistent with orchestrator state —
-//      parked tasks (two votes, not executed) have a non-zero bitmask and state not landed;
+//      parked tasks (one vote, not executed) have a non-zero bitmask and state not landed;
 //      executed tasks have a zeroed bitmask (deleted after execution); handler-expected state == sra actual
 //
 // Handler design:
@@ -107,18 +107,16 @@ contract SRAInvariantHandler is SRATestBase {
     // Governance operations (unanimous + hold three phases: owner1 vote -> owner2 vote -> roll(hold) -> third execution)
     // Precondition checks guarantee the third call succeeds (no concurrent insertion between the two votes; operation is atomic)
 
-    /// @notice Atomic admit: two votes + hold + execution, completed within one call.
+    /// @notice Atomic admit: two votes, the second executes immediately (unanimousNoHold).
     function admit(uint256 idx) external {
         address orch = _pickOrch(idx);
         if (sra.isAdmitted(orch) || sra.admittedCount() >= 64) return;
         if (_parkedTarget[orch]) return; // must not preempt a parked governance target (I3)
-        bytes32 taskId = _taskId(sra.admit.selector, abi.encode(orch));
+        bytes32 taskId = _taskId(sra.addOrchestrator.selector, abi.encode(orch, orch));
         vm.prank(owner1);
-        sra.admit(orch);
+        sra.addOrchestrator(orch, orch);
         vm.prank(owner2);
-        sra.admit(orch);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        sra.admit(orch); // permissionless execution
+        sra.addOrchestrator(orch, orch); // second vote executes (unanimousNoHold)
         _admitted[orch] = true;
         _genSeq++;
         _idGen[orch] = _genSeq; // fresh identity generation (re-admit = new id)
@@ -189,7 +187,7 @@ contract SRAInvariantHandler is SRATestBase {
         if (_parkedTarget[newOrch]) return; // must not preempt a parked governance target (I3)
         bytes32 taskId = _taskId(sra.replace.selector, abi.encode(oldOrch, newOrch));
         vm.prank(owner1);
-        sra.replace(oldOrch, newOrch);
+        sra.replaceWallet(oldOrch, newWallet);
         vm.prank(owner2);
         sra.replace(oldOrch, newOrch);
         vm.roll(block.number + SRA_CANCEL_HOLD);
@@ -228,13 +226,11 @@ contract SRAInvariantHandler is SRATestBase {
         (address payer, address operator) = _pickPair(pairIdx);
         address orch = _pickOrch(orchIdx);
         if (!sra.isAdmitted(orch)) return;
-        bytes32 taskId = _taskId(sra.reassignBinding.selector, abi.encode(payer, operator, orch));
+        bytes32 taskId = _taskId(sra.reassignBinding.selector, abi.encode(payer, operator, orch, false));
         vm.prank(owner1);
-        sra.reassignBinding(payer, operator, orch);
+        sra.reassignBinding(payer, operator, orch, false);
         vm.prank(owner2);
-        sra.reassignBinding(payer, operator, orch);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        sra.reassignBinding(payer, operator, orch);
+        sra.reassignBinding(payer, operator, orch, false); // second vote executes (unanimousNoHold)
         _setBound(payer, operator, orch);
         _recordExecuted(taskId);
     }
@@ -313,16 +309,15 @@ contract SRAInvariantHandler is SRATestBase {
 
     // Governance "slow path": parked tasks exist across operations (simulating mid-governance state, invariant I3 verification)
 
-    /// @notice Only two votes (no execution): the admit task enters pending state, existing across operations.
+    /// @notice One vote (no execution): the admit task enters pending state, existing across operations.
+    /// @dev unanimousNoHold executes on the second vote, so a parked task carries exactly one approval.
     function parkAdmit(uint256 idx) external {
         address orch = _pickOrch(idx);
         if (sra.isAdmitted(orch) || sra.admittedCount() >= 64) return;
-        bytes32 taskId = _taskId(sra.admit.selector, abi.encode(orch));
+        bytes32 taskId = _taskId(sra.addOrchestrator.selector, abi.encode(orch, orch));
         if (_taskState[taskId] != 0) return;
         vm.prank(owner1);
-        sra.admit(orch);
-        vm.prank(owner2);
-        sra.admit(orch);
+        sra.addOrchestrator(orch, orch);
         _taskState[taskId] = 1;
         _parkedOrch[taskId] = orch;
         _parkedEpoch[taskId] = uint64(block.number);
@@ -330,24 +325,17 @@ contract SRAInvariantHandler is SRATestBase {
         _parkedTasks.push(taskId);
     }
 
-    /// @notice Completes all parked tasks (roll to hold-elapsed, then permissionless execution).
+    /// @notice Completes all parked tasks (the second vote executes under unanimousNoHold).
     function completeParked() external {
         if (_parkedTasks.length == 0) return;
-        uint64 maxTarget = 0;
-        for (uint256 i = 0; i < _parkedTasks.length; i++) {
-            bytes32 taskId = _parkedTasks[i];
-            if (_taskState[taskId] != 1) continue;
-            uint64 target = _parkedEpoch[taskId] + SRA_CANCEL_HOLD;
-            if (target > maxTarget) maxTarget = target;
-        }
-        if (block.number < maxTarget) vm.roll(maxTarget);
         bytes32[] memory parked = _parkedTasks; // snapshot then clear
         delete _parkedTasks;
         for (uint256 i = 0; i < parked.length; i++) {
             bytes32 taskId = parked[i];
             if (_taskState[taskId] != 1) continue;
             address orch = _parkedOrch[taskId];
-            try sra.admit(orch) {
+            vm.prank(owner2);
+            try sra.addOrchestrator(orch, orch) {
                 _admitted[orch] = true;
                 _genSeq++;
                 _idGen[orch] = _genSeq; // fresh identity generation

@@ -19,8 +19,8 @@ contract SRAggregateMirrorTest is SRATestBase {
     function test_Mirror_Basic() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
-        _admit(a);
-        _admit(b);
+        _admit(a, a);
+        _admit(b, b);
 
         vm.roll(_qEnd(0) + 1); // posting
         _postAs(a, 0, _fpv(100e18));
@@ -34,8 +34,8 @@ contract SRAggregateMirrorTest is SRATestBase {
     function test_Mirror_Unposted_Excluded() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
-        _admit(a);
-        _admit(b);
+        _admit(a, a);
+        _admit(b, b);
 
         vm.roll(_qEnd(0) + 1);
         _postAs(a, 0, _fpv(100e18));
@@ -92,8 +92,8 @@ contract SRAggregateMirrorTest is SRATestBase {
     function test_Mirror_CorrectVolume_Sync() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
-        _admit(a);
-        _admit(b);
+        _admit(a, a);
+        _admit(b, b);
 
         vm.roll(_qEnd(0) + 1);
         _postAs(a, 0, _fpv(100e18));
@@ -121,22 +121,22 @@ contract SRAggregateMirrorTest is SRATestBase {
         _postAs(b, 0, _fpv(200e18));
 
         vm.prank(owner1);
-        sra.replace(a, a2);
+        sra.replaceWallet(a, a2);
         vm.prank(owner2);
-        sra.replace(a, a2);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        sra.replace(a, a2); // still inside posting window
+        sra.replaceWallet(a, a2); // second vote executes (unanimousNoHold) — still inside posting window
 
         vm.roll(_qVerifyEnd(0) + 1);
         assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(0)), 300e18); // inherited — no deduction
     }
 
-    /// Removal drops the contribution (any time while the mirror is active).
+    /// Removal after the pending quarter is submitted leaves the bound aggregate as a binding
+    /// snapshot — the §3.2 guard makes any removal post-binding, so no deduction rewrites the
+    /// quarter's counter (spec §2.2: the read view exposes the bound values directly).
     function test_Mirror_Remove_Deducts() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
-        _admit(a);
-        _admit(b);
+        _admit(a, a);
+        _admit(b, b);
 
         vm.roll(_qEnd(0) + 1);
         _postAs(a, 0, _fpv(100e18));
@@ -195,8 +195,8 @@ contract SRAggregateMirrorTest is SRATestBase {
     function test_Mirror_QuarterSwitch_HistoricalFallback() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
-        _admit(a);
-        _admit(b);
+        _admit(a, a);
+        _admit(b, b);
 
         vm.roll(_qEnd(0) + 1);
         _postAs(a, 0, _fpv(100e18));
@@ -217,8 +217,8 @@ contract SRAggregateMirrorTest is SRATestBase {
     function test_Mirror_SubmitShares_Lagging_ReadsPrevSlot() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
-        _admit(a);
-        _admit(b);
+        _admit(a, a);
+        _admit(b, b);
 
         vm.roll(_qEnd(0) + 1);
         _postAs(a, 0, _fpv(100e18));
@@ -266,8 +266,8 @@ contract SRAggregateMirrorTest is SRATestBase {
     function test_Mirror_CorrectVolume_FirstWrite_Advances() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
-        _admit(a);
-        _admit(b);
+        _admit(a, a);
+        _admit(b, b);
 
         vm.roll(_qEnd(0) + 1);
         _postAs(a, 0, _fpv(100e18));
@@ -293,8 +293,8 @@ contract SRAggregateMirrorTest is SRATestBase {
     function test_Mirror_CorrectVolume_Advance_NoLeak() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
-        _admit(a);
-        _admit(b);
+        _admit(a, a);
+        _admit(b, b);
 
         vm.roll(_qEnd(0) + 1);
         _postAs(a, 0, _fpv(100e18));
@@ -311,17 +311,18 @@ contract SRAggregateMirrorTest is SRATestBase {
         assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(1)), 350e18); // 50 + 300, no leak from q0
     }
 
-    /// Spec §3.2 timing guard: RemoveOrchestrator reverts while a bound quarter awaits its
+    /// Spec §3.2 timing guard: RemoveOrchestrator reverts while an ended quarter awaits its
     /// share map — from the end of a quarter until that quarter's SubmitShares has run. A lag-window
-    /// remove (q0 bound, map not submitted) must revert PendingShares(0); after submitShares(0)
-    /// clears the pending quarter the same removal succeeds. This also guarantees the submitted map
-    /// is always consistent with the quarter counter (no removal binds between close-of-posting and
-    /// SubmitShares).
+    /// remove (q0 bound, map not submitted, time already into q1) must revert PendingShares(1) —
+    /// the guard keys on the ended quarter, so q1 itself is pending until submitted; after
+    /// submitShares(0) clears the lag the same removal succeeds. This also guarantees the submitted
+    /// map is always consistent with the quarter counter (no removal binds between close-of-posting
+    /// and SubmitShares).
     function test_Mirror_Remove_PendingShares_Reverts() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
-        _admit(a);
-        _admit(b);
+        _admit(a, a);
+        _admit(b, b);
 
         vm.roll(_qEnd(0) + 1);
         _postAs(a, 0, _fpv(100e18));
@@ -356,8 +357,8 @@ contract SRAggregateMirrorTest is SRATestBase {
     function test_Remove_PendingShares_GapWindow() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
-        _admit(a);
-        _admit(b);
+        _admit(a, a);
+        _admit(b, b);
 
         vm.roll(_qEnd(0) + 1); // Q0 posting window
         _postAs(a, 0, _fpv(100e18));
@@ -368,7 +369,7 @@ contract SRAggregateMirrorTest is SRATestBase {
         // (E(1)+701; the 100-epoch hold keeps the executing removal at E(1)+801 < E(2)).
         vm.roll(_qVerifyEnd(1) + 1);
 
-        // Time-derived latest bound = 1 (unsubmitted) -> the execution call reverts.
+        // Time-derived latest bound = 1 (unsubmitted) -> the second vote (body execution) reverts.
         vm.prank(owner1);
         sra.remove(b); // vote 1 (approve)
         vm.prank(owner2);
@@ -395,8 +396,8 @@ contract SRAggregateMirrorTest is SRATestBase {
     function test_Mirror_SubmitShares_FutureBoundQuarter_NoOp() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
-        _admit(a);
-        _admit(b);
+        _admit(a, a);
+        _admit(b, b);
 
         // q0: both post (activeQ=0, fpv slot)
         vm.roll(_qEnd(0) + 1);
@@ -424,14 +425,16 @@ contract SRAggregateMirrorTest is SRATestBase {
         assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(2)), 0, "q2 has no contributions");
     }
 
-    /// An orchestrator removed before the close of the posting period is excluded —
-    /// its FilecoinPayVolume does not enter AggregatedFilecoinPayVolume(Q) (spec §2.2). With activeQ still in its posting
-    /// window the removal deducts the contribution from the aggregate (read once the quarter binds).
-    function test_Mirror_Remove_InPostingWindow_DeductsAggregate() public {
+    /// spec §3.2: the posting window itself reverts — from the end of a quarter until its
+    /// SubmitShares has run (posting period included), RemoveOrchestrator is not callable. The
+    /// pre-E+POST exclusion (spec §2.2) is unreachable in-window by design: governance defers the
+    /// removal until the quarter is submitted, and the exclusion then follows from the removed
+    /// orchestrator leaving the admitted list.
+    function test_Mirror_Remove_InPostingWindow_Reverts() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
-        _admit(a);
-        _admit(b);
+        _admit(a, a);
+        _admit(b, b);
 
         vm.roll(_qEnd(0) + 1); // Q0 posting window
         _postAs(a, 0, _fpv(100e18));
@@ -451,8 +454,8 @@ contract SRAggregateMirrorTest is SRATestBase {
     function test_Mirror_Remove_AfterBinding_KeepsSnapshot() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
-        _admit(a);
-        _admit(b);
+        _admit(a, a);
+        _admit(b, b);
 
         vm.roll(_qEnd(0) + 1); // Q0 posting window
         _postAs(a, 0, _fpv(100e18));
@@ -470,14 +473,16 @@ contract SRAggregateMirrorTest is SRATestBase {
         assertEq(shares.length, 2, "submitted map stands (removal does not rewrite a submitted map)");
     }
 
-    /// A removal in the verification window (E+POST passed, not yet bound) must exclude
-    /// the orchestrator from BOTH the share map (it leaves the admitted list, which submitShares
-    /// collects) and the aggregate — otherwise aggregatedFilecoinPayVolume(0) = 300 != map sum 100.
-    function test_Mirror_Remove_InVerificationWindow_Excludes() public {
+    /// spec §3.2: the verification window also reverts — removal is deferred to after SubmitShares,
+    /// so a misreport surfacing during verification cannot be silenced by removing the orchestrator
+    /// (spec Security Considerations: a misreport surfaces during posting or verification, when
+    /// removal is not yet callable). The old in-window exclusion semantics (deduct aggregate +
+    /// omit map) are unreachable by design.
+    function test_Mirror_Remove_InVerificationWindow_Reverts() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
-        _admit(a);
-        _admit(b);
+        _admit(a, a);
+        _admit(b, b);
 
         vm.roll(_qEnd(0) + 1); // Q0 posting window
         _postAs(a, 0, _fpv(100e18));
@@ -504,8 +509,8 @@ contract SRAggregateMirrorTest is SRATestBase {
     function test_GapQuarter_SubmitShares_NoOp() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
-        _admit(a);
-        _admit(b);
+        _admit(a, a);
+        _admit(b, b);
 
         vm.roll(_qEnd(0) + 1); // Q0 posting window
         _postAs(a, 0, _fpv(100e18));

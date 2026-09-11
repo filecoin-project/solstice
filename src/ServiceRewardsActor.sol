@@ -287,14 +287,14 @@ contract ServiceRewardsActor is UnanimousGovernance {
     }
 
     // ------------------------------------------------------------------------
-    // Governance operations (dual Safe + SRA_CANCEL_HOLD, unanimous path)
+    // Governance operations (dual Safe, unanimous path; no-hold on signature-finalized methods)
     // ------------------------------------------------------------------------
 
     /// @notice Admits an orchestrator; rejects when admitted total >= 64 (D2).
     /// @dev Re-admit of a previously removed/replaced address allocates a fresh id — a fresh identity with no
-    ///      bindings, FilecoinPayVolume, or freeze history. Because ids are never reused and the address mapping (activeIdOf)
-    ///      is cleared on remove/replace, there is no residual alias-chain or frozen state to clean up.
-    function admit(address orch) external unanimous(keccak256(msg.data), SRA_CANCEL_HOLD) {
+    ///      bindings, FilecoinPayVolume, or history. Because ids are never reused and the address mapping (activeIdOf)
+    ///      is cleared on remove/replace, there is no residual alias-chain or state to clean up.
+    function addOrchestrator(address orch, address wallet) external unanimousNoHold(keccak256(msg.data)) {
         SraStorage.SraStorageRegistry storage r = SraStorage.registry();
         require(r.activeIdOf[orch] == 0, AlreadyAdmitted(orch));
         require(r.admittedIds.length < MAX_ORCHESTRATORS, AtCapacity());
@@ -306,7 +306,7 @@ contract ServiceRewardsActor is UnanimousGovernance {
         o.admittedIndex = uint64(r.admittedIds.length);
         r.activeIdOf[orch] = id;
         r.admittedIds.push(id);
-        emit OrchestratorAdmitted(orch);
+        emit OrchestratorAdmitted(orch, wallet);
     }
 
     /// @notice Permanent removal; releases all bindings (pairs return to unclaimed) (spec §4.2).
@@ -408,9 +408,12 @@ contract ServiceRewardsActor is UnanimousGovernance {
     }
 
     /// @notice Disputed pair reassignment; volume is credited to the new orchestrator from the change epoch onward (spec §4.2).
-    function reassignBinding(address payer, address operator, address orch)
+    /// @dev inherit is carried in the event so every off-chain verifier applies the same application scope
+    ///      (inherit = false for a client-orchestrator change, inherit = true for a wrongful-claim adjudication);
+    ///      the contract records the binding, not the scope — the application epoch is off-chain semantics.
+    function reassignBinding(address payer, address operator, address orch, bool inherit)
         external
-        unanimous(keccak256(msg.data), SRA_CANCEL_HOLD)
+        unanimousNoHold(keccak256(msg.data))
     {
         uint64 id = _requireAdmittedId(orch);
         SraStorage.registry().bindings[_pairId(payer, operator)] = id;
@@ -422,6 +425,7 @@ contract ServiceRewardsActor is UnanimousGovernance {
     function replaceOwner(address prevOwner, address newOwner) external unanimousNoHold(keccak256(msg.data)) {
         prevOwner.removeOwner();
         newOwner.addOwner();
+        emit OwnersReplaced(prevOwner, newOwner);
     }
 
     /// @notice Updates the stablecoin + Filecoin Pay allowlists (exclusive update, spec §4.2).
