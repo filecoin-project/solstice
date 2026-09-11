@@ -35,7 +35,6 @@ contract SRATestBase is MockRewardTest {
     uint64 internal constant EPOCHS_PER_QUARTER = 1000;
     uint64 internal constant POST_PERIOD = 300;
     uint64 internal constant VERIFICATION_WINDOW = 400;
-    uint64 internal constant SRA_CANCEL_HOLD = 100;
     uint64 internal constant ACTIVATION_EPOCH = 100_000;
     uint256 internal constant MIN_LOT = 100; // 100 USD (lot face value; authoritative for the off-chain indexer, FIPs#1275)
     uint256 internal constant PRICE_BAND = 2000; // 20% (basis points), test threshold
@@ -50,7 +49,6 @@ contract SRATestBase is MockRewardTest {
             Epoch.wrap(EPOCHS_PER_QUARTER),
             Epoch.wrap(POST_PERIOD),
             Epoch.wrap(VERIFICATION_WINDOW),
-            Epoch.wrap(SRA_CANCEL_HOLD),
             Epoch.wrap(ACTIVATION_EPOCH),
             MIN_LOT,
             PRICE_BAND

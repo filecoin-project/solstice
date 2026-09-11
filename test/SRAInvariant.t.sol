@@ -16,8 +16,8 @@ pragma solidity ^0.8.36;
 //
 // Handler design:
 //   - inherits SRATestBase (auto-deploys SRA + Safe owners + service stream 2)
-//   - 13 random operations (fuzzer targets): admit/remove/freeze/unfreeze/replace/
-//     reassignBinding/registerPairs/postVolume/correctVolume/
+//   - 12 random operations (fuzzer targets): admit/remove/replace/
+//     reassignBinding/registerPairs/cancelBinding/postVolume/correctVolume/
 //     submitShares/parkAdmit/completeParked/rollForward
 //     (finalizeConversion removed by FIPs#1275)
 //   - time model: governance operations internally roll(block.number + SRA_CANCEL_HOLD) to complete the three phases;
@@ -189,6 +189,27 @@ contract SRAInvariantHandler is SRATestBase {
         sra.reassignBinding(payer, operator, orch, false); // second vote executes (unanimousNoHold)
         _setBound(payer, operator, orch);
         _recordExecuted(taskId);
+    }
+
+    /// @notice Orchestrator-self release of a binding: the bound orchestrator drops a pair it holds —
+    ///         the pair returns to unclaimed and claimable again (spec §4.2). Not a governance task:
+    ///         nothing is recorded in _taskState/_executedTasks (I3 bookkeeping stays untouched).
+    function cancelBinding(uint256 pairIdx) external {
+        (address payer, address operator) = _pickPair(pairIdx);
+        bytes32 pairId = keccak256(abi.encode(payer, operator));
+        uint256 idx = _pairIdx[pairId];
+        if (idx == 0) return; // never bound -> contract reverts PairNotBound; skip
+        PairRecord storage p = _pairs[idx - 1];
+        if (!_admitted[p.boundOrch]) return; // binder removed -> already unclaimed, cancel reverts
+        if (_idGen[p.boundOrch] != p.gen) return; // binder's identity superseded -> same
+        // orchestrator-self: prank as the bound orchestrator (its current identity) — the guard's
+        // caller term passes because _admitted + current gen mirror the contract's activeIdOf.
+        vm.prank(p.boundOrch);
+        sra.cancelBinding(payer, operator);
+        // Sync the handler bookkeeping: binding released, pair unclaimed again — a later
+        // registerPairs by any other orchestrator re-binds it (I2 stays consistent).
+        p.boundOrch = address(0);
+        p.gen = 0;
     }
 
     /// @notice An orchestrator declares binding pairs itself (no governance).
@@ -493,17 +514,16 @@ contract SRAInvariantTest is Test {
         bytes4[] memory selectors = new bytes4[](13);
         selectors[0] = SRAInvariantHandler.admit.selector;
         selectors[1] = SRAInvariantHandler.remove.selector;
-        selectors[2] = SRAInvariantHandler.freeze.selector;
-        selectors[3] = SRAInvariantHandler.unfreeze.selector;
-        selectors[4] = SRAInvariantHandler.replace.selector;
-        selectors[5] = SRAInvariantHandler.reassignBinding.selector;
-        selectors[6] = SRAInvariantHandler.registerPairs.selector;
-        selectors[7] = SRAInvariantHandler.postVolume.selector;
-        selectors[8] = SRAInvariantHandler.correctVolume.selector;
-        selectors[9] = SRAInvariantHandler.submitShares.selector;
-        selectors[10] = SRAInvariantHandler.parkAdmit.selector;
-        selectors[11] = SRAInvariantHandler.completeParked.selector;
-        selectors[12] = SRAInvariantHandler.rollForward.selector;
+        selectors[2] = SRAInvariantHandler.replace.selector;
+        selectors[3] = SRAInvariantHandler.reassignBinding.selector;
+        selectors[4] = SRAInvariantHandler.registerPairs.selector;
+        selectors[5] = SRAInvariantHandler.cancelBinding.selector;
+        selectors[6] = SRAInvariantHandler.postVolume.selector;
+        selectors[7] = SRAInvariantHandler.correctVolume.selector;
+        selectors[8] = SRAInvariantHandler.submitShares.selector;
+        selectors[9] = SRAInvariantHandler.parkAdmit.selector;
+        selectors[10] = SRAInvariantHandler.completeParked.selector;
+        selectors[11] = SRAInvariantHandler.rollForward.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     }
 
