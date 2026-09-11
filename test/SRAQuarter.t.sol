@@ -267,7 +267,7 @@ contract SRAQuarterTest is SRATestBase {
     /// G1: governance updates the params minLot/priceBand; getPricingParams returns the new values.
     function test_SetPricingParams_UpdatesParams_GetReturns() public {
         vm.prank(owner1);
-        sra.setPricingParams(2e18, 1500);
+        sra.setPricingParams(2e18, 1, 400, 1500, 20160);
         vm.prank(owner2);
         sra.setPricingParams(2e18, 1500);
         vm.roll(block.number + SRA_CANCEL_HOLD);
@@ -283,17 +283,17 @@ contract SRAQuarterTest is SRATestBase {
         address stranger = makeAddr("stranger");
         vm.prank(stranger);
         vm.expectRevert();
-        sra.setPricingParams(2e18, 1500);
+        sra.setPricingParams(2e18, 1, 400, 1500, 20160);
     }
 
     /// G1: invalid params (priceBand > 10000) -> InvalidParameter at the third body execution.
     function test_SetPricingParams_InvalidParams_Reverts() public {
         // band > BASIS_POINTS(10000) is invalid
         vm.prank(owner1);
-        sra.setPricingParams(MIN_LOT, 10001);
+        sra.setPricingParams(2e18, 1, 400, 10001, 20160);
         vm.prank(owner2);
         vm.expectRevert();
-        sra.setPricingParams(MIN_LOT, 10001);
+        sra.setPricingParams(2e18, 1, 400, 10001, 20160);
     }
 
     // ------------------------------------------------------------------------
