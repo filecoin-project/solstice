@@ -17,8 +17,7 @@ import {
     REMOVE_STREAM,
     SET_DISTRIBUTION,
     CANCEL_PENDING,
-    CLAIM,
-    SWA_TIMELOCK
+    CLAIM
 } from "../../src/lib/FVMRewardMethod.sol";
 import {WeightRecord, DistributionKind, Share, PendingOp} from "../../src/lib/FVMRewardTypes.sol";
 import {Epoch} from "../../src/lib/Epoch.sol";
@@ -41,6 +40,8 @@ uint64 constant FIRST_EXPORTED_METHOD_NUMBER = 1 << 24;
 /// @dev Same value as WAD, typed uint256, so summing shares needs no signed-to-unsigned cast.
 uint256 constant SHARE_TOTAL = 1e18;
 
+uint64 constant MAINNET_TIMELOCK = 20160;
+
 struct LedgerRow {
     address wallet;
     uint256 amount;
@@ -62,6 +63,7 @@ struct Stream {
     DistributionKind kind;
     address writer;
     Share[] shares;
+    uint256 strippedBurn; // f099 share total stripped from the last SetShares (f099 rows are not stored)
     uint256 accrued;
     Ledger payableLedger;
     Ledger claimedPeriod;
@@ -200,7 +202,7 @@ contract FVMRewardActor {
 
     /// @notice Test helper: sets the defaults an inline initializer would give this contract; call once, right after etching.
     function mockInit() external {
-        swaTimelockEpochs = SWA_TIMELOCK;
+        swaTimelockEpochs = MAINNET_TIMELOCK;
         nextTransitionEpoch = type(uint64).max;
     }
 
@@ -257,6 +259,11 @@ contract FVMRewardActor {
     /// @notice Test helper: an EXPLICIT stream's wallet-to-share map.
     function getShares(uint64 streamId) external view returns (Share[] memory) {
         return _streams[streamId].shares;
+    }
+
+    /// @notice Test helper: the f099 share total stripped from the last SetShares
+    function strippedBurnOf(uint64 streamId) external view returns (uint256) {
+        return _streams[streamId].strippedBurn;
     }
 
     /// @notice Test helper: read back a live stream's payable ledger directly.
@@ -397,7 +404,14 @@ contract FVMRewardActor {
         // rejects naming the old address as the new one.
         if (!burning && _shareIndex(s, newAddr) != type(uint256).max) return (USR_ILLEGAL_ARGUMENT, 0, "");
 
+        // f02 accounts a burn rename as a stripped f099 row even though the row leaves storage, so
+        // the stream's stripped total must track the map's cumulative deficit against 1e18: carry the
+        // prior burn and fold in the dropped share (SetShares with an explicit f099 row lands on the
+        // same state — the twin test asserts the two are indistinguishable). A plain rename keeps it.
+        uint256 burnShare = burning ? _shareOf(s, oldAddr) : 0;
+        uint256 carriedBurn = s.strippedBurn;
         if (!_installShares(s, _sharesWithRowReplaced(s, oldAddr, newAddr))) return (USR_ILLEGAL_ARGUMENT, 0, "");
+        s.strippedBurn = carriedBurn + burnShare;
         return (0, 0, "");
     }
 
@@ -1360,10 +1374,14 @@ contract FVMRewardActor {
 
     /// @dev admit_shares: strip the burn sentinel rows, then store what is left in recipient
     /// order. f02 sorts resolved ID addresses numerically; here the masked ID address carries the
-    /// same order in its low bits, so the address itself is the key.
-    function _admitShares(Share[] storage target, Share[] memory shares) internal {
+    /// same order in its low bits, so the address itself is the key. Returns the stripped f099
+    /// total so the caller can record it.
+    function _admitShares(Share[] storage target, Share[] memory shares) internal returns (uint256 stripped) {
         for (uint256 i = 0; i < shares.length; i++) {
-            if (shares[i].wallet == BURN_ADDRESS) continue;
+            if (shares[i].wallet == BURN_ADDRESS) {
+                stripped += FixedU18.unwrap(shares[i].share);
+                continue;
+            }
             target.push(shares[i]);
             for (uint256 j = target.length - 1; j > 0; j--) {
                 if (uint160(target[j - 1].wallet) <= uint160(target[j].wallet)) break;
@@ -1382,7 +1400,7 @@ contract FVMRewardActor {
         if (_reservedPayableRows(s, shares) > MAX_PAYABLE_ROWS_PER_STREAM) return false;
         _foldAndBurnResidue(s);
         delete s.shares;
-        _admitShares(s.shares, shares);
+        s.strippedBurn = _admitShares(s.shares, shares);
         return true;
     }
 
