@@ -223,7 +223,7 @@ contract FVMRewardActorTest is MockRewardTest {
     }
 
     function test_SwaTimelockEpochs_DefaultsToConstant() public view {
-        assertEq(rewardActor().swaTimelockEpochs(), Epoch.unwrap(MAINNET_TIMELOCK));
+        assertTrue(rewardActor().swaTimelockEpochs() == MAINNET_TIMELOCK);
     }
 
     function test_MockSwaTimelockEpochs_Overrides() public {

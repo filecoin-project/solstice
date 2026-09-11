@@ -19,7 +19,7 @@ import {
     CLAIM
 } from "../../src/lib/FVMRewardMethod.sol";
 import {WeightRecord, DistributionKind, Share, PendingOp, WeightRecordUpdate} from "../../src/lib/FVMRewardTypes.sol";
-import {Epoch} from "../../src/lib/Epoch.sol";
+import {Epoch, currentEpoch} from "../../src/lib/Epoch.sol";
 import {FixedU18} from "../../src/lib/FixedU18.sol";
 
 /// @dev Weights, and per-orchestrator shares, are WAD-scaled: 1e18 == 1.0 == 100%.
@@ -129,7 +129,7 @@ struct MockState {
     uint256 totalBurnMinted;
     uint256 totalServiceMinted;
     uint64 nextTransitionEpoch;
-    uint64 swaTimelockEpochs;
+    Epoch swaTimelockEpochs;
     StreamView[] streams;
     TombstoneView[] tombstones;
     PendingView[] pendingWrites;
@@ -152,7 +152,7 @@ contract FVMRewardActor {
     /// @notice Per-network SWA write hold, in epochs; mutable via mockSwaTimelockEpochs.
     /// @dev Left uninitialized inline (vm.etch copies bytecode, not storage -- an inline
     /// initializer would never apply); mockInit() sets it after etching.
-    uint64 public swaTimelockEpochs;
+    Epoch public swaTimelockEpochs;
 
     /// @notice Test helper flag: when set, SetShares returns USR_FORBIDDEN unconditionally.
     /// @dev A1 failure-injection switch - triggers the SetSharesFailed revert on the SRA
@@ -197,7 +197,7 @@ contract FVMRewardActor {
 
     /// @notice Test helper: sets the defaults an inline initializer would give this contract; call once, right after etching.
     function mockInit() external {
-        swaTimelockEpochs = Epoch.unwrap(MAINNET_TIMELOCK);
+        swaTimelockEpochs = MAINNET_TIMELOCK;
         nextTransitionEpoch = type(uint64).max;
     }
 
@@ -207,7 +207,7 @@ contract FVMRewardActor {
     }
 
     function mockSwaTimelockEpochs(uint64 epochs) external {
-        swaTimelockEpochs = epochs;
+        swaTimelockEpochs = Epoch.wrap(epochs);
     }
 
     /// @notice Test helper: flip the SetShares failure-injection flag (A1).
@@ -344,7 +344,7 @@ contract FVMRewardActor {
         if (_pendingWeightExists[op]) return USR_ILLEGAL_ARGUMENT;
         if (ids.length == 0) return USR_ILLEGAL_ARGUMENT;
 
-        uint64 effectiveEpoch = uint64(block.number) + swaTimelockEpochs;
+        uint64 effectiveEpoch = Epoch.unwrap(currentEpoch() + swaTimelockEpochs);
         for (uint256 i = 0; i < ids.length; i++) {
             if (!_streams[ids[i]].exists) return USR_NOT_FOUND;
             if (!_sane(records[i])) return USR_ILLEGAL_ARGUMENT;
@@ -500,7 +500,7 @@ contract FVMRewardActor {
         } else if (shares.length != 0) {
             return (USR_ILLEGAL_ARGUMENT, 0, "");
         }
-        if (activationEpoch < uint64(block.number) + swaTimelockEpochs) return (USR_ILLEGAL_ARGUMENT, 0, "");
+        if (activationEpoch < Epoch.unwrap(currentEpoch() + swaTimelockEpochs)) return (USR_ILLEGAL_ARGUMENT, 0, "");
 
         NewWrite memory proposed;
         proposed.present = true;
@@ -538,14 +538,14 @@ contract FVMRewardActor {
         proposed.hasId = true;
         proposed.id = id;
         proposed.op = PendingOp.REMOVE;
-        proposed.effectiveEpoch = uint64(block.number) + swaTimelockEpochs;
+        proposed.effectiveEpoch = Epoch.unwrap(currentEpoch() + swaTimelockEpochs);
         if (!_admits(proposed)) return (USR_ILLEGAL_ARGUMENT, 0, "");
 
         _queueWrite(
             id,
             PendingOp.REMOVE,
             Pending({
-                effectiveEpoch: uint64(block.number) + swaTimelockEpochs,
+                effectiveEpoch: Epoch.unwrap(currentEpoch() + swaTimelockEpochs),
                 weightRecord: WeightRecord({vStart: 0, slope: 0, tStart: Epoch.wrap(0), floor: 0, cap: 0}),
                 distributionKind: DistributionKind.IMPLICIT,
                 writer: address(0)
@@ -573,14 +573,14 @@ contract FVMRewardActor {
         proposed.hasId = true;
         proposed.id = id;
         proposed.op = PendingOp.SET_DISTRIBUTION;
-        proposed.effectiveEpoch = uint64(block.number) + swaTimelockEpochs;
+        proposed.effectiveEpoch = Epoch.unwrap(currentEpoch() + swaTimelockEpochs);
         if (!_admits(proposed)) return (USR_ILLEGAL_ARGUMENT, 0, "");
 
         _queueWrite(
             id,
             PendingOp.SET_DISTRIBUTION,
             Pending({
-                effectiveEpoch: uint64(block.number) + swaTimelockEpochs,
+                effectiveEpoch: Epoch.unwrap(currentEpoch() + swaTimelockEpochs),
                 weightRecord: WeightRecord({vStart: 0, slope: 0, tStart: Epoch.wrap(0), floor: 0, cap: 0}),
                 distributionKind: DistributionKind.EXPLICIT,
                 writer: writer
