@@ -341,6 +341,13 @@ contract SRAInvariantHandler is SRATestBase {
         return rewardActor().getShares(SERVICE_ID);
     }
 
+    /// @dev f099 share total stripped from the last SetShares push (f02 stores no f099 rows) —
+    ///      stored + stripped == 1e18 whenever the last push was valid, including after a
+    ///      removeOrchestrator f099 push that repoints a removed id's entry to the burn address.
+    function lastStrippedBurn() external view returns (uint256) {
+        return rewardActor().strippedBurnOf(SERVICE_ID);
+    }
+
     function everSubmitted() external view returns (bool) {
         return _everSubmitted;
     }
@@ -532,12 +539,14 @@ contract SRAInvariantTest is Test {
     function invariant_SumShares_IsShareTotal() public view {
         if (!handler.everSubmitted()) return; // never successfully submitted; no shares to query
         Share[] memory shares = handler.getServiceShares();
-        if (shares.length == 0) return;
         uint256 sum;
         for (uint256 i = 0; i < shares.length; i++) {
             sum += FixedU18.unwrap(shares[i].share);
         }
-        assertEq(sum, 1e18, "I1: sum of shares must equal SHARE_TOTAL");
+        // f02 stores the map with f099 rows removed (spec §2.4.4); a removeOrchestrator f099 push
+        // repoints the removed id's entry to BURN_ADDRESS, so stored sum alone drops below 1e18.
+        // The invariant holds on the full map: stored + stripped (the f099 burn slice) == 1e18.
+        assertEq(sum + handler.lastStrippedBurn(), 1e18, "I1: sum of shares must equal SHARE_TOTAL");
     }
 
     /// I2 Binding uniqueness: every live pair's bindingOf must == the handler-recorded binder's identity

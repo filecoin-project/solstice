@@ -20,6 +20,7 @@ import {Epoch, currentEpoch} from "./lib/Epoch.sol";
 import {FixedU18, ONE, ZERO} from "./lib/FixedU18.sol";
 import {FVMRewards} from "./lib/FVMRewards.sol";
 import {SERVICE_ID, Share} from "./lib/FVMRewardTypes.sol";
+import {BURN_ADDRESS} from "fvm-solidity/FVMActors.sol";
 import {FVMActor} from "fvm-solidity/FVMActor.sol";
 import {OwnersLibrary} from "./lib/Owners.sol";
 import {UnanimousGovernance} from "./lib/UnanimousGovernance.sol";
@@ -330,6 +331,11 @@ contract ServiceRewardsActor is UnanimousGovernance {
         if (id != lastId) r.orchestrators[lastId].admittedIndex = idx;
         // dead pointer: the removed id leaves the list, its index no longer addresses a live slot
         delete o.admittedIndex;
+        // Immediate f099 repoint: the removed id's f02 row moves to BURN_ADDRESS from the moment the
+        // removal binds — its slice burns, survivors' rows stay untouched until the next SubmitShares.
+        // o.wallet is unchanged, so it still names the row's address. A no-op when the id has no f02
+        // row (never submitted, or floored to zero).
+        FVMRewards.tryReplaceAddress(SERVICE_ID, o.wallet, BURN_ADDRESS);
         emit OrchestratorRemoved(orch);
     }
 
@@ -348,13 +354,14 @@ contract ServiceRewardsActor is UnanimousGovernance {
         SraStorage.SraStorageRegistry storage r = SraStorage.registry();
         uint64 id = r.activeIdOf[oldOrch];
         require(id != 0 && r.orchestrators[id].admitted, NotAdmitted(oldOrch));
-        require(r.activeIdOf[newOrch] == 0, AlreadyAdmitted(newOrch));
-
-        r.activeIdOf[oldOrch] = 0;
-        r.activeIdOf[newOrch] = id;
-        r.orchestrators[id].wallet = newOrch;
-        // admittedIds unchanged (stores ids); bindings/fpv/freeze state all follow the id.
-        emit OrchestratorReplaced(oldOrch, newOrch);
+        _assertWalletAdmissible(newWallet, id); // zero → resolve → resolved-id uniqueness; own row exempt
+        address oldWallet = r.orchestrators[id].wallet;
+        r.orchestrators[id].wallet = newWallet;
+        // Immediate f02 wallet repoint: the id's row share stays (prospective — identity and accrued
+        // do not move), only the row's wallet changes. A no-op when the id has no row, or when
+        // newWallet resolves to oldWallet (f02 rejects an unchanged/duplicate address).
+        FVMRewards.tryReplaceAddress(SERVICE_ID, oldWallet, newWallet);
+        emit OrchestratorWalletReplaced(oldOrch, newWallet);
     }
 
     /// @notice Disputed pair reassignment; volume is credited to the new orchestrator from the change epoch onward (spec §4.2).
@@ -496,20 +503,7 @@ contract ServiceRewardsActor is UnanimousGovernance {
         // collection. The quarter counter (totalUsd) is a binding snapshot that can outlive a
         // lag-window remove, so it must not drive the largest-remainder split
         // (an oversized total underflowed the bump loop). aggregatedFilecoinPayVolume keeps the counter (O(1)).
-        FixedU18 total = ZERO;
-        for (uint256 i = 0; i < r.admittedIds.length; i++) {
-            uint64 id = r.admittedIds[i];
-            SraStorage.OrchestratorInfo storage o = r.orchestrators[id];
-            if (usePrev) {
-                if (o.prevFpv == ZERO) continue;
-                shares[count] = Share({wallet: o.wallet, share: o.prevFpv}); // current effective wallet (replace re-points it)
-            } else {
-                if (o.frozenAtPostEnd || o.fpv == ZERO) continue;
-                shares[count] = Share({wallet: o.wallet, share: o.fpv});
-            }
-            total = total + shares[count].share;
-            count++;
-        }
+        (uint256 count, FixedU18 total) = _collectSlot(slot, shares);
 
         // FIP-0118: an all-zero quarter is a benign no-op — no SplitRule, no SetShares, existing map stands.
         // It still counts as submitted (the quarter cannot be resubmitted).
@@ -519,22 +513,7 @@ contract ServiceRewardsActor is UnanimousGovernance {
         }
 
         _computeShares(shares, count, total);
-        // Trim zero-share entries: the largest-remainder method can floor a tiny usd to 0
-        // when the residue top-up round count is smaller than the number of orchestrators.
-        // Real f02 SetShares rejects share==0 entries (as does the mock), so drop them here.
-        uint256 kept = 0;
-        for (uint256 i = 0; i < shares.length; i++) {
-            if (shares[i].share > ZERO) shares[kept++] = shares[i];
-        }
-        if (kept < shares.length) {
-            assembly ("memory-safe") {
-                mstore(shares, kept)
-            }
-        }
-
-        qt.nextQuarter = q + 1; // CEI: mark before the external call
-        FVMRewards.setShares(SERVICE_ID, shares);
-        emit SharesSubmitted(q, shares.length, total); // totalUsd as FixedU18 (18-decimal USD)
+        _submitMap(qt, q, shares, count, total);
     }
 
     // ------------------------------------------------------------------------
@@ -599,6 +578,10 @@ contract ServiceRewardsActor is UnanimousGovernance {
     // ------------------------------------------------------------------------
 
     /// @dev Collects the full quarterly input of mirror slot `slot` over the *current* admitted ids
+    ///      (the same set submitShares would collect) into `shares`. Returns the collected count and
+    ///      the Σ USD; the wallet field carries each id's current effective wallet, so a prior
+    ///      replaceWallet already re-points it.
+    function _collectSlot(uint8 slot, Share[] memory shares) internal view returns (uint256 count, FixedU18 total) {
         SraStorage.SraStorageRegistry storage r = SraStorage.registry();
         for (uint256 i = 0; i < r.admittedIds.length; i++) {
             uint64 id = r.admittedIds[i];
@@ -614,6 +597,7 @@ contract ServiceRewardsActor is UnanimousGovernance {
     /// @dev Submits a computed share map (submitShares' tail): trims zero-share rows
     ///      (largest-remainder can floor a tiny usd to 0 when the residue top-up round count is
     ///      smaller than the active count; real f02 SetShares rejects share==0 entries, as does the
+    ///      mock), advances the submission line (CEI: before the external call) and pushes to f02.
     function _submitMap(
         SraStorage.SraStorageQuarter storage qt,
         uint64 q,
