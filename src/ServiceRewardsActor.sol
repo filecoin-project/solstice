@@ -106,7 +106,8 @@ contract ServiceRewardsActor is UnanimousGovernance {
     /// @param postPeriod posting window (epochs)
     /// @param verificationWindow verification window (epochs)
     /// @param activationEpoch end epoch of quarter 0 (window start)
-    /// @param minLot,priceBand initial FIL pricing parameters (governable; authoritative for the off-chain indexer, FIPs#1275)
+    /// @param upgradeHold SRA code-upgrade hold duration (epochs), fixed at deployment (spec 95eb9e0 §4.2);
+    ///        0 = no upgrade delay (legal semantics, useful in test deployments)
     constructor(
         address owner1,
         address owner2,
@@ -417,22 +418,22 @@ contract ServiceRewardsActor is UnanimousGovernance {
         emit AdmittedListsUpdated(stablecoins, filecoinPayContracts);
     }
 
-    /// @notice Updates the FIL pricing parameters MIN_LOT/PRICE_BAND.
-    ///         FIPs#1275: authoritative for the off-chain indexer's conversion, not an on-chain computation.
-    function setPricingParams(uint256 minLot, uint256 priceBand)
-        external
-        unanimous(keccak256(msg.data), SRA_CANCEL_HOLD)
-    {
-        require(priceBand <= BASIS_POINTS, InvalidParameter());
-        SraStorage.SraStorageParams storage p = SraStorage.params();
-        p.minLot = minLot;
-        p.priceBand = priceBand;
-        emit PricingParamsUpdated(minLot, priceBand);
-    }
-
-    /// @notice Either Safe calls _veto alone to discard a queued change (spec §4.2, _veto).
-    function cancelPending(bytes32 taskId) external {
-        _veto(taskId);
+    /// @notice Updates the FIL pricing parameters MIN_LOT_FLOOR / MIN_LOT_ALPHA (rational, num/den)
+    ///         / PRICE_BAND and the REGISTRATION_CUTOFF (spec 8e495ca). Stores nothing: the call's
+    ///         only effect is the parameter event; the new values apply from the next quarter boundary
+    ///         (off-chain indexer semantics, FIPs#1275). REGISTRATION_CUTOFF parameterizes the off-chain
+    ///         late-claim guard (spec §2.2) as an epoch duration and is likewise event-only.
+    /// @dev registrationCutoff == 0 disables the off-chain late-claim guard (no cutoff window);
+    ///      degenerate values are accepted — the parameter is event-only, normalization is off-chain.
+    function setPricingParams(
+        uint256 minLotFloor,
+        uint256 minLotAlphaNum,
+        uint256 minLotAlphaDen,
+        uint256 priceBand,
+        uint256 registrationCutoff
+    ) external unanimousNoHold(keccak256(msg.data)) {
+        require(minLotAlphaDen != 0 && priceBand <= BASIS_POINTS, InvalidParameter());
+        emit PricingParamsUpdated(minLotFloor, minLotAlphaNum, minLotAlphaDen, priceBand, registrationCutoff);
     }
 
     // ------------------------------------------------------------------------
