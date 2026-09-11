@@ -37,7 +37,7 @@ contract ServiceRewardsActor is UnanimousGovernance {
 
     uint256 private constant BASIS_POINTS = 10_000;
 
-    /// @dev D2: admitted orchestrator cap (incl. frozen), matching f02 MAX_RECIPIENTS.
+    /// @dev Admitted orchestrator cap, matching f02 MAX_RECIPIENTS.
     uint256 private constant MAX_ORCHESTRATORS = 64;
     uint256 private constant MAX_PAIRS = 64;
     uint256 private constant MAX_ALLOWLIST = 64;
@@ -292,7 +292,9 @@ contract ServiceRewardsActor is UnanimousGovernance {
     // Governance operations (dual Safe, unanimous path; no-hold on signature-finalized methods)
     // ------------------------------------------------------------------------
 
-    /// @notice Admits an orchestrator; rejects when admitted total >= 64 (D2).
+    /// @notice Admits an orchestrator with its payout wallet; rejects when admitted total >= 64.
+    /// @dev The payout wallet must be non-zero and resolve to an existing actor's id, and its
+    ///      resolved id must not duplicate any other admitted row's (FIP §2.4.4).
     /// @dev Re-admit of a previously removed/replaced address allocates a fresh id — a fresh identity with no
     ///      bindings, FilecoinPayVolume, or history. Because ids are never reused and the address mapping (activeIdOf)
     ///      is cleared on remove/replace, there is no residual alias-chain or state to clean up.

@@ -362,51 +362,11 @@ contract SRASharesTest is SRATestBase {
     }
 
     // ------------------------------------------------------------------------
-    // re-admit after replace must not leak shares to the frozen successor
+    // id-keyed identity: replaceWallet = O(1) payout-wallet re-point (spec §3.2: identity does not move)
     // ------------------------------------------------------------------------
 
-    /// Re-admit allocates a fresh identity (clears successor/frozen/freeze history), so a
-    /// re-admitted old address cannot route shares to the frozen successor.
-    function test_ReAdmit_AfterReplace_FrozenSuccessor_NoShares() public {
-        address oldOrch = makeAddr("readmit-old");
-        address newOrch = makeAddr("readmit-new");
-        _admit(oldOrch);
-
-        // replace(old→new): old invalidated, identity and bindings transfer to new
-        vm.prank(owner1);
-        sra.replace(oldOrch, newOrch);
-        vm.prank(owner2);
-        sra.replace(oldOrch, newOrch);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        sra.replace(oldOrch, newOrch);
-
-        // freeze(new): new is frozen at q=0's POST instant (freeze takes effect before 100300)
-        _freeze(newOrch);
-
-        // re-admit old: fresh identity (clears successor/frozen/freeze history)
-        _admit(oldOrch);
-
-        // give old this quarter's FilecoinPayVolume within the verification window
-        vm.roll(_qPostEnd(0) + 1);
-        _correctVolume(oldOrch, 0, _fpv(100e18));
-
-        _rollTo(_qVerifyEnd(0) + 1);
-        sra.submitShares(0);
-
-        Share[] memory shares = rewardActor().getShares(SERVICE_ID);
-        // the frozen-at-POST new must not appear in the share map
-        assertEq(_walletShare(shares, newOrch), 0, "frozen successor must not receive shares");
-        // old is not frozen and posted -> gets its entire share (the only non-excluded poster)
-        assertEq(_walletShare(shares, oldOrch), 1e18, "re-admitted old orchestrator keeps its shares");
-        assertEq(_sumShares(shares), 1e18);
-    }
-
-    // ------------------------------------------------------------------------
-    // id-keyed identity: replace = O(1) wallet re-point (behavioral lock)
-    // ------------------------------------------------------------------------
-
-    /// id-keyed identity: replace re-points the wallet — historical quarter FilecoinPayVolume
-    /// follows the identity by construction (the id keeps its contributions across the re-point).
+    /// id-keyed identity: replaceWallet re-points the payout wallet only — the identity (id) does not
+    /// move, so historical quarter FilecoinPayVolume stays aggregated under the same orchestrator.
     function test_Replace_HistoricalQuarterFilecoinPayVolume_Kept() public {
         address oldOrch = makeAddr("hist-old");
         address newOrch = makeAddr("hist-new");
@@ -427,7 +387,9 @@ contract SRASharesTest is SRATestBase {
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
         assertEq(shares.length, 1);
         assertEq(
-            _walletShare(shares, newOrch), 1e18, "historical FilecoinPayVolume follows the identity to the new wallet"
+            _walletShare(shares, newWallet),
+            1e18,
+            "historical FilecoinPayVolume stays with the identity; the share map pays the new wallet"
         );
         assertEq(_sumShares(shares), 1e18);
 
@@ -435,7 +397,7 @@ contract SRASharesTest is SRATestBase {
         assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(0)), 100e18);
     }
 
-    /// The share map is always written to the *current* wallet — after replace, newOrch receives the shares and
+    /// The share map is always written to the *current* wallet — after replace, newWallet receives the shares and
     /// the replaced address receives nothing.
     function test_Replace_ShareMap_WritesNewWallet() public {
         address oldOrch = makeAddr("wallet-old");
@@ -455,14 +417,15 @@ contract SRASharesTest is SRATestBase {
         _rollTo(_qVerifyEnd(0) + 1);
         sra.submitShares(0);
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
-        assertEq(_walletShare(shares, newOrch), 5e17, "share map wallet = the current (replaced-to) wallet");
+        assertEq(_walletShare(shares, newWallet), 5e17, "share map wallet = the current (replaced-to) wallet");
         assertEq(_walletShare(shares, oldOrch), 0, "the replaced address receives nothing");
         assertEq(_sumShares(shares), 1e18);
     }
 
-    /// After replace, governance correctVolume must address the *new* wallet — the id-keyed model routes it to
-    /// the same identity, so a verification-window correction of the historical quarter hits the right FilecoinPayVolume record.
-    function test_Replace_CorrectVolume_NewAddress_CorrectsHistoricalQuarter() public {
+    /// After replaceWallet, correctVolume still addresses the *unchanged* identity (spec §3.2: the
+    /// orchestrator identity does not move) — a verification-window correction of the historical
+    /// quarter hits the right FilecoinPayVolume record.
+    function test_ReplaceWallet_CorrectVolume_IdentityUnchanged_CorrectsHistoricalQuarter() public {
         address oldOrch = makeAddr("cv-old");
         address newOrch = makeAddr("cv-new");
         _admit(oldOrch);
@@ -476,13 +439,13 @@ contract SRASharesTest is SRATestBase {
         vm.prank(owner2);
         sra.replaceWallet(oldOrch, newWallet); // second vote executes (unanimousNoHold)
 
-        _correctVolume(newOrch, 0, 200e18); // correction via the new wallet hits the same identity
+        _correctVolume(oldOrch, 0, 200e18); // correction via the identity (which did not move)
 
         _rollTo(_qVerifyEnd(0) + 1);
         sra.submitShares(0);
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
         assertEq(shares.length, 1);
-        assertEq(_walletShare(shares, newOrch), 1e18);
+        assertEq(_walletShare(shares, newWallet), 1e18);
         // the corrected value (200), not the original post (100), is aggregated
         assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(0)), 200e18);
     }
@@ -493,4 +456,5 @@ contract SRASharesTest is SRATestBase {
         address newWallet = _wallet("swap-new");
         sra.replaceWallet(oldOrch, newWallet);
         sra.replaceWallet(oldOrch, newWallet);
+        assertEq(_walletShare(afterMap, newWallet), oldShare, "share moved to the new wallet at the same value");
 }

@@ -190,11 +190,13 @@ contract SRAInvariantHandler is SRATestBase {
     ///         frozen state and freeze history follow the id, now reachable via newOrch.
     function replace(uint256 oldIdx, uint256 newIdx) external {
         address oldOrch = _pickOrch(oldIdx);
-        address newOrch = _pickOrch(newIdx);
-        if (oldOrch == newOrch) return;
-        if (!sra.isAdmitted(oldOrch) || sra.isAdmitted(newOrch)) return;
-        if (_parkedTarget[newOrch]) return; // must not preempt a parked governance target (I3)
-        bytes32 taskId = _taskId(sra.replace.selector, abi.encode(oldOrch, newOrch));
+        address newWallet = _pickOrch(newIdx);
+        if (oldOrch == newWallet) return;
+        // newWallet must not be an admitted orchestrator: in this handler every admitted wallet is the
+        // identity itself (_admit(x, x)), so a duplicate would revert DuplicateWallet (D7).
+        if (!sra.isAdmitted(oldOrch) || sra.isAdmitted(newWallet)) return;
+        if (_parkedTarget[newWallet]) return; // must not preempt a parked governance target (I3)
+        bytes32 taskId = _taskId(sra.replaceWallet.selector, abi.encode(oldOrch, newWallet));
         vm.prank(owner1);
         sra.replaceWallet(oldOrch, newWallet);
         vm.prank(owner2);
@@ -418,6 +420,11 @@ contract SRAInvariantHandler is SRATestBase {
         return (_pairs[i].payer, _pairs[i].operator, _pairs[i].boundOrch);
     }
 
+        PairRecord storage p = _pairs[i];
+        if (!_admitted[p.boundOrch]) return address(0);
+        if (_idGen[p.boundOrch] != p.gen) return address(0);
+    }
+
     function parkedCount() external view returns (uint256) {
         return _parkedTasks.length;
     }
@@ -572,7 +579,7 @@ contract SRAInvariantTest is Test {
             (address payer, address operator, address boundOrch) = handler.pairRecordAt(i);
             assertEq(
                 handler.sraInstance().bindingOf(payer, operator),
-                boundOrch,
+                expected,
                 "I2: bindingOf must match handler-recorded binder"
             );
         }

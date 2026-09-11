@@ -186,14 +186,14 @@ contract SRARegistryTest is SRATestBase {
     /// replace transfers the operator identity (the new address gains admission and bindings; the old address becomes invalid).
     function test_Replace_TransfersIdentity() public {
         address oldOrch = makeAddr("oldOrch");
-        address newOrch = makeAddr("newOrch");
-        _admit(oldOrch);
+        address newWallet = _wallet("newWallet");
+        _admit(oldOrch, oldOrch);
 
         Binding[] memory pairs = new Binding[](1);
         pairs[0] = _pair(makeAddr("payer"), makeAddr("operator"));
         _registerPairsAs(oldOrch, pairs);
 
-        // governance replace(old, new): two votes + hold
+        // governance replaceWallet(old, new): two votes; second executes (unanimousNoHold)
         vm.prank(owner1);
         sra.replaceWallet(oldOrch, newWallet);
         vm.expectEmit(true, true, false, true, address(sra));
@@ -208,10 +208,10 @@ contract SRARegistryTest is SRATestBase {
     }
 
     /// After replace, a third party cannot grab the binding pair — registerPairs's AlreadyBound
-    /// check resolves along the replace chain to the current valid orchestrator.
+    /// check resolves along the identity to the current wallet.
     function test_RegisterPairs_AfterReplace_ThirdPartyReverts() public {
         address orchA = makeAddr("orchA");
-        address orchB = makeAddr("orchB"); // fresh address: replace target must be unadmitted (auto-admitted on identity transfer)
+        address orchB = _wallet("orchB"); // fresh address: the new payout wallet (identity stays at orchA)
         address orchC = makeAddr("orchC");
         _admit(orchA, orchA);
         _admit(orchC, orchC); // a third party must be admitted to reach the AlreadyBound check (registerPairs gating)
@@ -221,7 +221,7 @@ contract SRARegistryTest is SRATestBase {
         _registerPairsAs(orchA, pairs);
         assertEq(sra.bindingOf(makeAddr("payer"), makeAddr("operator")), orchA);
 
-        // governance replace(orchA -> orchB): two votes + hold elapsed + third permissionless execution
+        // governance replaceWallet(orchA -> orchB): two votes; second executes (unanimousNoHold)
         vm.prank(owner1);
         sra.replaceWallet(orchA, orchB);
         vm.prank(owner2);
@@ -269,17 +269,17 @@ contract SRARegistryTest is SRATestBase {
     /// (The replace tests cover the target-unadmitted + binding-transfer path; this test covers the "target already admitted" reverse branch)
     function test_Replace_AlreadyAdmittedTarget_Reverts() public {
         address oldOrch = makeAddr("oldOrch");
-        address newOrch = makeAddr("newOrch");
-        _admit(oldOrch);
-        _admit(newOrch); // target already admitted -> replace rejected
+        address orchB = _wallet("orchB"); // another orchestrator's identity address
+        _admit(oldOrch, makeAddr("old-wallet")); // oldOrch's wallet is distinct
+        _admit(orchB, makeAddr("orchB-wallet")); // orchB's wallet is distinct ( != its identity address)
 
         vm.prank(owner1);
         sra.replaceWallet(oldOrch, orchB); // new wallet = orchB (another identity's address)
         vm.prank(owner2);
-        sra.replace(oldOrch, newOrch); // second vote: completes the full vote queue (wait)
-        vm.roll(block.number + SRA_CANCEL_HOLD); // hold elapsed
-        vm.expectRevert(); // AlreadyAdmitted(newOrch)
-        sra.replace(oldOrch, newOrch); // third permissionless body execution -> revert
+        sra.replaceWallet(oldOrch, orchB); // succeeds: the wallet collides with no other wallet
+
+        assertTrue(sra.isAdmitted(oldOrch), "identity does not move");
+        assertTrue(sra.isAdmitted(orchB), "orchB identity unaffected");
     }
 
     /// G6: reassignBinding target not admitted -> NotAdmitted revert at the third execution.
@@ -331,7 +331,7 @@ contract SRARegistryTest is SRATestBase {
     /// (G6 covered the "target already admitted" reverse branch; old unadmitted was uncovered — coverage line 396)
     function test_Replace_OldNotAdmitted_Reverts() public {
         address stranger = makeAddr("stranger"); // old address never admitted
-        address newOrch = makeAddr("newOrch");
+        address newWallet = makeAddr("newWallet");
 
         vm.prank(owner1);
         sra.replaceWallet(stranger, newWallet); // vote 1 (approve)
