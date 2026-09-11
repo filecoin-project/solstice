@@ -52,11 +52,13 @@ contract ServiceRewardsActor is UnanimousGovernance {
     Epoch private immutable SRA_CANCEL_HOLD;
     Epoch private immutable ACTIVATION_EPOCH;
 
-    event OrchestratorAdmitted(address indexed orchestrator);
-    event OrchestratorRemoved(address indexed orchestrator);
-    event OrchestratorFrozen(address indexed orchestrator);
-    event OrchestratorUnfrozen(address indexed orchestrator);
-    event OrchestratorReplaced(address indexed oldOrchestrator, address indexed newOrchestrator);
+    /// @notice Upgrade-hold duration in epochs, fixed at deployment (spec 95eb9e0 §4.2: the
+    ///         SRA's upgrade hold is SRA state, not a governance parameter).
+    Epoch public immutable SRA_UPGRADE_HOLD;
+
+    event OrchestratorAdmitted(address indexed orch, address wallet);
+    event OrchestratorRemoved(address indexed orch);
+    event OrchestratorWalletReplaced(address indexed oldOrch, address indexed newWallet);
     event BindingDeclared(address indexed payer, address indexed operator, address indexed orchestrator);
     event BindingReassigned(address indexed payer, address indexed operator, address indexed orchestrator);
     event AdmittedListsUpdated(address[] stablecoins, address[] filecoinPayContracts);
@@ -97,8 +99,7 @@ contract ServiceRewardsActor is UnanimousGovernance {
         Epoch verificationWindow,
         Epoch cancelHold,
         Epoch activationEpoch,
-        uint256 minLot,
-        uint256 priceBand
+        Epoch upgradeHold
     ) {
         owner1.addOwner();
         owner2.addOwner();
@@ -115,10 +116,7 @@ contract ServiceRewardsActor is UnanimousGovernance {
         VERIFICATION_WINDOW = verificationWindow;
         SRA_CANCEL_HOLD = cancelHold;
         ACTIVATION_EPOCH = activationEpoch;
-
-        SraStorage.SraStorageParams storage p = SraStorage.params();
-        p.minLot = minLot;
-        p.priceBand = priceBand;
+        SRA_UPGRADE_HOLD = upgradeHold;
 
         // id allocator starts at 1: 0 is the unregistered sentinel (activeIdOf[addr] == 0)
         SraStorage.registry().nextId = 1;
