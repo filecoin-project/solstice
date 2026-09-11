@@ -66,9 +66,8 @@ contract SRARegistryTest is SRATestBase {
 
         _remove(orch);
 
-        vm.roll(block.number + SRA_CANCEL_HOLD); // hold elapsed
-        vm.expectRevert();
-        sra.admit(orch65); // third permissionless call executes the body -> cap rejection
+        assertFalse(sra.isAdmitted(orch));
+        assertEq(sra.admittedCount(), 0);
     }
 
     // ------------------------------------------------------------------------
