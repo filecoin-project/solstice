@@ -138,7 +138,7 @@ contract StreamWeightActor is UnanimousGovernance {
             WeightRecordUpdate[] memory updates = new WeightRecordUpdate[](1);
             updates[0].id = SERVICE_ID;
             updates[0].record.floor = next;
-            updates[0].record.tStart = SRA.qEnd(quarter);
+            updates[0].record.tStart = SRA.quarterStart(quarter);
             updates[0].record.vStart = next;
             updates[0].record.cap = next;
             updates[0].record.slope = 0;

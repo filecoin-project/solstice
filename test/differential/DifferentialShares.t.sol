@@ -79,11 +79,11 @@ contract DifferentialSharesTest is SRATestBase {
         ServiceRewardsActor s = _newSra();
         address a = makeAddr("agg-single");
         _admitOn(s, a);
-        vm.roll(_qEnd(0) + 1);
+        vm.roll(_quarterStart(0) + 1);
         vm.prank(a);
         s.postVolume(0, FixedU18.wrap(350e18));
 
-        _rollTo(_qVerifyEnd(0) + 1); // post-binding
+        _rollTo(_bindingStart(0) + 1); // post-binding
         assertEq(FixedU18.unwrap(s.aggregatedFilecoinPayVolume(0)), 350e18);
     }
 
@@ -94,14 +94,14 @@ contract DifferentialSharesTest is SRATestBase {
         for (uint256 k = 0; k < 3; k++) {
             address orch = makeAddr(string.concat("agg-", vm.toString(k)));
             _admitOn(s, orch);
-            vm.roll(_qEnd(0) + 1);
+            vm.roll(_quarterStart(0) + 1);
             uint256 usd = 100e18 * (k + 1);
             vm.prank(orch);
             s.postVolume(0, FixedU18.wrap(usd));
             expected += usd;
         }
 
-        _rollTo(_qVerifyEnd(0) + 1);
+        _rollTo(_bindingStart(0) + 1);
         assertEq(FixedU18.unwrap(s.aggregatedFilecoinPayVolume(0)), expected);
     }
 

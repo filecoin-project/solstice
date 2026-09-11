@@ -39,7 +39,7 @@ contract SRAAdversarial is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_qEnd(0) + 1); // inside Q0's posting window
+        vm.roll(_quarterStart(0) + 1); // inside Q0's posting window
         vm.prank(orch);
         vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.NotInPostingWindow.selector, uint64(10)));
         sra.postVolume(10, FixedU18.wrap(_fpv(100e18)));
@@ -53,7 +53,7 @@ contract SRAAdversarial is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_qEnd(0) + 1);
+        vm.roll(_quarterStart(0) + 1);
         vm.prank(orch);
         vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.InvalidParameter.selector));
         sra.postVolume(type(uint64).max, FixedU18.wrap(_fpv(100e18)));
@@ -65,7 +65,7 @@ contract SRAAdversarial is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_qVerifyEnd(0)); // inside Q0's verification window
+        vm.roll(_postEnd(0)); // first epoch of Q0's verification window
         vm.prank(owner1);
         sra.correctVolume(orch, 10, FixedU18.wrap(_fpv(100e18)));
         vm.prank(owner2);
@@ -73,12 +73,12 @@ contract SRAAdversarial is SRATestBase {
         sra.correctVolume(orch, 10, FixedU18.wrap(_fpv(100e18)));
     }
 
-    /// q = uint64.max on correctVolume -> _qEnd range guard fires (uint64 width) -> InvalidParameter.
+    /// q = uint64.max on correctVolume -> _quarterStart range guard fires (uint64 width) -> InvalidParameter.
     function test_CorrectVolume_MaxQuarter_RangeGuard_InvalidParameter() public {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_qVerifyEnd(0));
+        vm.roll(_postEnd(0));
         vm.prank(owner1);
         sra.correctVolume(orch, type(uint64).max, FixedU18.wrap(_fpv(100e18)));
         vm.prank(owner2);
@@ -88,28 +88,28 @@ contract SRAAdversarial is SRATestBase {
 
     /// aggregatedFilecoinPayVolume on a future quarter (before its binding) -> NotBound(q).
     function test_AggregatedFilecoinPayVolume_FutureQuarter_NotBound() public {
-        vm.roll(_qVerifyEnd(0) + 1); // Q0 binding complete
+        vm.roll(_bindingStart(0) + 1); // Q0 binding complete
         vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.NotBound.selector, uint64(10)));
         sra.aggregatedFilecoinPayVolume(10);
     }
 
-    /// q = uint64.max on qEnd -> _qEnd range guard fires (uint64 width) -> InvalidParameter.
-    function test_QEnd_MaxQuarter_RangeGuard_InvalidParameter() public {
+    /// q = uint64.max on quarterStart -> _quarterStart range guard fires (uint64 width) -> InvalidParameter.
+    function test_QuarterStart_MaxQuarter_RangeGuard_InvalidParameter() public {
         vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.InvalidParameter.selector));
-        sra.qEnd(type(uint64).max);
+        sra.quarterStart(type(uint64).max);
     }
 
-    /// q = uint64.max on submitShares -> _afterBinding calls _qEnd, guard fires (uint64 width) -> InvalidParameter.
+    /// q = uint64.max on submitShares -> _afterBinding calls _quarterStart, guard fires (uint64 width) -> InvalidParameter.
     function test_SubmitShares_MaxQuarter_RangeGuard_InvalidParameter() public {
-        vm.roll(_qVerifyEnd(0) + 1);
+        vm.roll(_bindingStart(0) + 1);
         vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.InvalidParameter.selector));
         sra.submitShares(type(uint64).max);
     }
 
-    /// The _qEnd range guard itself, exercised directly: with EPOCHS_PER_QUARTER = 2^40,
+    /// The _quarterStart range guard itself, exercised directly: with EPOCHS_PER_QUARTER = 2^40,
     /// uint64.max × 2^40 ≈ 2^104 > 2^64 -> end beyond type(uint64).max -> InvalidParameter
     /// (same rejection path as the MaxQuarter probes above, but with a config-amplified q).
-    function test_QEnd_HugeQuarter_RangeGuard_InvalidParameter() public {
+    function test_QuarterStart_HugeQuarter_RangeGuard_InvalidParameter() public {
         ServiceRewardsActor big = new ServiceRewardsActor(
             owner1,
             owner2,
@@ -121,7 +121,7 @@ contract SRAAdversarial is SRATestBase {
             PRICE_BAND
         );
         vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.InvalidParameter.selector));
-        big.qEnd(type(uint64).max);
+        big.quarterStart(type(uint64).max);
     }
 
     // ------------------------------------------------------------------------
@@ -134,7 +134,7 @@ contract SRAAdversarial is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_qEnd(0) + 1);
+        vm.roll(_quarterStart(0) + 1);
         _postAs(orch, 0, _fpv(1e30));
         assertEq(FixedU18.unwrap(sra.fpvOf(0, orch).usd), 1e30);
     }
@@ -144,7 +144,7 @@ contract SRAAdversarial is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_qEnd(0) + 1);
+        vm.roll(_quarterStart(0) + 1);
         vm.prank(orch);
         vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.InvalidParameter.selector));
         sra.postVolume(0, FixedU18.wrap(_fpv(1e30 + 1)));
@@ -324,11 +324,11 @@ contract SRAAdversarial is SRATestBase {
         _admit(a, a);
         _admit(b, b);
 
-        vm.roll(_qEnd(0) + 1);
+        vm.roll(_quarterStart(0) + 1);
         _postAs(a, 0, _fpv(1e30));
         _postAs(b, 0, _fpv(1e30));
 
-        vm.roll(_qVerifyEnd(0) + 1);
+        vm.roll(_bindingStart(0) + 1);
         sra.submitShares(0);
 
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
@@ -401,7 +401,7 @@ contract SRAAdversarial is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_qEnd(2) + 1); // Q2 posting window; Q1 is a gap (no writes)
+        vm.roll(_quarterStart(2) + 1); // Q2 posting window; Q1 is a gap (no writes)
         _postAs(orch, 2, _fpv(100e18));
         assertEq(FixedU18.unwrap(sra.fpvOf(2, orch).usd), 100e18, "gap-skipped write lands in the active slot");
         assertEq(FixedU18.unwrap(sra.fpvOf(1, orch).usd), 0, "gap quarter has no contribution (prevFpv = 0)");
@@ -413,7 +413,7 @@ contract SRAAdversarial is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_qEnd(2) + POST_PERIOD + 1); // Q2 verification window; activeQ still 0
+        vm.roll(_quarterStart(2) + POST_PERIOD + 1); // Q2 verification window
         _correctVolume(orch, 2, _fpv(100e18));
         assertEq(FixedU18.unwrap(sra.fpvOf(2, orch).usd), 100e18, "governance write skips the gap quarter");
     }
@@ -426,11 +426,11 @@ contract SRAAdversarial is SRATestBase {
         _admit(a, a);
         _admit(b, b);
 
-        vm.roll(_qEnd(0) + 1); // Q0 posting window
+        vm.roll(_quarterStart(0) + 1); // Q0 posting window
         _postAs(a, 0, _fpv(100e18));
 
         // Q1: nobody writes (all SPs have zero volume) — the gap.
-        vm.roll(_qEnd(2) + 1); // Q2 posting window
+        vm.roll(_quarterStart(2) + 1); // Q2 posting window
         _postAs(b, 2, _fpv(50e18)); // must succeed
         assertEq(FixedU18.unwrap(sra.fpvOf(2, b).usd), 50e18, "post-gap write succeeds");
         assertEq(FixedU18.unwrap(sra.fpvOf(1, a).usd), 0, "gap quarter: prevFpv zero for q0's contributor");

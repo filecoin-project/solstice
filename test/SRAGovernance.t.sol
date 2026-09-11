@@ -86,10 +86,10 @@ contract SRAGovernanceTest is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_qEnd(0) + 1); // posting period
+        vm.roll(_quarterStart(0) + 1); // posting period
         _postAs(orch, 0, _fpv(100e18));
 
-        vm.roll(_qPostEnd(0) + 1); // verification window
+        vm.roll(_postEnd(0) + 1); // verification window
         vm.prank(owner1);
         sra.correctVolume(orch, 0, FixedU18.wrap(250e18));
         // after the first vote not effective (not full vote): the value is still the posted value
@@ -106,10 +106,10 @@ contract SRAGovernanceTest is SRATestBase {
     /// before correctVolume's second vote (not a full vote), a repeat vote reverts AlreadyApproved.
     function test_CorrectVolume_SameOwnerTwice_Reverts() public {
         address orch = makeAddr("orch");
-        _admit(orch);
-        vm.roll(_qEnd(0) + 1);
+        _admit(orch, orch);
+        vm.roll(_quarterStart(0) + 1);
         _postAs(orch, 0, _fpv(100e18));
-        vm.roll(_qPostEnd(0) + 1);
+        vm.roll(_postEnd(0) + 1);
 
         vm.prank(owner1);
         sra.correctVolume(orch, 0, FixedU18.wrap(_fpv(200e18)));

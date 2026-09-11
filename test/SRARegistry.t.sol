@@ -377,7 +377,7 @@ contract SRARegistryTest is SRATestBase {
         _registerPairsAs(oldOrch, pairs);
         assertEq(sra.bindingOf(makeAddr("payer"), makeAddr("operator")), oldOrch);
 
-        vm.roll(_qEnd(0) + 1); // q0 posting window
+        vm.roll(_quarterStart(0) + 1); // q0 posting window
         _postAs(oldOrch, 0, _fpv(100e18));
 
         _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)

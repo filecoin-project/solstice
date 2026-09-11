@@ -83,18 +83,21 @@ contract SRATestBase is MockRewardTest {
     // Quarterly time utilities (Epoch = block.number, controlled by vm.roll)
     // ------------------------------------------------------------------------
 
-    function _qEnd(uint64 q) internal pure returns (uint64) {
+    /// @notice first epoch of quarter q's cycle: E = ACTIVATION_EPOCH + q*EPOCHS_PER_QUARTER
+    ///         (FIP-0118 `Start(q+1)`); the SRA reads it via `quarterStart(q)`.
+    function _quarterStart(uint64 q) internal pure returns (uint64) {
         return ACTIVATION_EPOCH + q * EPOCHS_PER_QUARTER;
     }
 
-    /// @notice end epoch of the posting period: E + POST (posting window is (E, E+POST])
-    function _qPostEnd(uint64 q) internal pure returns (uint64) {
-        return _qEnd(q) + POST_PERIOD;
+    /// @notice exclusive end of the posting period; the window is [E, E+POST).
+    function _postEnd(uint64 q) internal pure returns (uint64) {
+        return _quarterStart(q) + POST_PERIOD;
     }
 
-    /// @notice end epoch of the verification window: E + POST + VERIFY (window is (E+POST, E+POST+VERIFY])
-    function _qVerifyEnd(uint64 q) internal pure returns (uint64) {
-        return _qPostEnd(q) + VERIFICATION_WINDOW;
+    /// @notice first binding epoch = exclusive end of the verification window: verification is
+    ///         [E+POST, E+POST+VERIFY), SubmitShares/QuarterlyGateCheck callable from E+POST+VERIFY.
+    function _bindingStart(uint64 q) internal pure returns (uint64) {
+        return _postEnd(q) + VERIFICATION_WINDOW;
     }
 
     function _rollTo(uint64 epoch) internal {
@@ -182,9 +185,15 @@ contract SRATestBase is MockRewardTest {
         vm.prank(owner1);
         sra.removeOrchestrator(orch);
         vm.prank(owner2);
-        sra.remove(orch);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        sra.remove(orch);
+        sra.removeOrchestrator(orch);
+    }
+
+    /// @dev Binds and submits quarter 0 to lift the spec §3.2 remove guard in tests that exercise
+    ///      removal semantics (slot/index/release) without caring about quarter timing.
+    ///      submitShares(0) is a no-op when quarter 0 has no volume; nextQuarter advances to 1.
+    function _crankQuarter0() internal {
+        vm.roll(_bindingStart(0) + 1); // q0 binds (one epoch past the binding start)
+        sra.submitShares(0);
     }
 
     /// @notice correctVolume uses unanimousNoHold: the second vote executes, no roll needed.

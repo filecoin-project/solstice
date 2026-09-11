@@ -133,60 +133,33 @@ contract ServiceRewardsActor is UnanimousGovernance {
     // Window and quarter utilities
     // ------------------------------------------------------------------------
 
-    /// @dev reverts with InvalidParameter on uint64 overflow
-    function _qEnd(uint64 q) internal view returns (Epoch) {
-        uint256 end = uint256(Epoch.unwrap(ACTIVATION_EPOCH)) + uint256(q) * uint256(Epoch.unwrap(EPOCHS_PER_QUARTER));
-        require(end <= type(uint64).max, InvalidParameter());
-        return Epoch.wrap(uint64(end));
+    /// @dev Quarter anchor E = FIP-0118 Start(q+1), where quarter q's cycle opens; reverts with
+    ///      InvalidParameter on uint64 overflow.
+    function _quarterStart(uint64 q) internal view returns (Epoch) {
+        uint256 start = uint256(Epoch.unwrap(ACTIVATION_EPOCH)) + uint256(q) * uint256(Epoch.unwrap(EPOCHS_PER_QUARTER));
+        require(start <= type(uint64).max, InvalidParameter());
+        return Epoch.wrap(uint64(start));
     }
 
-    /// @dev posting window (E, E+POST].
+    /// @dev posting window [E, E+POST).
     function _inPostingWindow(uint64 q) internal view returns (bool) {
         Epoch nowE = currentEpoch();
-        Epoch e = _qEnd(q);
-        return nowE > e && nowE <= e + POST_PERIOD;
+        Epoch e = _quarterStart(q);
+        return nowE >= e && nowE < e + POST_PERIOD;
     }
 
-    /// @dev verification window (E+POST, E+POST+VERIFY].
+    /// @dev verification window [E+POST, E+POST+VERIFY).
     function _inVerificationWindow(uint64 q) internal view returns (bool) {
         Epoch nowE = currentEpoch();
-        Epoch postEnd = _qEnd(q) + POST_PERIOD;
-        return nowE > postEnd && nowE <= postEnd + VERIFICATION_WINDOW;
+        Epoch postEnd = _quarterStart(q) + POST_PERIOD;
+        return nowE >= postEnd && nowE < postEnd + VERIFICATION_WINDOW;
     }
 
-    /// @dev post-binding: now > E+POST+VERIFY.
+    /// @dev post-binding: now >= E+POST+VERIFY.
     function _afterBinding(uint64 q) internal view returns (bool) {
         Epoch nowE = currentEpoch();
-        Epoch verifyEnd = _qEnd(q) + POST_PERIOD + VERIFICATION_WINDOW;
-        return nowE > verifyEnd;
-    }
-
-    /// @dev The latest quarter whose volumes are bound but whose share map has not been submitted
-    ///      (spec §3.2: RemoveOrchestrator is not callable while an ended quarter awaits its
-    ///      share map — governance clears it by cranking SubmitShares first). Mirrors submitShares'
-    ///      latest-bound-quarter determination: the latest bound quarter is activeQ if it has passed
-    ///      binding, else activeQ - 1 (an advance into a new quarter implies the previous one is past
-    ///      E+POST, hence bound). Only the *latest* bound quarter matters — a superseded quarter
-    ///      (skipped by a lag > 1) can never be submitted, so keying on it would deadlock removal.
-    ///      lastSubmittedQ is a q+1 encoding (0 = none), so "awaiting" ⟺ lastSubmittedQ != latest + 1.
-    function _pendingSharesQuarter() internal view returns (bool hasPending, uint64 q) {
-        SraStorage.SraStorageQuarter storage qt = SraStorage.quarter();
-        // The latest bound quarter is a *time* property: derive it from
-        // the clock via _quarterOf, not from the activeQ cache — the cache advances only on
-        // writes, so a gap quarter (bound but unwritten) would be missed (activeQ still the
-        // previous quarter) and removal would wrongly pass. nowQ > 0 guard mirrors the genesis
-        // case below (q0's verification window: _afterBinding(0) false, nothing bound yet).
-        uint64 nowQ = _quarterOf(currentEpoch());
-        uint64 latest;
-        if (_afterBinding(nowQ)) {
-            latest = nowQ;
-        } else if (nowQ > 0) {
-            latest = nowQ - 1;
-        } else {
-            return (false, 0); // genesis: nothing bound yet
-        }
-        if (qt.nextQuarter != latest + 1) return (true, latest);
-        return (false, 0);
+        Epoch verifyEnd = _quarterStart(q) + POST_PERIOD + VERIFICATION_WINDOW;
+        return nowE >= verifyEnd;
     }
 
     /// @dev Quarter containing `nowE`, derived from the clock alone:
@@ -502,7 +475,7 @@ contract ServiceRewardsActor is UnanimousGovernance {
         // FIP-0118 §4.2: SubmitShares operates on the **latest** quarter whose volumes are bound, so an
         // older quarter's shares can never overwrite a newer quarter's. Because _afterBinding is monotonic
         // in q, q is the latest bound quarter iff q + 1 is not yet bound. (At q = uint64.max the first
-        // require's _qEnd range guard already reverts, so q + 1 cannot overflow here.)
+        // require's _quarterStart range guard already reverts, so q + 1 cannot overflow here.)
         require(!_afterBinding(q + 1), NotLatestQuarter(q));
 
         SraStorage.SraStorageRegistry storage r = SraStorage.registry();
@@ -582,9 +555,9 @@ contract ServiceRewardsActor is UnanimousGovernance {
         return SraStorage.quarter().totalUsd[q];
     }
 
-    /// @dev Quarter end epoch for quarter q (Epoch-typed; exposed per the IServiceRewardsActor interface the SWA consumes).
-    function qEnd(uint64 q) external view returns (Epoch) {
-        return _qEnd(q);
+    /// @dev Quarter anchor epoch for quarter q (Epoch-typed; exposed per the IServiceRewardsActor interface the SWA consumes).
+    function quarterStart(uint64 q) external view returns (Epoch) {
+        return _quarterStart(q);
     }
 
     function isAdmitted(address orch) external view returns (bool) {

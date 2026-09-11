@@ -29,7 +29,7 @@ contract SRASharesTest is SRATestBase {
         address b = _admitAndPost(100e18);
         address c = _admitAndPost(100e18);
 
-        _rollTo(_qVerifyEnd(0) + 1);
+        _rollTo(_bindingStart(0) + 1);
         sra.submitShares(0);
 
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
@@ -50,7 +50,7 @@ contract SRASharesTest is SRATestBase {
             orchs[i] = _admitAndPost(100e18);
         }
 
-        _rollTo(_qVerifyEnd(0) + 1);
+        _rollTo(_bindingStart(0) + 1);
         sra.submitShares(0);
 
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
@@ -68,7 +68,7 @@ contract SRASharesTest is SRATestBase {
             _admitAndPost(100e18);
         }
 
-        _rollTo(_qVerifyEnd(0) + 1);
+        _rollTo(_bindingStart(0) + 1);
         sra.submitShares(0);
 
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
@@ -86,7 +86,7 @@ contract SRASharesTest is SRATestBase {
         address a = _admitAndPost(30e18);
         address b = _admitAndPost(70e18);
 
-        _rollTo(_qVerifyEnd(0) + 1);
+        _rollTo(_bindingStart(0) + 1);
         sra.submitShares(0);
 
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
@@ -107,7 +107,7 @@ contract SRASharesTest is SRATestBase {
         _admit(makeAddr("orchA"), makeAddr("orchA"));
         _admit(makeAddr("orchB"), makeAddr("orchB"));
 
-        _rollTo(_qVerifyEnd(0) + 1);
+        _rollTo(_bindingStart(0) + 1);
         sra.submitShares(0);
 
         // no SetShares happened: the stream map is still the registration-time initial map (writer = SRA)
@@ -127,7 +127,7 @@ contract SRASharesTest is SRATestBase {
         address b = _admitAndPost(200e18);
         address c = _admitAndPost(300e18);
 
-        _rollTo(_qVerifyEnd(0) + 1);
+        _rollTo(_bindingStart(0) + 1);
         sra.submitShares(0);
 
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
@@ -143,14 +143,14 @@ contract SRASharesTest is SRATestBase {
         address a = makeAddr("orchA");
         _admit(a, a);
         // orchestrator a posts a single USD total (off-chain conversion folded the FIL contribution in)
-        vm.roll(_qEnd(0) + 1);
+        vm.roll(_quarterStart(0) + 1);
         vm.prank(a);
         sra.postVolume(0, FixedU18.wrap(1000e18)); // = 500e18 stable + 500e18 converted FIL
 
         // orchestrator b pure stablecoin 500e18 -> a:b = 2:1
         address b = _admitAndPost(500e18);
 
-        _rollTo(_qVerifyEnd(0) + 1);
+        _rollTo(_bindingStart(0) + 1);
         sra.submitShares(0);
 
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
@@ -205,7 +205,7 @@ contract SRASharesTest is SRATestBase {
         }
         assertEq(sra.admittedCount(), 64);
 
-        _rollTo(_qVerifyEnd(0) + 1);
+        _rollTo(_bindingStart(0) + 1);
         sra.submitShares(0);
 
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
@@ -225,13 +225,13 @@ contract SRASharesTest is SRATestBase {
         // Quarter 0: A (100e18), B (200e18)
         address a = makeAddr("orchA-q0");
         address b = makeAddr("orchB-q0");
-        _admit(a);
-        _admit(b);
-        vm.roll(_qEnd(0) + 1);
+        _admit(a, a);
+        _admit(b, b);
+        vm.roll(_quarterStart(0) + 1);
         _postAs(a, 0, _fpv(100e18));
         _postAs(b, 0, _fpv(200e18));
 
-        _rollTo(_qVerifyEnd(0) + 1);
+        _rollTo(_bindingStart(0) + 1);
         sra.submitShares(0);
         Share[] memory q0 = rewardActor().getShares(SERVICE_ID);
         assertEq(q0.length, 2);
@@ -243,11 +243,11 @@ contract SRASharesTest is SRATestBase {
 
         // Quarter 1: only C posts
         address c = makeAddr("orchC-q1");
-        _admit(c);
-        vm.roll(_qEnd(1) + 1);
+        _admit(c, c);
+        vm.roll(_quarterStart(1) + 1);
         _postAs(c, 1, _fpv(100e18));
 
-        _rollTo(_qVerifyEnd(1) + 1);
+        _rollTo(_bindingStart(1) + 1);
         sra.submitShares(1);
         Share[] memory q1 = rewardActor().getShares(SERVICE_ID);
         // quarter 1's share map is independent: A/B did not post in quarter 1 (usdValue=0 filtered) -> no residue
@@ -266,7 +266,7 @@ contract SRASharesTest is SRATestBase {
     function test_SubmitShares_NotLatestQuarter_Reverts() public {
         // Q0: A posts 100e18, submit after Q0 binding
         address a = _admitAndPost(100e18);
-        _rollTo(_qVerifyEnd(0) + 1);
+        _rollTo(_bindingStart(0) + 1);
         sra.submitShares(0);
         Share[] memory q0 = rewardActor().getShares(SERVICE_ID);
         assertEq(q0.length, 1);
@@ -274,10 +274,10 @@ contract SRASharesTest is SRATestBase {
 
         // Q1: B posts, bind Q1 (becomes the latest bound quarter)
         address b = makeAddr("orchB-q1");
-        _admit(b);
-        vm.roll(_qEnd(1) + 1);
+        _admit(b, b);
+        vm.roll(_quarterStart(1) + 1);
         _postAs(b, 1, _fpv(200e18));
-        _rollTo(_qVerifyEnd(1) + 1);
+        _rollTo(_bindingStart(1) + 1);
 
         // Q0 is superseded -> submitting it reverts NotLatestQuarter (never overwrites Q1's newer map)
         vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.NotLatestQuarter.selector, uint64(0)));
@@ -308,7 +308,7 @@ contract SRASharesTest is SRATestBase {
         _admitAndPost(v2);
         _admitAndPost(v3);
 
-        _rollTo(_qVerifyEnd(0) + 1);
+        _rollTo(_bindingStart(0) + 1);
         sra.submitShares(0);
 
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
@@ -328,13 +328,29 @@ contract SRASharesTest is SRATestBase {
     /// was uncovered — coverage line 508's revert branch missing)
     function test_SubmitShares_BeforeBinding_Reverts() public {
         address orch = makeAddr("orch");
-        _admit(orch);
-        vm.roll(_qEnd(0) + 1);
+        _admit(orch, orch);
+        vm.roll(_quarterStart(0) + 1);
         _postAs(orch, 0, _fpv(100e18));
 
-        vm.roll(_qVerifyEnd(0)); // now == E+POST+VERIFY: not yet bound (strictly after)
-        vm.expectRevert(); // NotBound(0)
+        vm.roll(_bindingStart(0) - 1); // now == E+POST+VERIFY-1: not yet bound
+        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.NotBound.selector, uint64(0)));
         sra.submitShares(0);
+    }
+
+    /// submitShares at the first binding epoch (E+POST+VERIFY) succeeds: the binding window is
+    /// [E+POST+VERIFY, ...).
+    function test_SubmitShares_AtBindingStart_Succeeds() public {
+        address orch = makeAddr("orch");
+        _admit(orch, orch);
+        vm.roll(_quarterStart(0) + 1);
+        _postAs(orch, 0, _fpv(100e18));
+
+        vm.roll(_bindingStart(0)); // now == E+POST+VERIFY: first callable epoch
+        sra.submitShares(0);
+        Share[] memory shares = rewardActor().getShares(SERVICE_ID);
+        assertEq(shares.length, 1);
+        assertEq(shares[0].wallet, orch);
+        assertEq(FixedU18.unwrap(shares[0].share), 1e18);
     }
 
     // ------------------------------------------------------------------------
@@ -346,7 +362,7 @@ contract SRASharesTest is SRATestBase {
     /// Control: with the injection off, a normal submit in the same quarter succeeds (proving the failure comes only from injection, SRA state not polluted).
     function test_SubmitShares_SetSharesFailed_Reverts() public {
         address orch = _admitAndPost(100e18);
-        _rollTo(_qVerifyEnd(0) + 1);
+        _rollTo(_bindingStart(0) + 1);
 
         rewardActor().mockFailSetShares(true);
         vm.expectRevert(abi.encodeWithSelector(FVMRewards.SetSharesFailed.selector, int256(uint256(USR_FORBIDDEN))));
@@ -369,20 +385,20 @@ contract SRASharesTest is SRATestBase {
     /// move, so historical quarter FilecoinPayVolume stays aggregated under the same orchestrator.
     function test_Replace_HistoricalQuarterFilecoinPayVolume_Kept() public {
         address oldOrch = makeAddr("hist-old");
-        address newOrch = makeAddr("hist-new");
-        _admit(oldOrch);
-        vm.roll(_qEnd(0) + 1); // q0 posting window
+        address newWallet = _wallet("hist-new");
+        _admit(oldOrch, oldOrch);
+        vm.roll(_quarterStart(0) + 1); // q0 posting window
         _postAs(oldOrch, 0, _fpv(100e18));
 
-        // governance replace(old -> new) inside q0's verification window (before binding)
-        vm.roll(_qPostEnd(0) + 1);
+        // governance replaceWallet(old -> newWallet) inside q0's verification window (before binding)
+        vm.roll(_postEnd(0) + 1);
         vm.prank(owner1);
         sra.replaceWallet(oldOrch, newWallet);
         vm.prank(owner2);
         sra.replaceWallet(oldOrch, newWallet); // second vote executes (unanimousNoHold)
 
-        // submit q0 after binding: the old address's posted FilecoinPayVolume is still aggregated under the same identity
-        _rollTo(_qVerifyEnd(0) + 1);
+        // submit q0 after binding: the posted FilecoinPayVolume is still aggregated under the same identity
+        _rollTo(_bindingStart(0) + 1);
         sra.submitShares(0);
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
         assertEq(shares.length, 1);
@@ -401,20 +417,20 @@ contract SRASharesTest is SRATestBase {
     /// the replaced address receives nothing.
     function test_Replace_ShareMap_WritesNewWallet() public {
         address oldOrch = makeAddr("wallet-old");
-        address newOrch = makeAddr("wallet-new");
-        _admit(oldOrch);
-        vm.roll(_qEnd(0) + 1); // q0 posting window
+        address newWallet = _wallet("wallet-new");
+        _admit(oldOrch, oldOrch);
+        vm.roll(_quarterStart(0) + 1); // q0 posting window
         _postAs(oldOrch, 0, _fpv(50e18));
         _admitAndPost(50e18); // second orchestrator keeps the split non-trivial
 
         // replace(old -> new) inside the verification window
-        vm.roll(_qPostEnd(0) + 1);
+        vm.roll(_postEnd(0) + 1);
         vm.prank(owner1);
         sra.replaceWallet(oldOrch, newWallet);
         vm.prank(owner2);
         sra.replaceWallet(oldOrch, newWallet); // second vote executes (unanimousNoHold)
 
-        _rollTo(_qVerifyEnd(0) + 1);
+        _rollTo(_bindingStart(0) + 1);
         sra.submitShares(0);
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
         assertEq(_walletShare(shares, newWallet), 5e17, "share map wallet = the current (replaced-to) wallet");
@@ -427,13 +443,13 @@ contract SRASharesTest is SRATestBase {
     /// quarter hits the right FilecoinPayVolume record.
     function test_ReplaceWallet_CorrectVolume_IdentityUnchanged_CorrectsHistoricalQuarter() public {
         address oldOrch = makeAddr("cv-old");
-        address newOrch = makeAddr("cv-new");
-        _admit(oldOrch);
-        vm.roll(_qEnd(0) + 1); // q0 posting window
+        address newWallet = _wallet("cv-new");
+        _admit(oldOrch, oldOrch);
+        vm.roll(_quarterStart(0) + 1); // q0 posting window
         _postAs(oldOrch, 0, _fpv(100e18));
 
-        // replace within the verification window, then correct via the NEW address
-        vm.roll(_qPostEnd(0) + 1);
+        // replaceWallet within the verification window, then correct via the unchanged identity
+        vm.roll(_postEnd(0) + 1);
         vm.prank(owner1);
         sra.replaceWallet(oldOrch, newWallet);
         vm.prank(owner2);
@@ -441,7 +457,7 @@ contract SRASharesTest is SRATestBase {
 
         _correctVolume(oldOrch, 0, 200e18); // correction via the identity (which did not move)
 
-        _rollTo(_qVerifyEnd(0) + 1);
+        _rollTo(_bindingStart(0) + 1);
         sra.submitShares(0);
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
         assertEq(shares.length, 1);
@@ -449,11 +465,18 @@ contract SRASharesTest is SRATestBase {
         // the corrected value (200), not the original post (100), is aggregated
         assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(0)), 200e18);
     }
+        vm.roll(_quarterStart(0) + 1);
+        _rollTo(_bindingStart(0) + 1);
         _remove(b); // post-submit removal binds immediately
+        vm.roll(_quarterStart(0) + 1);
+        _rollTo(_bindingStart(0) + 1);
         _remove(b);
         _remove(c);
+        _rollTo(_bindingStart(0) + 1);
         _remove(b);
         address newWallet = _wallet("swap-new");
+        vm.roll(_quarterStart(0) + 1);
+        _rollTo(_bindingStart(0) + 1);
         sra.replaceWallet(oldOrch, newWallet);
         sra.replaceWallet(oldOrch, newWallet);
         assertEq(_walletShare(afterMap, newWallet), oldShare, "share moved to the new wallet at the same value");

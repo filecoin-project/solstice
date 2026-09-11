@@ -235,8 +235,8 @@ contract SRAInvariantHandler is SRATestBase {
         // S3: bound(1, 1e30) aligns with the code-enforced MAX_STABLE_USD (postVolume rejects > 1e30) —
         // the invariant's sampling domain equals the contract's enforced input domain.
         uint256 stableUsd = bound(usd, 1, 1e30);
-        uint256 target = _qEnd(qq) + 1 + uint64(bound(usd, 0, POST_PERIOD - 1));
-        if (block.number < target) vm.roll(target); // monotonic: real time never rewinds (mirror activeQ assumes forward-only quarters)
+        uint256 target = _quarterStart(qq) + uint64(bound(usd, 0, POST_PERIOD - 1));
+        if (block.number < target) vm.roll(target); // monotonic: real time never rewinds (mirror slots hold strictly later quarter tags)
         vm.prank(orch);
         sra.postVolume(qq, FixedU18.wrap(_fpv(stableUsd)));
         _posted[qq][orch] = true;
@@ -250,7 +250,7 @@ contract SRAInvariantHandler is SRATestBase {
         if (sra.isFrozen(orch)) return; // freeze symmetry: the implementation's correctVolume gates on frozenSince
         // S3: bound(1, 1e30) aligns with the code-enforced MAX_FILECOIN_PAY_VOLUME_USD (correctVolume rejects > 1e30).
         uint256 stableUsd = bound(usd, 1, 1e30);
-        uint256 target = _qPostEnd(qq) + 1 + uint64(bound(usd, 0, VERIFICATION_WINDOW - 1));
+        uint256 target = _postEnd(qq) + uint64(bound(usd, 0, VERIFICATION_WINDOW - 1));
         if (block.number < target) vm.roll(target); // monotonic
         vm.prank(owner1);
         sra.correctVolume(orch, qq, FixedU18.wrap(stableUsd));
@@ -265,7 +265,7 @@ contract SRAInvariantHandler is SRATestBase {
     ///         not change), otherwise the invariant would compare a new snapshot against the stale map.
     function submitShares(uint256 q) external {
         uint64 qq = uint64(bound(q, 0, MAX_Q));
-        uint256 target = _qVerifyEnd(qq) + 1 + uint64(bound(q, 0, 50));
+        uint256 target = _bindingStart(qq) + uint64(bound(q, 0, 50));
         if (block.number < target) vm.roll(target); // monotonic
         _crankSubmitShares(qq);
     }
