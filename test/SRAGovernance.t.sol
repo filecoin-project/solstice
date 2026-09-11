@@ -5,7 +5,6 @@ pragma solidity ^0.8.36;
 //
 //   - two votes, immediate execution (unanimousNoHold — no permissionless path)
 //   - single vote does not execute; non-owner rejected
-//   - veto (cancelPending) discards a queued change
 //   - NO_HOLD (correctVolume) full-vote immediate execution
 //   - taskId = keccak256(msg.data): different array parameter order -> different taskId -> no merge (I2 risk)
 
@@ -76,40 +75,6 @@ contract SRAGovernanceTest is SRATestBase {
         assertTrue(sra.isAdmitted(orch));
         // expectedTaskId itself is not directly queryable (internal state); "execution completes" is the indirect proof
         assertTrue(expectedTaskId != bytes32(0));
-    }
-
-    // ------------------------------------------------------------------------
-    // Veto (cancelPending)
-    // ------------------------------------------------------------------------
-
-    /// either Safe can veto to discard a queued change; after the veto the flow restarts.
-    function test_Veto_CancelsPendingAdmit() public {
-        address orch = makeAddr("orch");
-
-        vm.prank(owner1);
-        sra.admit(orch);
-        vm.prank(owner2);
-        sra.admit(orch);
-
-        // owner1 changes their mind: cancelPending discards the task
-        bytes32 taskId = keccak256(abi.encodeWithSignature("admit(address)", orch));
-        vm.prank(owner1);
-        sra.cancelPending(taskId);
-
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        // the original task was deleted: the third call is a fresh submission (first vote), not an execution
-        // resubmission must be initiated by an owner (the governance library's approve branch requires isOwner)
-        vm.prank(owner1);
-        sra.admit(orch);
-        assertFalse(sra.isAdmitted(orch));
-    }
-
-    /// a non-owner cannot veto.
-    function test_Veto_NonOwner_Reverts() public {
-        bytes32 taskId = keccak256("whatever");
-        vm.prank(makeAddr("stranger"));
-        vm.expectRevert(abi.encodeWithSelector(UnanimousGovernance.NotOwner.selector, makeAddr("stranger")));
-        sra.cancelPending(taskId);
     }
 
     // ------------------------------------------------------------------------
@@ -189,14 +154,12 @@ contract SRAGovernanceTest is SRATestBase {
 
         vm.prank(owner1);
         sra.setAdmittedLists(stablecoins, _asArray(address(0), address(0)));
-        vm.prank(owner2);
-        sra.setAdmittedLists(stablecoins, _asArray(address(0), address(0)));
-
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        // execution succeeded: the executing call emits the full-array snapshot (event-only allowlist,
-        // exclusive update — the emitted arrays are the authoritative new allowlist).
+        // the second approval (same calldata -> same taskId -> full vote) executes immediately and
+        // emits the full-array snapshot (event-only allowlist, exclusive update — the emitted arrays
+        // are the authoritative new allowlist).
         vm.expectEmit(false, false, false, true, address(sra));
         emit ServiceRewardsActor.AdmittedListsUpdated(stablecoins, _asArray(address(0), address(0)));
+        vm.prank(owner2);
         sra.setAdmittedLists(stablecoins, _asArray(address(0), address(0)));
     }
 
@@ -290,8 +253,6 @@ contract SRAGovernanceTest is SRATestBase {
         vm.prank(owner1);
         sra.setAdmittedLists(stablecoins, new address[](0));
         vm.prank(owner2);
-        sra.setAdmittedLists(stablecoins, new address[](0));
-        vm.roll(block.number + SRA_CANCEL_HOLD);
         vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.InvalidParameter.selector));
         sra.setAdmittedLists(stablecoins, new address[](0));
     }

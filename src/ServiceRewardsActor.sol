@@ -425,7 +425,7 @@ contract ServiceRewardsActor is UnanimousGovernance {
     ///      require normalization (only same-order calldata yields an identical taskId).
     function setAdmittedLists(address[] calldata stablecoins, address[] calldata filecoinPayContracts)
         external
-        unanimous(keccak256(msg.data), SRA_CANCEL_HOLD)
+        unanimousNoHold(keccak256(msg.data))
     {
         require(stablecoins.length <= MAX_ALLOWLIST && filecoinPayContracts.length <= MAX_ALLOWLIST, InvalidParameter());
         emit AdmittedListsUpdated(stablecoins, filecoinPayContracts);
