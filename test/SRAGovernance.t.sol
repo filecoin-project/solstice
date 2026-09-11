@@ -233,8 +233,7 @@ contract SRAGovernanceTest is SRATestBase {
             Epoch.wrap(POST_PERIOD),
             Epoch.wrap(VERIFICATION_WINDOW),
             Epoch.wrap(ACTIVATION_EPOCH),
-            MIN_LOT,
-            PRICE_BAND
+            Epoch.wrap(SRA_UPGRADE_HOLD)
         );
     }
 

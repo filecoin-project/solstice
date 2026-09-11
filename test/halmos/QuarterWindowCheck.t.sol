@@ -11,8 +11,6 @@ import {QuarterWindowHarness} from "./QuarterWindowHarness.sol";
 ///      (= block.number) to a concrete epoch.
 contract QuarterWindowCheck is QuarterWindowHarness, Test {
     // forge-lint: disable-start(mixed-case-function) — halmos runs only check_-prefixed property functions (tool convention)
-    /// @dev owner params arbitrary (halmos executes with --no-test-constructor, skipping the constructor; the compiler layer still needs explicit args).
-    constructor() QuarterWindowHarness(address(0xCAFE), address(0xBEEF)) {}
 
     /// @dev owner params arbitrary; the window parameters come from the harness config.
     constructor() QuarterWindowHarness(address(0xCAFE), address(0xBEEF), 20160) {}

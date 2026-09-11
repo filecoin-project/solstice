@@ -11,7 +11,7 @@ import {Epoch} from "../../src/lib/Epoch.sol";
 ///      ACTIVATION=100000); the check contract inherits this harness and runs this constructor, so the
 ///      immutable window constants hold those values during verification.
 contract QuarterWindowHarness is ServiceRewardsActor {
-    constructor(address owner1, address owner2)
+    constructor(address owner1, address owner2, uint64 sraUpgradeHold)
         ServiceRewardsActor(
             owner1,
             owner2,
@@ -19,8 +19,7 @@ contract QuarterWindowHarness is ServiceRewardsActor {
             Epoch.wrap(300), // postPeriod
             Epoch.wrap(400), // verificationWindow
             Epoch.wrap(100_000), // activationEpoch
-            1e18, // minLot
-            2000 // priceBand (20%, basis points)
+            Epoch.wrap(sraUpgradeHold)
         )
     {}
 

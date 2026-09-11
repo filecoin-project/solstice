@@ -19,8 +19,7 @@ contract DifferentialSharesHarness is ServiceRewardsActor {
         uint64 postPeriod,
         uint64 verificationWindow,
         uint64 activationEpoch,
-        uint256 minLot,
-        uint256 priceBand
+        uint64 sraUpgradeHold
     )
         ServiceRewardsActor(
             o1,
@@ -29,8 +28,7 @@ contract DifferentialSharesHarness is ServiceRewardsActor {
             Epoch.wrap(postPeriod),
             Epoch.wrap(verificationWindow),
             Epoch.wrap(activationEpoch),
-            minLot,
-            priceBand
+            Epoch.wrap(sraUpgradeHold)
         )
     {}
 

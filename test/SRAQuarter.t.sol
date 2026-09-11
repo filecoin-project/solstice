@@ -358,13 +358,23 @@ contract SRAQuarterTest is SRATestBase {
         vm.prank(owner1);
         sra.setPricingParams(2e18, 1, 400, 1500, 20160);
         vm.prank(owner2);
-        sra.setPricingParams(2e18, 1500);
-        vm.roll(block.number + SRA_CANCEL_HOLD);
-        sra.setPricingParams(2e18, 1500); // third call: permissionless execution
+        sra.setPricingParams(2e18, 1, 400, 1500, 20160); // second vote executes (unanimousNoHold)
 
-        (uint256 minLot, uint256 priceBand) = sra.getPricingParams();
-        assertEq(minLot, 2e18);
-        assertEq(priceBand, 1500); // 15%
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 topic = ServiceRewardsActor.PricingParamsUpdated.selector;
+        uint256 hits;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] != topic) continue;
+            hits++;
+            (uint256 f, uint256 an, uint256 ad, uint256 b, uint256 cutoff) =
+                abi.decode(logs[i].data, (uint256, uint256, uint256, uint256, uint256));
+            assertEq(f, 2e18);
+            assertEq(an, 1);
+            assertEq(ad, 400);
+            assertEq(b, 1500); // 15%
+            assertEq(cutoff, 20160);
+        }
+        assertEq(hits, 1, "PricingParamsUpdated emitted once");
     }
 
     /// G1: a non-owner (third party) calling setPricingParams -> rejected on the first vote (NotOwner).

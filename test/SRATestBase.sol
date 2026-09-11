@@ -37,8 +37,10 @@ contract SRATestBase is MockRewardTest {
     uint64 internal constant POST_PERIOD = 300;
     uint64 internal constant VERIFICATION_WINDOW = 400;
     uint64 internal constant ACTIVATION_EPOCH = 100_000;
-    uint256 internal constant MIN_LOT = 100; // 100 USD (lot face value; authoritative for the off-chain indexer, FIPs#1275)
-    uint256 internal constant PRICE_BAND = 2000; // 20% (basis points), test threshold
+    // code-upgrade hold: SRA state fixed at deployment (spec 95eb9e0 §4.2); 7 days at 30s epochs,
+    // matching the mainnet SWA activation timelock (MAINNET_TIMELOCK). The SRA value is set with the
+    // activation parameters (spec marks it TODO); this constant is the test-side deployment value.
+    uint64 internal constant SRA_UPGRADE_HOLD = 20160;
 
     function setUp() public virtual override {
         super.setUp();
@@ -51,8 +53,7 @@ contract SRATestBase is MockRewardTest {
             Epoch.wrap(POST_PERIOD),
             Epoch.wrap(VERIFICATION_WINDOW),
             Epoch.wrap(ACTIVATION_EPOCH),
-            MIN_LOT,
-            PRICE_BAND
+            Epoch.wrap(SRA_UPGRADE_HOLD)
         );
         _registerServiceStream();
     }
