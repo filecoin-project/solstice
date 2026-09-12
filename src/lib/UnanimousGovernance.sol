@@ -20,6 +20,11 @@ contract UnanimousGovernance {
     error NotOwner(address account);
     error AlreadyApproved();
 
+    modifier anyOwner() {
+        require(msg.sender.isOwner(), NotOwner(msg.sender));
+        _;
+    }
+
     /// @notice Executes the wrapped function once every current owner has approved `taskId`.
     /// @dev If `hold` is zero, execution happens on the approval that reaches unanimity.
     /// @dev Otherwise, once unanimous, execution becomes permissionless after `hold` epochs elapse.
@@ -30,6 +35,8 @@ contract UnanimousGovernance {
         PendingTaskInfo storage taskInfo = PendingTaskLibrary.getTasksSlot()[taskId];
         PendingTask memory loaded = taskInfo.task;
         OwnerSet allOwners = OwnersLibrary.getAllOwners();
+
+        require(allOwners != EMPTY_SET, NotOwner(msg.sender));
 
         // modify
         if (loaded.approvals & allOwners == allOwners) {
@@ -60,6 +67,11 @@ contract UnanimousGovernance {
             } else {
                 // wait
                 taskInfo.task = loaded;
+                assembly ("memory-safe") {
+                    // exit successfully returning no data
+                    // works even for internal functions
+                    stop()
+                }
             }
         }
     }
@@ -92,6 +104,11 @@ contract UnanimousGovernance {
         } else {
             // wait
             taskInfo.task = loaded;
+            assembly ("memory-safe") {
+                // exit successfully returning no data
+                // works even for internal functions
+                stop()
+            }
         }
     }
 

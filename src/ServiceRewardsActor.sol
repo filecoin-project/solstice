@@ -20,17 +20,14 @@ import {Epoch, currentEpoch} from "./lib/Epoch.sol";
 import {FixedU18, ONE, ZERO} from "./lib/FixedU18.sol";
 import {FVMRewards} from "./lib/FVMRewards.sol";
 import {SERVICE_ID, Share} from "./lib/FVMRewardTypes.sol";
-import {OwnersLibrary} from "./lib/Owners.sol";
-import {UnanimousGovernance} from "./lib/UnanimousGovernance.sol";
 // Top-level SRA types (Binding / FilecoinPayVolume) and the ERC-7201 storage layout live in
 // separate library files (SraTypes.sol / SraStorage.sol) — extracted to simplify
 // the #5 proxy refactor; test files import the types from SraTypes.sol.
 import {Binding, FilecoinPayVolume} from "./lib/SraTypes.sol";
 import {SraStorage} from "./lib/SraStorage.sol";
+import {UnanimousProxy} from "./lib/UnanimousProxy.sol";
 
-contract ServiceRewardsActor is UnanimousGovernance {
-    using OwnersLibrary for address;
-
+contract ServiceRewardsActor is UnanimousProxy {
     /// @dev Total share (f02 encoding constraint: Σ shares must be exactly == 1e18).
     FixedU18 private constant SHARE_TOTAL = ONE;
 
@@ -102,10 +99,7 @@ contract ServiceRewardsActor is UnanimousGovernance {
         Epoch activationEpoch,
         uint256 minLot,
         uint256 priceBand
-    ) {
-        owner1.addOwner();
-        owner2.addOwner();
-
+    ) UnanimousProxy(owner1, owner2, cancelHold) {
         require(
             priceBand <= BASIS_POINTS && Epoch.unwrap(epochsPerQuarter) > 0 && Epoch.unwrap(postPeriod) > 0
                 && Epoch.unwrap(verificationWindow) > 0
@@ -123,9 +117,6 @@ contract ServiceRewardsActor is UnanimousGovernance {
         SraStorage.SraStorageParams storage p = SraStorage.params();
         p.minLot = minLot;
         p.priceBand = priceBand;
-
-        // id allocator starts at 1: 0 is the unregistered sentinel (activeIdOf[addr] == 0)
-        SraStorage.registry().nextId = 1;
     }
 
     // ------------------------------------------------------------------------
@@ -306,8 +297,8 @@ contract ServiceRewardsActor is UnanimousGovernance {
         SraStorage.SraStorageRegistry storage r = SraStorage.registry();
         require(r.activeIdOf[orch] == 0, AlreadyAdmitted(orch));
         require(r.admittedIds.length < MAX_ORCHESTRATORS, AtCapacity());
-        uint64 id = r.nextId;
-        r.nextId = id + 1;
+        uint64 id = r.allocatedIds + 1;
+        r.allocatedIds = id;
         SraStorage.OrchestratorInfo storage o = r.orchestrators[id];
         o.wallet = orch;
         o.admitted = true;
@@ -425,13 +416,6 @@ contract ServiceRewardsActor is UnanimousGovernance {
         uint64 id = _requireAdmittedId(orch);
         SraStorage.registry().bindings[_pairId(payer, operator)] = id;
         emit BindingReassigned(payer, operator, orch);
-    }
-
-    /// @notice Owner rotation, effective immediately (unanimousNoHold path,
-    ///         aligned with upstream SWA's replaceOwner).
-    function replaceOwner(address prevOwner, address newOwner) external unanimousNoHold(keccak256(msg.data)) {
-        prevOwner.removeOwner();
-        newOwner.addOwner();
     }
 
     /// @notice Updates the stablecoin + Filecoin Pay allowlists (exclusive update, spec §4.2).
