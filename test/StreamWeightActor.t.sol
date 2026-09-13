@@ -69,8 +69,10 @@ contract StreamWeightActorTest is MockRewardTest {
     /// @dev Whether f02 currently holds a queued per-stream op for `id` (reads the mock's state).
     function _hasPending(uint64 id, PendingOp op) internal view returns (bool) {
         MockState memory st = rewardActor().mockState();
-        for (uint256 i = 0; i < st.pendingWrites.length; i++) {
-            if (st.pendingWrites[i].hasId && st.pendingWrites[i].id == id && st.pendingWrites[i].op == op) {
+        for (uint256 i = 0; i < st.pendingWritesQueue.length; i++) {
+            if (
+                st.pendingWritesQueue[i].hasId && st.pendingWritesQueue[i].id == id && st.pendingWritesQueue[i].op == op
+            ) {
                 return true;
             }
         }
@@ -140,18 +142,18 @@ contract StreamWeightActorTest is MockRewardTest {
         // Both approvals executed the body: f02 holds a queued REGISTER with a null distribution.
         MockState memory st = rewardActor().mockState();
         bool found;
-        for (uint256 i = 0; i < st.pendingWrites.length; i++) {
+        for (uint256 i = 0; i < st.pendingWritesQueue.length; i++) {
             if (
-                st.pendingWrites[i].hasId && st.pendingWrites[i].id == STREAM_ID
-                    && st.pendingWrites[i].op == PendingOp.REGISTER
+                st.pendingWritesQueue[i].hasId && st.pendingWritesQueue[i].id == STREAM_ID
+                    && st.pendingWritesQueue[i].op == PendingOp.REGISTER
             ) {
                 found = true;
                 assertEq(
-                    uint256(st.pendingWrites[i].distributionKind),
+                    uint256(st.pendingWritesQueue[i].distributionKind),
                     uint256(DistributionKind.IMPLICIT),
                     "queued as IMPLICIT"
                 );
-                assertEq(st.pendingWrites[i].writer, address(0), "implicit registration carries no writer");
+                assertEq(st.pendingWritesQueue[i].writer, address(0), "implicit registration carries no writer");
             }
         }
         assertTrue(found, "REGISTER queued for the stream");

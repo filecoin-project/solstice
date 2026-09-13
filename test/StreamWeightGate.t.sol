@@ -53,10 +53,10 @@ contract StreamWeightGateTest is StreamWeightActorTest {
         );
     }
 
-    function _mockQEnd(IServiceRewardsActor sra, uint64 quarter, uint64 end) internal {
+    function _mockQuarterStart(IServiceRewardsActor sra, uint64 quarter, uint64 end) internal {
         vm.mockCall(
             address(sra),
-            abi.encodeWithSelector(IServiceRewardsActor.qEnd.selector, quarter),
+            abi.encodeWithSelector(IServiceRewardsActor.quarterStart.selector, quarter),
             abi.encode(Epoch.wrap(end))
         );
     }
@@ -359,7 +359,7 @@ contract StreamWeightGateTest is StreamWeightActorTest {
         _registerAndActivate(SERVICE_ID);
         IServiceRewardsActor sra = _sraMock();
         _mockFpv(sra, 2, 3500 ether);
-        _mockQEnd(sra, 2, 1000);
+        _mockQuarterStart(sra, 2, 1000);
 
         actor.quarterlyGateCheck(); // permissionless
 
@@ -370,7 +370,7 @@ contract StreamWeightGateTest is StreamWeightActorTest {
         assertEq(lastChecked, 2, "quarter advances past the init lastCheckedQuarter=1");
 
         // The step is queued to f02 as an uncancellable STEP_WEIGHT write and lands once the
-        // mock's own timelock elapses: floor/vStart/cap = (0+3) * STEP, tStart = qEnd(2).
+        // mock's own timelock elapses: floor/vStart/cap = (0+3) * STEP, tStart = quarterStart(2).
         vm.roll(block.number + Epoch.unwrap(MAINNET_TIMELOCK));
         rewardActor().mockSettle();
         (uint256 b, uint256 r, uint64 s,) = _storedGateParams();
@@ -397,7 +397,7 @@ contract StreamWeightGateTest is StreamWeightActorTest {
         IServiceRewardsActor sra = _sraMock();
         _mockFpv(sra, 2, 3499 ether); // below
         _mockFpv(sra, 3, 3500 ether); // cleared (threshold for steps=0 is still 3500)
-        _mockQEnd(sra, 3, 2000);
+        _mockQuarterStart(sra, 3, 2000);
 
         actor.quarterlyGateCheck();
         actor.quarterlyGateCheck();
@@ -443,7 +443,7 @@ contract StreamWeightGateTest is StreamWeightActorTest {
         _registerAndActivate(SERVICE_ID);
         IServiceRewardsActor sra = _sraMock();
         _mockFpv(sra, 2, 3500 ether); // == threshold: clears
-        _mockQEnd(sra, 2, 1000);
+        _mockQuarterStart(sra, 2, 1000);
 
         vm.expectEmit(true, true, true, true);
         emit StreamWeightActor.QuarterlyGateCheckResult(2, true, 1);
@@ -471,7 +471,7 @@ contract StreamWeightGateTest is StreamWeightActorTest {
         for (uint64 steps = 0; steps < 8; steps++) {
             uint64 quarter = 2 + steps;
             _mockFpv(sra, quarter, 1e30); // clears every threshold up to ratio^7 * base
-            _mockQEnd(sra, quarter, 1000 * (steps + 1));
+            _mockQuarterStart(sra, quarter, 1000 * (steps + 1));
 
             actor.quarterlyGateCheck();
             (,, uint64 s, uint64 lastChecked) = _storedGateParams();
@@ -507,7 +507,7 @@ contract StreamWeightGateTest is StreamWeightActorTest {
         _registerAndActivate(SERVICE_ID);
         IServiceRewardsActor sra = _sraMock();
         _mockFpv(sra, 2, 3500 ether);
-        _mockQEnd(sra, 2, 1000);
+        _mockQuarterStart(sra, 2, 1000);
 
         // A STEP_WEIGHT batch still inside its timelock holds the schedule-wide slot, so the gate's
         // own write is rejected at queue time (pending write exists) rather than admitted.

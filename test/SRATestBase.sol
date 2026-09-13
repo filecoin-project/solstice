@@ -71,11 +71,11 @@ contract SRATestBase is MockRewardTest {
             WeightRecord({vStart: 0, slope: 0, tStart: Epoch.wrap(0), floor: 0, cap: WAD}),
             address(sra),
             initialShares,
-            uint64(block.number) + MAINNET_TIMELOCK
+            uint64(block.number) + Epoch.unwrap(MAINNET_TIMELOCK)
         );
         require(exitCode == 0, "registerServiceStream failed");
 
-        vm.roll(block.number + MAINNET_TIMELOCK);
+        vm.roll(block.number + Epoch.unwrap(MAINNET_TIMELOCK));
         // trigger one dispatch: the mock's handle_filecoin_method entry runs _settle() first, applying the due registration.
         rewardActor().mockAwardBlockReward(0);
     }
