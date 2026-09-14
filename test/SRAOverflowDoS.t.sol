@@ -1,22 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 pragma solidity ^0.8.36;
 
-// Overflow DoS regression tests — 3 overflow-DoS vulnerabilities sharing one root cause:
-// the FilecoinPayVolume input fields had no business-domain upper-bound validation.
-//
-//   Anchor pollution → network-wide permanent DoS: obsolete after FIPs#1275
-//        (the PRICE_BAND anchor/_checkPriceBand are gone — FIL→USD conversion is
-//        off-chain, so no on-chain band arithmetic exists).
-//   finalizeConversion overflow → quarterly settlement stuck: obsolete after
-//        FIPs#1275 (no on-chain FIL→USD conversion; _finalizeConversion removed).
-//   Huge USD total → _computeShares overflow → quarterly settlement stuck:
-//        still applicable — the single USD total feeds usds[i] * SHARE_TOTAL in
-//        _computeShares; the fix is the MAX_FILECOIN_PAY_VOLUME_USD business-domain bound enforced
-//        at postVolume/correctVolume.
-//
-// Expected fix behavior (locked by these tests):
-//   - a USD total beyond the business bound is rejected at the entry; a normal
-//     total must let submitShares settle (system stays operational).
+// Overflow DoS regression (V3): a huge FilecoinPayVolume USD total would overflow _computeShares
+// and wedge quarterly settlement — the FilecoinPayVolume inputs had no business-domain
+// upper-bound validation. The fix is the MAX_FILECOIN_PAY_VOLUME_USD bound enforced at
+// postVolume/correctVolume: a total beyond it is rejected at the entry, and a normal total lets
+// submitShares settle (system stays operational).
 
 import {SERVICE_ID, Share} from "../src/lib/FVMRewardTypes.sol";
 import {SRATestBase} from "./SRATestBase.sol";
@@ -34,17 +23,17 @@ contract SRAOverflowDoS is SRATestBase {
     function test_V3_HugeUsd_SystemStaysOperational() public {
         address attacker = makeAddr("v3-attacker");
         address victim = makeAddr("v3-victim");
-        _admit(attacker);
-        _admit(victim);
+        _admit(attacker, attacker);
+        _admit(victim, victim);
 
-        vm.roll(_qEnd(0) + 1);
+        vm.roll(_quarterStart(0) + 1);
         vm.prank(attacker);
         try sra.postVolume(0, FixedU18.wrap(EXTREME)) {} catch {}
 
         vm.prank(victim);
         sra.postVolume(0, FixedU18.wrap(100e18));
 
-        vm.roll(_qVerifyEnd(0) + 1);
+        vm.roll(_bindingStart(0) + 1);
         sra.submitShares(0); // must not overflow
 
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
@@ -55,9 +44,9 @@ contract SRAOverflowDoS is SRATestBase {
     /// (expected fix: business-domain upper bound MAX_FILECOIN_PAY_VOLUME_USD on the single USD total).
     function test_V3_HugeUsd_RejectedByPostVolume() public {
         address attacker = makeAddr("v3-reject");
-        _admit(attacker);
+        _admit(attacker, attacker);
 
-        vm.roll(_qEnd(0) + 1);
+        vm.roll(_quarterStart(0) + 1);
         vm.prank(attacker);
         vm.expectRevert();
         sra.postVolume(0, FixedU18.wrap(EXTREME));

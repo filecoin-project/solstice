@@ -21,7 +21,7 @@ contract StreamWeightActor is UnanimousProxy {
     /// @notice Deploys the actor with its two initial owners, bound to a Service Rewards Actor.
     /// @param owner1 First owner.
     /// @param owner2 Second owner.
-    /// @param sra Service Rewards Actor supplying QUARTER/HOLD and gating `quarterlyGateCheck`.
+    /// @param sra Service Rewards Actor
     constructor(address owner1, address owner2, Epoch hold, IServiceRewardsActor sra)
         UnanimousProxy(owner1, owner2, hold)
     {
@@ -102,8 +102,21 @@ contract StreamWeightActor is UnanimousProxy {
         FVMRewards.cancelPendingWeight(op);
     }
 
+    /// @notice An owner cancels a pending unanimous task before it executes.
+    /// @param taskId The pending task's identifier, usually keccak256(msg.data) of its submission.
+    function veto(bytes32 taskId) external {
+        _veto(taskId);
+    }
+
     /// @notice All 8 gate steps have already been taken.
     error StepsComplete();
+
+    /// @notice Gate params exceed GATE_STEPS.
+    error StepsOutOfRange();
+
+    /// @notice Reports the result of a successful quarterlyGateCheck
+    /// @param passed Whether the volume threshold was met
+    event QuarterlyGateCheckResult(uint64 indexed quarter, bool passed, uint64 steps);
 
     /// @notice Advances the quarterly gate by one quarter, stepping SERVICE_ID's weight schedule
     /// if the elapsed quarter's aggregated FilecoinPayVolume cleared the next volume threshold.
@@ -111,19 +124,20 @@ contract StreamWeightActor is UnanimousProxy {
     function quarterlyGateCheck() external {
         GateParamsLibrary.GateParamsInfo storage gateParamsInfo = GateParamsLibrary.getGateParamsSlot();
         GateParams memory loaded = gateParamsInfo.params;
-        require(loaded.steps < 8, StepsComplete());
+        require(loaded.steps < GateParamsLibrary.GATE_STEPS, StepsComplete());
 
         uint64 quarter = ++gateParamsInfo.lastCheckedQuarter;
         // NOTE this will enforce afterBinding()
         FixedU18 fpv = SRA.aggregatedFilecoinPayVolume(quarter);
 
-        if (fpv >= loaded.nextThreshold()) {
+        bool passed = fpv >= loaded.nextThreshold();
+        if (passed) {
             int256 next = (int256(uint256(loaded.steps)) + 3) * STEP;
 
             WeightRecordUpdate[] memory updates = new WeightRecordUpdate[](1);
             updates[0].id = SERVICE_ID;
             updates[0].record.floor = next;
-            updates[0].record.tStart = SRA.qEnd(quarter);
+            updates[0].record.tStart = SRA.quarterStart(quarter);
             updates[0].record.vStart = next;
             updates[0].record.cap = next;
             updates[0].record.slope = 0;
@@ -131,11 +145,13 @@ contract StreamWeightActor is UnanimousProxy {
             gateParamsInfo.params.steps++;
             FVMRewards.stepWeightRecords(updates);
         }
+        emit QuarterlyGateCheckResult(quarter, passed, loaded.steps + (passed ? 1 : 0));
     }
 
     /// @notice Overwrites the quarterly gate's parameters; has a HOLD-epoch timelock after unanimity.
     /// @param params New volume target and step state.
     function setGateParams(GateParams calldata params) external unanimous(keccak256(msg.data), HOLD) {
+        require(params.steps <= GateParamsLibrary.GATE_STEPS, StepsOutOfRange());
         GateParamsLibrary.getGateParamsSlot().params = params;
     }
 }

@@ -19,6 +19,7 @@ contract UnanimousGovernance {
     error HoldUntil(Epoch until);
     error NotOwner(address account);
     error AlreadyApproved();
+    error TaskNotFound(bytes32 taskId);
 
     modifier anyOwner() {
         require(msg.sender.isOwner(), NotOwner(msg.sender));
@@ -119,6 +120,7 @@ contract UnanimousGovernance {
 
         // modify
         require(msg.sender.isOwner(), NotOwner(msg.sender));
+        if (taskInfo.task.modified == UNSUBMITTED) revert TaskNotFound(taskId);
         delete taskInfo.task;
 
         emit Rejected(taskId, msg.sender);

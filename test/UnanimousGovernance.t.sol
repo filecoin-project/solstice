@@ -285,6 +285,38 @@ contract UnanimousGovernanceTest is Test {
         harness.vetoAddOwner(newOwner);
     }
 
+    function test_veto_unknownTask_reverts() public {
+        harness.seedOwner(alice);
+        bytes32 taskId = harness.addOwnerTaskId(makeAddr("ghost"));
+
+        vm.expectRevert(abi.encodeWithSelector(UnanimousGovernance.TaskNotFound.selector, taskId));
+        vm.prank(alice);
+        harness.vetoAddOwner(makeAddr("ghost"));
+    }
+
+    function test_veto_unknownTask_nonOwner_stillRevertsNotOwner() public {
+        harness.seedOwner(alice);
+
+        vm.expectRevert(abi.encodeWithSelector(UnanimousGovernance.NotOwner.selector, stranger));
+        vm.prank(stranger);
+        harness.vetoAddOwner(makeAddr("ghost"));
+    }
+
+    function test_veto_afterTaskCleared_reverts() public {
+        harness.seedOwner(alice);
+        harness.seedOwner(bob);
+        bytes32 taskId = harness.addOwnerTaskId(newOwner);
+
+        vm.prank(alice);
+        harness.addOwner(newOwner);
+        vm.prank(bob);
+        harness.vetoAddOwner(newOwner);
+
+        vm.expectRevert(abi.encodeWithSelector(UnanimousGovernance.TaskNotFound.selector, taskId));
+        vm.prank(bob);
+        harness.vetoAddOwner(newOwner);
+    }
+
     function test_doubleApproval_byOwner_reverts() public {
         harness.seedOwner(alice);
         harness.seedOwner(bob);

@@ -6,7 +6,7 @@ import {FixedU18} from "../lib/FixedU18.sol";
 
 interface IServiceRewardsActor {
     function aggregatedFilecoinPayVolume(uint64 quarter) external view returns (FixedU18 filecoinPayVolume);
-    function qEnd(uint64 quarter) external view returns (Epoch quarterEnd);
+    function quarterStart(uint64 quarter) external view returns (Epoch start);
     function EPOCHS_PER_QUARTER() external view returns (Epoch oneQuarter);
-    function SRA_CANCEL_HOLD() external view returns (Epoch hold);
+    function SRA_UPGRADE_HOLD() external view returns (Epoch hold);
 }

@@ -15,6 +15,8 @@ contract UnanimousProxy is Initializable, UnanimousGovernance, UUPSUpgradeable {
     address private immutable INITIAL_OWNER2;
     Epoch internal immutable HOLD;
 
+    event OwnerReplaced(address indexed prevOwner, address indexed newOwner);
+
     constructor(address owner1, address owner2, Epoch hold) {
         _disableInitializers();
         INITIAL_OWNER1 = owner1;
@@ -33,6 +35,7 @@ contract UnanimousProxy is Initializable, UnanimousGovernance, UUPSUpgradeable {
     function replaceOwner(address prevOwner, address newOwner) external unanimousNoHold(keccak256(msg.data)) {
         prevOwner.removeOwner();
         newOwner.addOwner();
+        emit OwnerReplaced(prevOwner, newOwner);
     }
 
     function _authorizeUpgrade(address newImplementation) internal override unanimous(keccak256(msg.data), HOLD) {}

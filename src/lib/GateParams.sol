@@ -19,6 +19,9 @@ struct GateParams {
 using GateParamsLibrary for GateParams global;
 
 library GateParamsLibrary {
+    /// @dev W2_CAP is reached after (0.50 - 0.10) / 0.05 = 8 gate steps.
+    uint64 internal constant GATE_STEPS = 8;
+
     /// @custom:storage-location erc7201:Solstice.GateParams
     struct GateParamsInfo {
         uint64 lastCheckedQuarter;

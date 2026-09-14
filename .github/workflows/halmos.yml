@@ -35,4 +35,4 @@ jobs:
 
       - name: Run symbolic verification
         run: |
-          halmos --contract QuarterWindowCheck --no-test-constructor
+          halmos --contract QuarterWindowCheck

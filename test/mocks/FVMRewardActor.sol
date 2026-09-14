@@ -17,11 +17,10 @@ import {
     REMOVE_STREAM,
     SET_DISTRIBUTION,
     CANCEL_PENDING,
-    CLAIM,
-    SWA_TIMELOCK
+    CLAIM
 } from "../../src/lib/FVMRewardMethod.sol";
-import {WeightRecord, DistributionKind, Share, PendingOp} from "../../src/lib/FVMRewardTypes.sol";
-import {Epoch} from "../../src/lib/Epoch.sol";
+import {WeightRecord, DistributionKind, Share, PendingOp, WeightRecordUpdate} from "../../src/lib/FVMRewardTypes.sol";
+import {Epoch, currentEpoch} from "../../src/lib/Epoch.sol";
 import {FixedU18} from "../../src/lib/FixedU18.sol";
 
 /// @dev Weights, and per-orchestrator shares, are WAD-scaled: 1e18 == 1.0 == 100%.
@@ -40,6 +39,9 @@ uint64 constant FIRST_EXPORTED_METHOD_NUMBER = 1 << 24;
 
 /// @dev Same value as WAD, typed uint256, so summing shares needs no signed-to-unsigned cast.
 uint256 constant SHARE_TOTAL = 1e18;
+
+/// @dev 7 days at 30s/epoch.
+Epoch constant MAINNET_TIMELOCK = Epoch.wrap(20160);
 
 struct LedgerRow {
     address wallet;
@@ -62,6 +64,7 @@ struct Stream {
     DistributionKind kind;
     address writer;
     Share[] shares;
+    uint256 strippedBurn; // f099 share total stripped from the last SetShares (f099 rows are not stored)
     uint256 accrued;
     Ledger payableLedger;
     Ledger claimedPeriod;
@@ -132,7 +135,7 @@ struct MockState {
     uint256 totalBurnMinted;
     uint256 totalServiceMinted;
     uint64 nextTransitionEpoch;
-    uint64 swaTimelockEpochs;
+    Epoch swaTimelockEpochs;
     StreamView[] streams;
     TombstoneView[] tombstones;
     PendingView[] pendingWritesQueue;
@@ -155,7 +158,7 @@ contract FVMRewardActor {
     /// @notice Per-network SWA write hold, in epochs; mutable via mockSwaTimelockEpochs.
     /// @dev Left uninitialized inline (vm.etch copies bytecode, not storage -- an inline
     /// initializer would never apply); mockInit() sets it after etching.
-    uint64 public swaTimelockEpochs;
+    Epoch public swaTimelockEpochs;
 
     /// @notice Test helper flag: when set, SetShares returns USR_FORBIDDEN unconditionally.
     /// @dev A1 failure-injection switch - triggers the SetSharesFailed revert on the SRA
@@ -200,7 +203,7 @@ contract FVMRewardActor {
 
     /// @notice Test helper: sets the defaults an inline initializer would give this contract; call once, right after etching.
     function mockInit() external {
-        swaTimelockEpochs = SWA_TIMELOCK;
+        swaTimelockEpochs = MAINNET_TIMELOCK;
         nextTransitionEpoch = type(uint64).max;
     }
 
@@ -210,7 +213,7 @@ contract FVMRewardActor {
     }
 
     function mockSwaTimelockEpochs(uint64 epochs) external {
-        swaTimelockEpochs = epochs;
+        swaTimelockEpochs = Epoch.wrap(epochs);
     }
 
     /// @notice Test helper: flip the SetShares failure-injection flag (A1).
@@ -257,6 +260,11 @@ contract FVMRewardActor {
     /// @notice Test helper: an EXPLICIT stream's wallet-to-share map.
     function getShares(uint64 streamId) external view returns (Share[] memory) {
         return _streams[streamId].shares;
+    }
+
+    /// @notice Test helper: the f099 share total stripped from the last SetShares
+    function strippedBurnOf(uint64 streamId) external view returns (uint256) {
+        return _streams[streamId].strippedBurn;
     }
 
     /// @notice Test helper: read back a live stream's payable ledger directly.
@@ -312,22 +320,48 @@ contract FVMRewardActor {
     // SetWeightRecords / StepWeightRecords -- SWA only, queued under separate ops.
     // -------------------------------------------------------------------------
 
+    /// @notice Test helper: queues a STEP_WEIGHT batch through the real queue-time validation so
+    /// the schedule-wide slot is occupied, as a gate step still inside its timelock would; the
+    /// next STEP_WEIGHT enqueue (the gate's own) is then refused by the pending-slot check.
+    /// @dev The SWA-only sender gate is skipped -- the caller is a test, not the SWA -- but
+    /// settling, validation, and storage run exactly as on the wire STEP_WEIGHT path.
+    function mockQueueStepWeight(WeightRecordUpdate[] memory updates) external returns (uint32 exitCode) {
+        uint64[] memory ids = new uint64[](updates.length);
+        WeightRecord[] memory records = new WeightRecord[](updates.length);
+        for (uint256 i = 0; i < updates.length; i++) {
+            ids[i] = updates[i].id;
+            records[i] = updates[i].record;
+        }
+        _settle();
+        return _enqueueWeightBatch(PendingOp.STEP_WEIGHT, ids, records);
+    }
+
     function _queueWeightWrite(PendingOp op, bytes calldata params) internal returns (uint32, uint64, bytes memory) {
         if (msg.sender != swa) return (USR_FORBIDDEN, 0, "");
         // Params CBOR: [[id...], [[vStart,slope,tStart,floor,cap]...]]
         (uint64[] memory ids, WeightRecord[] memory records) = _decodeSetWeightRecordsParams(params);
-        if (ids.length != records.length) return (USR_ILLEGAL_ARGUMENT, 0, "");
+        return (_enqueueWeightBatch(op, ids, records), 0, "");
+    }
+
+    /// @dev Decoded-batch validation and storage shared by the wire path and mockQueueStepWeight,
+    /// so the fixture cannot drift from a real enqueue. The SWA-only sender gate stays in the wire
+    /// path (the fixture's caller is a test).
+    function _enqueueWeightBatch(PendingOp op, uint64[] memory ids, WeightRecord[] memory records)
+        private
+        returns (uint32 exitCode)
+    {
+        if (ids.length != records.length) return USR_ILLEGAL_ARGUMENT;
 
         // One slot per op for the whole schedule, so a pending batch blocks the next one outright.
-        if (_pendingWeightExists[op]) return (USR_ILLEGAL_ARGUMENT, 0, "");
-        if (ids.length == 0) return (USR_ILLEGAL_ARGUMENT, 0, "");
+        if (_pendingWeightExists[op]) return USR_ILLEGAL_ARGUMENT;
+        if (ids.length == 0) return USR_ILLEGAL_ARGUMENT;
 
-        uint64 effectiveEpoch = uint64(block.number) + swaTimelockEpochs;
+        uint64 effectiveEpoch = Epoch.unwrap(currentEpoch() + swaTimelockEpochs);
         for (uint256 i = 0; i < ids.length; i++) {
-            if (!_streams[ids[i]].exists) return (USR_NOT_FOUND, 0, "");
-            if (!_sane(records[i])) return (USR_ILLEGAL_ARGUMENT, 0, "");
+            if (!_streams[ids[i]].exists) return USR_NOT_FOUND;
+            if (!_sane(records[i])) return USR_ILLEGAL_ARGUMENT;
             for (uint256 j = 0; j < i; j++) {
-                if (ids[j] == ids[i]) return (USR_ILLEGAL_ARGUMENT, 0, "");
+                if (ids[j] == ids[i]) return USR_ILLEGAL_ARGUMENT;
             }
         }
         NewWrite memory proposed;
@@ -336,7 +370,7 @@ contract FVMRewardActor {
         proposed.effectiveEpoch = effectiveEpoch;
         proposed.batchIds = ids;
         proposed.batchRecords = records;
-        if (!_admits(proposed)) return (USR_ILLEGAL_ARGUMENT, 0, "");
+        if (!_admits(proposed)) return USR_ILLEGAL_ARGUMENT;
 
         WeightBatch storage batch = _pendingWeight[op];
         batch.effectiveEpoch = effectiveEpoch;
@@ -347,7 +381,7 @@ contract FVMRewardActor {
         _pendingWeightExists[op] = true;
         _pendingKeys.push(PendingKey({hasId: false, id: 0, op: op}));
         if (effectiveEpoch < nextTransitionEpoch) nextTransitionEpoch = effectiveEpoch;
-        return (0, 0, "");
+        return 0;
     }
 
     // -------------------------------------------------------------------------
@@ -397,7 +431,14 @@ contract FVMRewardActor {
         // rejects naming the old address as the new one.
         if (!burning && _shareIndex(s, newAddr) != type(uint256).max) return (USR_ILLEGAL_ARGUMENT, 0, "");
 
+        // f02 accounts a burn rename as a stripped f099 row even though the row leaves storage, so
+        // the stream's stripped total must track the map's cumulative deficit against 1e18: carry the
+        // prior burn and fold in the dropped share (SetShares with an explicit f099 row lands on the
+        // same state — the twin test asserts the two are indistinguishable). A plain rename keeps it.
+        uint256 burnShare = burning ? _shareOf(s, oldAddr) : 0;
+        uint256 carriedBurn = s.strippedBurn;
         if (!_installShares(s, _sharesWithRowReplaced(s, oldAddr, newAddr))) return (USR_ILLEGAL_ARGUMENT, 0, "");
+        s.strippedBurn = carriedBurn + burnShare;
         return (0, 0, "");
     }
 
@@ -524,7 +565,7 @@ contract FVMRewardActor {
         } else if (shares.length != 0) {
             return (USR_ILLEGAL_ARGUMENT, 0, "");
         }
-        if (activationEpoch < uint64(block.number) + swaTimelockEpochs) return (USR_ILLEGAL_ARGUMENT, 0, "");
+        if (activationEpoch < Epoch.unwrap(currentEpoch() + swaTimelockEpochs)) return (USR_ILLEGAL_ARGUMENT, 0, "");
 
         NewWrite memory proposed;
         proposed.present = true;
@@ -562,14 +603,14 @@ contract FVMRewardActor {
         proposed.hasId = true;
         proposed.id = id;
         proposed.op = PendingOp.REMOVE;
-        proposed.effectiveEpoch = uint64(block.number) + swaTimelockEpochs;
+        proposed.effectiveEpoch = Epoch.unwrap(currentEpoch() + swaTimelockEpochs);
         if (!_admits(proposed)) return (USR_ILLEGAL_ARGUMENT, 0, "");
 
         _queueWrite(
             id,
             PendingOp.REMOVE,
             Pending({
-                effectiveEpoch: uint64(block.number) + swaTimelockEpochs,
+                effectiveEpoch: Epoch.unwrap(currentEpoch() + swaTimelockEpochs),
                 weightRecord: WeightRecord({vStart: 0, slope: 0, tStart: Epoch.wrap(0), floor: 0, cap: 0}),
                 distributionKind: DistributionKind.IMPLICIT,
                 writer: address(0)
@@ -597,14 +638,14 @@ contract FVMRewardActor {
         proposed.hasId = true;
         proposed.id = id;
         proposed.op = PendingOp.SET_DISTRIBUTION;
-        proposed.effectiveEpoch = uint64(block.number) + swaTimelockEpochs;
+        proposed.effectiveEpoch = Epoch.unwrap(currentEpoch() + swaTimelockEpochs);
         if (!_admits(proposed)) return (USR_ILLEGAL_ARGUMENT, 0, "");
 
         _queueWrite(
             id,
             PendingOp.SET_DISTRIBUTION,
             Pending({
-                effectiveEpoch: uint64(block.number) + swaTimelockEpochs,
+                effectiveEpoch: Epoch.unwrap(currentEpoch() + swaTimelockEpochs),
                 weightRecord: WeightRecord({vStart: 0, slope: 0, tStart: Epoch.wrap(0), floor: 0, cap: 0}),
                 distributionKind: DistributionKind.EXPLICIT,
                 writer: writer
@@ -1360,10 +1401,14 @@ contract FVMRewardActor {
 
     /// @dev admit_shares: strip the burn sentinel rows, then store what is left in recipient
     /// order. f02 sorts resolved ID addresses numerically; here the masked ID address carries the
-    /// same order in its low bits, so the address itself is the key.
-    function _admitShares(Share[] storage target, Share[] memory shares) internal {
+    /// same order in its low bits, so the address itself is the key. Returns the stripped f099
+    /// total so the caller can record it.
+    function _admitShares(Share[] storage target, Share[] memory shares) internal returns (uint256 stripped) {
         for (uint256 i = 0; i < shares.length; i++) {
-            if (shares[i].wallet == BURN_ADDRESS) continue;
+            if (shares[i].wallet == BURN_ADDRESS) {
+                stripped += FixedU18.unwrap(shares[i].share);
+                continue;
+            }
             target.push(shares[i]);
             for (uint256 j = target.length - 1; j > 0; j--) {
                 if (uint160(target[j - 1].wallet) <= uint160(target[j].wallet)) break;
@@ -1382,7 +1427,7 @@ contract FVMRewardActor {
         if (_reservedPayableRows(s, shares) > MAX_PAYABLE_ROWS_PER_STREAM) return false;
         _foldAndBurnResidue(s);
         delete s.shares;
-        _admitShares(s.shares, shares);
+        s.strippedBurn = _admitShares(s.shares, shares);
         return true;
     }
 
