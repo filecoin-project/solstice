@@ -18,6 +18,8 @@ remappings = [
     'fvm-solidity/=lib/fvm-solidity/src/',
 ]
 
+fs_permissions = [{ access = "read-write", path = "./deployments.json" }]
+
 # Fast invariant campaign for local iteration; CI overrides with FOUNDRY_PROFILE=ci.
 [profile.default.invariant]
 runs = 16
@@ -33,6 +35,7 @@ exclude_lints = [
     "incorrect-shift",
     "mixed-case-function",
     "multi-contract-file",
+    "unsafe-cheatcode",
     "unsafe-typecast",
     "unwrapped-modifier-logic",
 ]
