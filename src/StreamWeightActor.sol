@@ -7,7 +7,7 @@ import {FixedU18} from "./lib/FixedU18.sol";
 import {GateParams, GateParamsLibrary} from "./lib/GateParams.sol";
 import {FVMRewards} from "./lib/FVMRewards.sol";
 import {PendingOp, SERVICE_ID, Share, WeightRecord, WeightRecordUpdate} from "./lib/FVMRewardTypes.sol";
-import {UnanimousProxy} from "./lib/UnanimousProxy.sol";
+import {UnanimousProxied} from "./lib/UnanimousProxied.sol";
 
 int256 constant STEP = 5e16; // 5%
 
@@ -15,7 +15,7 @@ int256 constant STEP = 5e16; // 5%
 /// (FIP-0118, solstice#3): registers, removes, reweights, and reassigns writers by stream id.
 /// @dev Writes require unanimous owner approval, except `cancelPending`/`cancelPendingWeight`
 /// (any single owner, immediate) and `quarterlyGateCheck` (fully permissionless).
-contract StreamWeightActor is UnanimousProxy {
+contract StreamWeightActor is UnanimousProxied {
     IServiceRewardsActor immutable SRA;
 
     /// @notice Deploys the actor with its two initial owners, bound to a Service Rewards Actor.
@@ -23,7 +23,7 @@ contract StreamWeightActor is UnanimousProxy {
     /// @param owner2 Second owner.
     /// @param sra Service Rewards Actor
     constructor(address owner1, address owner2, Epoch hold, IServiceRewardsActor sra)
-        UnanimousProxy(owner1, owner2, hold)
+        UnanimousProxied(owner1, owner2, hold)
     {
         SRA = sra;
     }

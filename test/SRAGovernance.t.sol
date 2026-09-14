@@ -15,7 +15,7 @@ import {ServiceRewardsActor} from "../src/ServiceRewardsActor.sol";
 import {Epoch} from "../src/lib/Epoch.sol";
 import {FilecoinPayVolume} from "../src/lib/SraTypes.sol";
 import {UnanimousGovernance} from "../src/lib/UnanimousGovernance.sol";
-import {UnanimousProxy} from "../src/lib/UnanimousProxy.sol";
+import {UnanimousProxied} from "../src/lib/UnanimousProxied.sol";
 
 contract SRAGovernanceTest is SRATestBase {
     // ------------------------------------------------------------------------
@@ -178,7 +178,7 @@ contract SRAGovernanceTest is SRATestBase {
         vm.prank(owner1);
         sra.replaceOwner(owner1, newOwner); // first vote only: not a full vote, ownership unchanged
         vm.expectEmit(true, true, false, false, address(sra));
-        emit UnanimousProxy.OwnerReplaced(owner1, newOwner);
+        emit UnanimousProxied.OwnerReplaced(owner1, newOwner);
         vm.prank(owner2);
         sra.replaceOwner(owner1, newOwner); // second vote executes immediately (unanimousNoHold)
 

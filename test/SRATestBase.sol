@@ -24,7 +24,7 @@ import {FixedU18} from "../src/lib/FixedU18.sol";
 import {Binding} from "../src/lib/SraTypes.sol";
 import {SERVICE_ID, Share, WeightRecord} from "../src/lib/FVMRewardTypes.sol";
 import {FVMRewards} from "../src/lib/FVMRewards.sol";
-import {UnanimousProxy} from "../src/lib/UnanimousProxy.sol";
+import {UnanimousProxied} from "../src/lib/UnanimousProxied.sol";
 
 /// @notice Common test base: deploys the SRA, builds owners, registers service stream 2, quarterly time utilities.
 contract SRATestBase is MockRewardTest {
@@ -56,7 +56,7 @@ contract SRATestBase is MockRewardTest {
                 Epoch.wrap(SRA_UPGRADE_HOLD)
             )
         );
-        address proxy = address(new ERC1967Proxy(sraImpl, abi.encodeCall(UnanimousProxy.initialize, ())));
+        address proxy = address(new ERC1967Proxy(sraImpl, abi.encodeCall(UnanimousProxied.initialize, ())));
         serviceRewardsActor = ServiceRewardsActor(proxy);
     }
 

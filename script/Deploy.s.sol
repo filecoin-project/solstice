@@ -8,11 +8,11 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/erc1967/ERC1967Proxy.s
 import {ServiceRewardsActor} from "../src/ServiceRewardsActor.sol";
 import {StreamWeightActor} from "../src/StreamWeightActor.sol";
 import {Epoch} from "../src/lib/Epoch.sol";
-import {UnanimousProxy} from "../src/lib/UnanimousProxy.sol";
+import {UnanimousProxied} from "../src/lib/UnanimousProxied.sol";
 
 contract DeployScript is Script {
     function initializeProxy(address implementation) internal returns (address proxy) {
-        proxy = address(new ERC1967Proxy(implementation, abi.encodeCall(UnanimousProxy.initialize, ())));
+        proxy = address(new ERC1967Proxy(implementation, abi.encodeCall(UnanimousProxied.initialize, ())));
     }
 
     function run(

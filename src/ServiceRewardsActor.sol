@@ -30,9 +30,9 @@ import {FVMRewards} from "./lib/FVMRewards.sol";
 import {SERVICE_ID, Share} from "./lib/FVMRewardTypes.sol";
 import {Binding, FilecoinPayVolume, Reassignment} from "./lib/SraTypes.sol";
 import {SraStorage} from "./lib/SraStorage.sol";
-import {UnanimousProxy} from "./lib/UnanimousProxy.sol";
+import {UnanimousProxied} from "./lib/UnanimousProxied.sol";
 
-contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxy {
+contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
     /// @dev Total share (f02 encoding constraint: Σ shares must be exactly == 1e18).
     FixedU18 private constant SHARE_TOTAL = ONE;
 
@@ -108,7 +108,7 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxy {
         Epoch verificationWindow,
         Epoch activationEpoch,
         Epoch upgradeHold
-    ) UnanimousProxy(owner1, owner2, upgradeHold) {
+    ) UnanimousProxied(owner1, owner2, upgradeHold) {
         require(
             Epoch.unwrap(epochsPerQuarter) > 0 && Epoch.unwrap(postPeriod) > 0 && Epoch.unwrap(verificationWindow) > 0
                 && uint256(Epoch.unwrap(postPeriod)) + uint256(Epoch.unwrap(verificationWindow))

@@ -8,7 +8,7 @@ import {Epoch} from "./Epoch.sol";
 import {UnanimousGovernance} from "./UnanimousGovernance.sol";
 import {OwnersLibrary} from "./Owners.sol";
 
-contract UnanimousProxy is Initializable, UnanimousGovernance, UUPSUpgradeable {
+contract UnanimousProxied is Initializable, UnanimousGovernance, UUPSUpgradeable {
     using OwnersLibrary for address;
 
     address private immutable INITIAL_OWNER1;

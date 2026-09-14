@@ -10,7 +10,7 @@ import {IServiceRewardsActor} from "../src/interfaces/IServiceRewardsActor.sol";
 import {Share, WeightRecord, WeightRecordUpdate} from "../src/lib/FVMRewardTypes.sol";
 import {Epoch} from "../src/lib/Epoch.sol";
 import {FixedU18} from "../src/lib/FixedU18.sol";
-import {UnanimousProxy} from "../src/lib/UnanimousProxy.sol";
+import {UnanimousProxied} from "../src/lib/UnanimousProxied.sol";
 
 /// @notice Common SWA test base: deploys the StreamWeightActor (behind its ERC1967 proxy) with a
 ///         mainnet-hold SRA mock, and provides the registration/record-building helpers shared by
@@ -32,7 +32,7 @@ contract SWATestBase is MockRewardTest {
         address sra = makeAddr("sra");
 
         address swaImpl = address(new StreamWeightActor(owner1, owner2, MAINNET_TIMELOCK, IServiceRewardsActor(sra)));
-        address proxy = address(new ERC1967Proxy(swaImpl, abi.encodeCall(UnanimousProxy.initialize, ())));
+        address proxy = address(new ERC1967Proxy(swaImpl, abi.encodeCall(UnanimousProxied.initialize, ())));
         actor = StreamWeightActor(proxy);
         rewardActor().mockSwa(address(actor));
     }
