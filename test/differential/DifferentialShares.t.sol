@@ -10,7 +10,6 @@ pragma solidity ^0.8.36;
 // is kept.
 
 import {ServiceRewardsActor, Share} from "../../src/ServiceRewardsActor.sol";
-import {Epoch} from "../../src/lib/Epoch.sol";
 import {SRATestBase} from "../SRATestBase.sol";
 import {FixedU18} from "../../src/lib/FixedU18.sol";
 import {DifferentialCases} from "./DifferentialCases.sol";
@@ -106,18 +105,6 @@ contract DifferentialSharesTest is SRATestBase {
         for (uint256 i = 0; i < n; i++) {
             w[i] = address(uint160(i + 1)); // non-zero addresses; share assertions only inspect values
         }
-    }
-
-    function _newSra() internal returns (ServiceRewardsActor s) {
-        s = new ServiceRewardsActor(
-            owner1,
-            owner2,
-            Epoch.wrap(EPOCHS_PER_QUARTER),
-            Epoch.wrap(POST_PERIOD),
-            Epoch.wrap(VERIFICATION_WINDOW),
-            Epoch.wrap(ACTIVATION_EPOCH),
-            Epoch.wrap(SRA_UPGRADE_HOLD)
-        );
     }
 
     /// @dev Runs the governance two-vote admit on the given SRA instance (the base _admit always operates on the sra instance).

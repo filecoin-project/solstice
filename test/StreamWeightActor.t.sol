@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 pragma solidity ^0.8.36;
 
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+
 import {USR_FORBIDDEN, USR_ILLEGAL_ARGUMENT, USR_NOT_FOUND} from "fvm-solidity/FVMErrors.sol";
 
 import {MockRewardTest} from "./mocks/MockRewardTest.sol";
@@ -11,6 +13,7 @@ import {DistributionKind, PendingOp, Share, WeightRecord, WeightRecordUpdate} fr
 import {Epoch} from "../src/lib/Epoch.sol";
 import {FixedU18} from "../src/lib/FixedU18.sol";
 import {FVMRewards} from "../src/lib/FVMRewards.sol";
+import {UnanimousProxy} from "../src/lib/UnanimousProxy.sol";
 
 contract StreamWeightActorTest is MockRewardTest {
     StreamWeightActor actor;
@@ -27,7 +30,9 @@ contract StreamWeightActorTest is MockRewardTest {
 
         address sra = makeAddr("sra");
 
-        actor = new StreamWeightActor(owner1, owner2, MAINNET_TIMELOCK, IServiceRewardsActor(sra));
+        address swaImpl = address(new StreamWeightActor(owner1, owner2, MAINNET_TIMELOCK, IServiceRewardsActor(sra)));
+        address proxy = address(new ERC1967Proxy(swaImpl, abi.encodeCall(UnanimousProxy.initialize, ())));
+        actor = StreamWeightActor(proxy);
         rewardActor().mockSwa(address(actor));
     }
 

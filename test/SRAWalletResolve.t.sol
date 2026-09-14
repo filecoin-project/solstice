@@ -9,13 +9,11 @@ pragma solidity ^0.8.36;
 //   [D] regression — events keep the raw wire spelling; existing wire vectors stay untouched
 
 import {ServiceRewardsActor} from "../src/ServiceRewardsActor.sol";
+import {FVMActor} from "fvm-solidity/FVMActor.sol";
 import {BURN_ADDRESS} from "fvm-solidity/FVMActors.sol";
 import {SRATestBase} from "./SRATestBase.sol";
 
 contract SRAWalletResolveTest is SRATestBase {
-    bytes4 private constant ZERO_WALLET_ERROR = bytes4(keccak256("ZeroWallet(address)"));
-    bytes4 private constant UNRESOLVED_WALLET_ERROR = bytes4(keccak256("UnresolvedWallet(address)"));
-
     // ------------------------------------------------------------------------
     // [A] zero payout wallet
     // ------------------------------------------------------------------------
@@ -28,7 +26,7 @@ contract SRAWalletResolveTest is SRATestBase {
         address orch = _wallet("a1-orch");
         vm.prank(owner1);
         sra.addOrchestrator(orch, address(0)); // vote 1 (approve)
-        vm.expectRevert(abi.encodeWithSelector(ZERO_WALLET_ERROR, address(0)));
+        vm.expectRevert(ServiceRewardsActor.ZeroWallet.selector);
         vm.prank(owner2);
         sra.addOrchestrator(orch, address(0)); // vote 2 executes the body -> ZeroWallet
         assertFalse(sra.isAdmitted(orch));
@@ -42,7 +40,7 @@ contract SRAWalletResolveTest is SRATestBase {
         address orch = _wallet("a1b-orch");
         vm.prank(owner1);
         sra.addOrchestrator(orch, address(0));
-        vm.expectRevert(abi.encodeWithSelector(ZERO_WALLET_ERROR, address(0)));
+        vm.expectRevert(ServiceRewardsActor.ZeroWallet.selector);
         vm.prank(owner2);
         sra.addOrchestrator(orch, address(0));
         assertFalse(sra.isAdmitted(orch));
@@ -54,7 +52,7 @@ contract SRAWalletResolveTest is SRATestBase {
         _admit(oldOrch, _wallet("a2-wallet"));
         vm.prank(owner1);
         sra.replaceWallet(oldOrch, address(0));
-        vm.expectRevert(abi.encodeWithSelector(ZERO_WALLET_ERROR, address(0)));
+        vm.expectRevert(ServiceRewardsActor.ZeroWallet.selector);
         vm.prank(owner2);
         sra.replaceWallet(oldOrch, address(0)); // vote 2 executes the body -> ZeroWallet
     }
@@ -71,9 +69,9 @@ contract SRAWalletResolveTest is SRATestBase {
         address ghost = makeAddr("b4a-ghost"); // never registered -> resolve returns exists=false
         vm.prank(owner1);
         sra.addOrchestrator(orch, ghost);
-        vm.expectRevert(abi.encodeWithSelector(UNRESOLVED_WALLET_ERROR, ghost));
+        vm.expectRevert(abi.encodeWithSelector(FVMActor.EVMActorNotFound.selector, ghost));
         vm.prank(owner2);
-        sra.addOrchestrator(orch, ghost); // vote 2 executes the body -> UnresolvedWallet
+        sra.addOrchestrator(orch, ghost); // vote 2 executes the body -> EVMActorNotFound
         assertFalse(sra.isAdmitted(orch));
     }
 
@@ -84,9 +82,9 @@ contract SRAWalletResolveTest is SRATestBase {
         address ghost = makeAddr("b4b-ghost"); // never registered
         vm.prank(owner1);
         sra.replaceWallet(oldOrch, ghost);
-        vm.expectRevert(abi.encodeWithSelector(UNRESOLVED_WALLET_ERROR, ghost));
+        vm.expectRevert(abi.encodeWithSelector(FVMActor.EVMActorNotFound.selector, ghost));
         vm.prank(owner2);
-        sra.replaceWallet(oldOrch, ghost); // vote 2 executes the body -> UnresolvedWallet
+        sra.replaceWallet(oldOrch, ghost); // vote 2 executes the body -> EVMActorNotFound
     }
 
     /// [B] a registered (resolvable) wallet is admitted — the base semantic the whole suite relies

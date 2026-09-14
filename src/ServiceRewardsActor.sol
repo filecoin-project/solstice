@@ -88,8 +88,7 @@ contract ServiceRewardsActor is UnanimousProxy {
     error AlreadySubmitted(uint64 q);
     error NotLatestQuarter(uint64 q); // FIP-0118 §4.2: an older quarter's shares can never overwrite a newer quarter's
     error TooManyPairs(); // registerPairs batch exceeds MAX_PAIRS
-    error ZeroWallet(address wallet); // the zero address is never a valid payout wallet
-    error UnresolvedWallet(address wallet); // wallet does not resolve to an existing actor (FIP §2.4.4)
+    error ZeroWallet(); // the zero address is never a valid payout wallet
     error DuplicateWallet(address wallet); // another admitted row resolves to the same actor id (byte-equal or cross-spelling)
     error InvalidParameter();
 
@@ -713,7 +712,7 @@ contract ServiceRewardsActor is UnanimousProxy {
     /// @dev the wallet must uniquely resolve to an existing actor (FIP §2.4.4).
     /// The dedup key is the actor id.
     function _assertWalletAdmissible(address wallet, uint64 selfId) internal view {
-        require(wallet != address(0), ZeroWallet(wallet));
+        require(wallet != address(0), ZeroWallet());
         uint64 wid = FVMActor.getActorId(wallet);
         SraStorage.SraStorageRegistry storage r = SraStorage.registry();
         for (uint256 i = 0; i < r.admittedIds.length; i++) {

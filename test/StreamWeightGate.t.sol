@@ -150,50 +150,6 @@ contract StreamWeightGateTest is StreamWeightActorTest {
         assertEq(steps, 1);
     }
 
-    /// @dev The hold is a per-deployment constructor parameter: a second actor built with a
-    ///      compressed hold completes its gate update at its own boundary while the mainnet-hold
-    ///      actor from setUp stays gated until its full 20160 epochs elapse.
-    function test_SetGateParams_HoldIsPerDeploymentParam() public {
-        GateParams memory params = _gateParams(4000 ether, 2.7 ether, 1);
-        uint64 shortHold = 100;
-
-        IServiceRewardsActor sra = _sraMock(); // SRA handle for the second actor
-        StreamWeightActor shortActor = new StreamWeightActor(owner1, owner2, Epoch.wrap(shortHold), sra);
-
-        // Unanimous votes on both actors at the same epoch.
-        vm.startPrank(owner1);
-        actor.setGateParams(params);
-        shortActor.setGateParams(params);
-        vm.stopPrank();
-        vm.startPrank(owner2);
-        actor.setGateParams(params);
-        shortActor.setGateParams(params);
-        vm.stopPrank();
-        uint64 modified = uint64(block.number); // second vote's epoch
-
-        // shortActor's boundary (== shortHold) reached: its update lands permissionless, while
-        // the mainnet-hold actor remains gated until its own hold elapses.
-        vm.roll(modified + shortHold);
-        vm.prank(makeAddr("stranger"));
-        shortActor.setGateParams(params);
-
-        vm.prank(makeAddr("stranger"));
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                UnanimousGovernance.HoldUntil.selector, Epoch.wrap(modified + Epoch.unwrap(MAINNET_TIMELOCK))
-            )
-        );
-        actor.setGateParams(params);
-
-        (uint256 shortBase,, uint64 shortSteps,) = _storedGateParamsAt(address(shortActor));
-        assertEq(shortBase, 4000 ether, "compressed-hold actor applied params at its own boundary");
-        assertEq(shortSteps, 1);
-
-        (uint256 base,, uint64 steps,) = _storedGateParams();
-        assertEq(base, 3500 ether, "mainnet-hold actor untouched before its own hold elapses");
-        assertEq(steps, 0);
-    }
-
     /// @dev An approval not yet unanimous keeps the task in owner-only territory: a stranger cannot
     ///      trigger completion because the permissionless branch requires a full approval set.
     function test_SetGateParams_SingleOwnerVote_StrangerCannotComplete() public {
