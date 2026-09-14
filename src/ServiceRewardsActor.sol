@@ -23,6 +23,7 @@ pragma solidity ^0.8.36;
 import {BURN_ADDRESS} from "fvm-solidity/FVMActors.sol";
 import {FVMActor} from "fvm-solidity/FVMActor.sol";
 
+import {IServiceRewardsActor} from "./interfaces/IServiceRewardsActor.sol";
 import {Epoch, currentEpoch} from "./lib/Epoch.sol";
 import {FixedU18, ONE, ZERO} from "./lib/FixedU18.sol";
 import {FVMRewards} from "./lib/FVMRewards.sol";
@@ -31,7 +32,7 @@ import {Binding, FilecoinPayVolume, Reassignment} from "./lib/SraTypes.sol";
 import {SraStorage} from "./lib/SraStorage.sol";
 import {UnanimousProxy} from "./lib/UnanimousProxy.sol";
 
-contract ServiceRewardsActor is UnanimousProxy {
+contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxy {
     /// @dev Total share (f02 encoding constraint: Σ shares must be exactly == 1e18).
     FixedU18 private constant SHARE_TOTAL = ONE;
 
