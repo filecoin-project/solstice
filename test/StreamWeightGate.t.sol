@@ -13,6 +13,7 @@ import {FixedU18} from "../src/lib/FixedU18.sol";
 import {FVMRewards} from "../src/lib/FVMRewards.sol";
 import {GateParams, VolumeTarget} from "../src/lib/GateParams.sol";
 import {UnanimousGovernance} from "../src/lib/UnanimousGovernance.sol";
+import {OwnersLibrary} from "../src/lib/Owners.sol";
 import {MAINNET_TIMELOCK, MockState} from "./mocks/FVMRewardActor.sol";
 
 /// @dev ERC-7201 storage slot of GateParamsInfo (src/lib/GateParams.sol: Solstice.GateParams).
@@ -96,7 +97,7 @@ contract StreamWeightGateTest is SWATestBase {
     function test_SetGateParams_NotOwner_Reverts() public {
         address stranger = makeAddr("stranger");
         vm.prank(stranger);
-        vm.expectRevert(abi.encodeWithSelector(UnanimousGovernance.NotOwner.selector, stranger));
+        vm.expectRevert(abi.encodeWithSelector(OwnersLibrary.NotOwner.selector, stranger));
         actor.setGateParams(_gateParams(4000 ether, 2.7 ether, 0));
     }
 
@@ -158,7 +159,7 @@ contract StreamWeightGateTest is SWATestBase {
         actor.setGateParams(params); // only one vote
 
         vm.prank(makeAddr("stranger"));
-        vm.expectRevert(abi.encodeWithSelector(UnanimousGovernance.NotOwner.selector, makeAddr("stranger")));
+        vm.expectRevert(abi.encodeWithSelector(OwnersLibrary.NotOwner.selector, makeAddr("stranger")));
         actor.setGateParams(params);
     }
 
@@ -216,7 +217,7 @@ contract StreamWeightGateTest is SWATestBase {
         // approval round instead of completing, and a stranger is not an owner.
         vm.roll(vm.getBlockNumber() + Epoch.unwrap(MAINNET_TIMELOCK));
         vm.prank(makeAddr("stranger"));
-        vm.expectRevert(abi.encodeWithSelector(UnanimousGovernance.NotOwner.selector, makeAddr("stranger")));
+        vm.expectRevert(abi.encodeWithSelector(OwnersLibrary.NotOwner.selector, makeAddr("stranger")));
         actor.setGateParams(params);
 
         (uint256 base,, uint64 steps,) = _storedGateParams();
@@ -232,7 +233,7 @@ contract StreamWeightGateTest is SWATestBase {
         bytes32 taskId = keccak256(abi.encodePacked(StreamWeightActor.setGateParams.selector, abi.encode(params)));
         address stranger = makeAddr("stranger");
         vm.prank(stranger);
-        vm.expectRevert(abi.encodeWithSelector(UnanimousGovernance.NotOwner.selector, stranger));
+        vm.expectRevert(abi.encodeWithSelector(OwnersLibrary.NotOwner.selector, stranger));
         actor.veto(taskId);
     }
 

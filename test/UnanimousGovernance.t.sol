@@ -149,7 +149,7 @@ contract UnanimousGovernanceTest is Test {
     function test_addOwner_nonOwner_cannotApprove() public {
         harness.seedOwner(alice);
 
-        vm.expectRevert(abi.encodeWithSelector(UnanimousGovernance.NotOwner.selector, stranger));
+        vm.expectRevert(abi.encodeWithSelector(OwnersLibrary.NotOwner.selector, stranger));
         vm.prank(stranger);
         harness.addOwner(newOwner);
     }
@@ -280,7 +280,7 @@ contract UnanimousGovernanceTest is Test {
         vm.prank(alice);
         harness.addOwner(newOwner);
 
-        vm.expectRevert(abi.encodeWithSelector(UnanimousGovernance.NotOwner.selector, stranger));
+        vm.expectRevert(abi.encodeWithSelector(OwnersLibrary.NotOwner.selector, stranger));
         vm.prank(stranger);
         harness.vetoAddOwner(newOwner);
     }
@@ -297,7 +297,7 @@ contract UnanimousGovernanceTest is Test {
     function test_veto_unknownTask_nonOwner_stillRevertsNotOwner() public {
         harness.seedOwner(alice);
 
-        vm.expectRevert(abi.encodeWithSelector(UnanimousGovernance.NotOwner.selector, stranger));
+        vm.expectRevert(abi.encodeWithSelector(OwnersLibrary.NotOwner.selector, stranger));
         vm.prank(stranger);
         harness.vetoAddOwner(makeAddr("ghost"));
     }

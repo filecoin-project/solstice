@@ -80,8 +80,7 @@ library OwnersLibrary {
         emit OwnerAdded(owner);
     }
 
-    // Address to remove is not a current owner
-    error NotOwner(address owner);
+    error NotOwner(address account);
     error CannotRemoveLastOwner();
 
     /// @param owner The address to revoke ownership from

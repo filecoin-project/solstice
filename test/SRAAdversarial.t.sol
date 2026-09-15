@@ -19,7 +19,7 @@ import {ServiceRewardsActor} from "../src/ServiceRewardsActor.sol";
 import {Epoch} from "../src/lib/Epoch.sol";
 import {Binding} from "../src/lib/SraTypes.sol";
 import {SRATestBase} from "./SRATestBase.sol";
-import {UnanimousGovernance} from "../src/lib/UnanimousGovernance.sol";
+import {OwnersLibrary} from "../src/lib/Owners.sol";
 import {FixedU18} from "../src/lib/FixedU18.sol";
 
 contract SRAAdversarial is SRATestBase {
@@ -200,7 +200,7 @@ contract SRAAdversarial is SRATestBase {
 
         // owner1 was rotated out in favour of address(0)
         vm.prank(owner1);
-        vm.expectRevert(abi.encodeWithSelector(UnanimousGovernance.NotOwner.selector, owner1));
+        vm.expectRevert(abi.encodeWithSelector(OwnersLibrary.NotOwner.selector, owner1));
         sra.addOrchestrator(makeAddr("orch-after-zero-rotation"), makeAddr("orch-after-zero-rotation"));
     }
 

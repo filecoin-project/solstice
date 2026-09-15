@@ -39,4 +39,10 @@ contract UnanimousProxied is Initializable, UnanimousGovernance, UUPSUpgradeable
     }
 
     function _authorizeUpgrade(address newImplementation) internal override unanimous(keccak256(msg.data), HOLD) {}
+
+    /// @notice An owner cancels a pending unanimous task before it executes.
+    /// @param taskId The pending task's identifier, usually keccak256(msg.data) of its submission.
+    function veto(bytes32 taskId) external {
+        _veto(taskId);
+    }
 }

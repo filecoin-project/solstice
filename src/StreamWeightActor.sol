@@ -102,12 +102,6 @@ contract StreamWeightActor is UnanimousProxied {
         FVMRewards.cancelPendingWeight(op);
     }
 
-    /// @notice An owner cancels a pending unanimous task before it executes.
-    /// @param taskId The pending task's identifier, usually keccak256(msg.data) of its submission.
-    function veto(bytes32 taskId) external {
-        _veto(taskId);
-    }
-
     /// @notice All 8 gate steps have already been taken.
     error StepsComplete();
 
