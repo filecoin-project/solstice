@@ -38,8 +38,12 @@ contract DeployScript is Script {
         return json.readAddress(string.concat(key, ".", field));
     }
 
+    error BadEpoch(uint256 epoch);
+
     function _readEpoch(string memory json, string memory key, string memory field) internal pure returns (Epoch) {
-        return Epoch.wrap(uint64(json.readUint(string.concat(key, ".", field))));
+        uint256 value = json.readUint(string.concat(key, ".", field));
+        require(value <= type(uint64).max, BadEpoch(value);
+        return Epoch.wrap(uint64(value));
     }
 
     function _loadConfig(string memory json, string memory key) internal pure returns (Config memory config) {
