@@ -47,18 +47,12 @@ contract UnanimousProxied is Initializable, UnanimousGovernance, UUPSUpgradeable
         _;
     }
 
-    function upgradeToAndCall(address newImplementation, bytes memory data)
-        public
-        payable
+    function _authorizeUpgrade(address newImplementation)
+        internal
         override
         nonpayablePayable
         unanimous(keccak256(msg.data), HOLD)
-    {
-        super.upgradeToAndCall(newImplementation, data);
-    }
-
-    /// @dev the authorization occurs in upgradeToAndCall via its unanimous modifer
-    function _authorizeUpgrade(address newImplementation) internal override {}
+    {}
 
     /// @notice An owner cancels a pending unanimous task before it executes.
     /// @param taskId The pending task's identifier, usually keccak256(msg.data) of its submission.
