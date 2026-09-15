@@ -45,18 +45,25 @@ contract UnanimousProxiedTest is Test {
         vm.expectRevert(abi.encodeWithSelector(OwnersLibrary.NotOwner.selector, owner3));
         proxy.upgradeToAndCall(implementation, abi.encodeCall(UnanimousProxied.initialize, ()));
 
+        bytes32 taskId = keccak256(
+            abi.encodeCall(proxy.upgradeToAndCall, (implementation, abi.encodeCall(UnanimousProxied.initialize, ())))
+        );
+
         vm.prank(owner1);
+        vm.expectEmit(address(proxy));
+        emit UnanimousGovernance.Submitted(taskId);
+        vm.expectEmit(address(proxy));
+        emit UnanimousGovernance.Approved(taskId, owner1);
         proxy.upgradeToAndCall(implementation, abi.encodeCall(UnanimousProxied.initialize, ()));
+
         vm.prank(owner2);
+        vm.expectEmit(address(proxy));
+        emit UnanimousGovernance.Approved(taskId, owner2);
         proxy.upgradeToAndCall(implementation, abi.encodeCall(UnanimousProxied.initialize, ()));
 
         vm.roll(vm.getBlockNumber() + Epoch.unwrap(hold));
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         proxy.upgradeToAndCall(implementation, abi.encodeCall(UnanimousProxied.initialize, ()));
-
-        bytes32 taskId = keccak256(
-            abi.encodeCall(proxy.upgradeToAndCall, (implementation, abi.encodeCall(UnanimousProxied.initialize, ())))
-        );
 
         vm.prank(owner3);
         vm.expectRevert(abi.encodeWithSelector(OwnersLibrary.NotOwner.selector, owner3));
@@ -67,9 +74,18 @@ contract UnanimousProxiedTest is Test {
         emit UnanimousGovernance.Rejected(taskId, owner1);
         proxy.veto(taskId);
 
+        bytes32 emptyTaskId = keccak256(abi.encodeCall(proxy.upgradeToAndCall, (implementation, bytes(""))));
+
         vm.prank(owner1);
+        vm.expectEmit(address(proxy));
+        emit UnanimousGovernance.Submitted(emptyTaskId);
+        vm.expectEmit(address(proxy));
+        emit UnanimousGovernance.Approved(emptyTaskId, owner1);
         proxy.upgradeToAndCall(implementation, "");
+
         vm.prank(owner2);
+        vm.expectEmit(address(proxy));
+        emit UnanimousGovernance.Approved(emptyTaskId, owner2);
         proxy.upgradeToAndCall(implementation, "");
 
         vm.roll(vm.getBlockNumber() + Epoch.unwrap(hold) - 1);
