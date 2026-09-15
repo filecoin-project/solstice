@@ -64,7 +64,6 @@ contract DeployScript is Script {
     /// @dev Verifies a deployed contract via sourcify; skipped outside an actual broadcast since
     /// unbroadcast addresses have no onchain bytecode to verify against.
     function _verify(address deployed, string memory contractPath) internal {
-        if (!vm.isContext(VmSafe.ForgeContext.ScriptBroadcast)) return;
 
         string[] memory inputs = new string[](8);
         inputs[0] = "forge";
@@ -103,11 +102,13 @@ contract DeployScript is Script {
 
         vm.stopBroadcast();
 
-        _writeDeployedAddresses(key, sra, swa);
+        if (vm.isContext(VmSafe.ForgeContext.ScriptBroadcast)) {
+            _writeDeployedAddresses(key, sra, swa);
 
-        _verify(sraImplementation, "src/ServiceRewardsActor.sol:ServiceRewardsActor");
-        _verify(swaImplementation, "src/StreamWeightActor.sol:StreamWeightActor");
-        _verify(sra, "lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy");
-        _verify(swa, "lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy");
+            _verify(sraImplementation, "src/ServiceRewardsActor.sol:ServiceRewardsActor");
+            _verify(swaImplementation, "src/StreamWeightActor.sol:StreamWeightActor");
+            _verify(sra, "lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy");
+            _verify(swa, "lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy");
+        }
     }
 }
