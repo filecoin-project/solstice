@@ -1,0 +1,28 @@
+name: Dry Deployment
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.7.1
+          cache: true
+
+      - name: Install Dependencies
+        run: |
+          forge install
+
+      - name: Dry run on calibnet
+        run: |
+          forge script script/Deploy.s.sol --chain-id 314159

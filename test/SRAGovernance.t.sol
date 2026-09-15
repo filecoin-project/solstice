@@ -15,6 +15,8 @@ import {ServiceRewardsActor} from "../src/ServiceRewardsActor.sol";
 import {Epoch} from "../src/lib/Epoch.sol";
 import {FilecoinPayVolume} from "../src/lib/SraTypes.sol";
 import {UnanimousGovernance} from "../src/lib/UnanimousGovernance.sol";
+import {OwnersLibrary} from "../src/lib/Owners.sol";
+import {UnanimousProxied} from "../src/lib/UnanimousProxied.sol";
 
 contract SRAGovernanceTest is SRATestBase {
     // ------------------------------------------------------------------------
@@ -57,7 +59,7 @@ contract SRAGovernanceTest is SRATestBase {
     function test_Admit_NonOwner_Reverts() public {
         address stranger = makeAddr("stranger");
         vm.prank(stranger);
-        vm.expectRevert(abi.encodeWithSelector(UnanimousGovernance.NotOwner.selector, stranger));
+        vm.expectRevert(abi.encodeWithSelector(OwnersLibrary.NotOwner.selector, stranger));
         sra.addOrchestrator(makeAddr("orch"), makeAddr("orch"));
     }
 
@@ -177,13 +179,13 @@ contract SRAGovernanceTest is SRATestBase {
         vm.prank(owner1);
         sra.replaceOwner(owner1, newOwner); // first vote only: not a full vote, ownership unchanged
         vm.expectEmit(true, true, false, false, address(sra));
-        emit ServiceRewardsActor.OwnersReplaced(owner1, newOwner);
+        emit UnanimousProxied.OwnerReplaced(owner1, newOwner);
         vm.prank(owner2);
         sra.replaceOwner(owner1, newOwner); // second vote executes immediately (unanimousNoHold)
 
         // old owner revoked: owner1 can no longer vote on a fresh governance task
         vm.prank(owner1);
-        vm.expectRevert(abi.encodeWithSelector(UnanimousGovernance.NotOwner.selector, owner1));
+        vm.expectRevert(abi.encodeWithSelector(OwnersLibrary.NotOwner.selector, owner1));
         sra.addOrchestrator(makeAddr("orch-after-rotation"), makeAddr("orch-after-rotation"));
 
         // new owner active: newOwner's first vote on a fresh task succeeds
@@ -202,7 +204,7 @@ contract SRAGovernanceTest is SRATestBase {
 
         // old owner revoked
         vm.prank(owner1);
-        vm.expectRevert(abi.encodeWithSelector(UnanimousGovernance.NotOwner.selector, owner1));
+        vm.expectRevert(abi.encodeWithSelector(OwnersLibrary.NotOwner.selector, owner1));
         sra.addOrchestrator(makeAddr("orch-after-eoa-rotation"), makeAddr("orch-after-eoa-rotation"));
 
         // the EOA is a full owner
@@ -214,7 +216,7 @@ contract SRAGovernanceTest is SRATestBase {
     function test_ReplaceOwner_NonOwner_Reverts() public {
         address stranger = makeAddr("stranger");
         vm.prank(stranger);
-        vm.expectRevert(abi.encodeWithSelector(UnanimousGovernance.NotOwner.selector, stranger));
+        vm.expectRevert(abi.encodeWithSelector(OwnersLibrary.NotOwner.selector, stranger));
         sra.replaceOwner(owner1, makeAddr("new-owner"));
     }
 

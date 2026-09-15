@@ -3,68 +3,16 @@ pragma solidity ^0.8.36;
 
 import {USR_FORBIDDEN, USR_ILLEGAL_ARGUMENT, USR_NOT_FOUND} from "fvm-solidity/FVMErrors.sol";
 
-import {MockRewardTest} from "./mocks/MockRewardTest.sol";
-import {FVMRewardActor, MockState, WAD, MAINNET_TIMELOCK} from "./mocks/FVMRewardActor.sol";
-import {StreamWeightActor} from "../src/StreamWeightActor.sol";
-import {IServiceRewardsActor} from "../src/interfaces/IServiceRewardsActor.sol";
-import {DistributionKind, PendingOp, Share, WeightRecord, WeightRecordUpdate} from "../src/lib/FVMRewardTypes.sol";
+import {SWATestBase} from "./SWATestBase.sol";
+import {FVMRewardActor, MockState, MAINNET_TIMELOCK} from "./mocks/FVMRewardActor.sol";
+import {DistributionKind, PendingOp, WeightRecordUpdate} from "../src/lib/FVMRewardTypes.sol";
 import {Epoch} from "../src/lib/Epoch.sol";
-import {FixedU18} from "../src/lib/FixedU18.sol";
 import {FVMRewards} from "../src/lib/FVMRewards.sol";
 
-contract StreamWeightActorTest is MockRewardTest {
-    StreamWeightActor actor;
-    address owner1;
-    address owner2;
-
-    uint64 constant STREAM_ID = 1;
-    address constant WRITER = address(0xBEEF);
-
-    function setUp() public override {
-        super.setUp();
-        owner1 = makeAddr("owner1");
-        owner2 = makeAddr("owner2");
-
-        // mainnet hold: StreamWeightGate tests exercise the timelock boundary at MAINNET_TIMELOCK
-        actor = new StreamWeightActor(owner1, owner2, IServiceRewardsActor(makeAddr("sra")), MAINNET_TIMELOCK);
-        rewardActor().mockSwa(address(actor));
-    }
-
+contract StreamWeightActorTest is SWATestBase {
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
-
-    function _record(int256 w) internal pure returns (WeightRecord memory) {
-        return WeightRecord({vStart: w, slope: 0, tStart: Epoch.wrap(0), floor: 0, cap: WAD});
-    }
-
-    function _activation() internal view returns (uint64) {
-        return uint64(block.number) + Epoch.unwrap(MAINNET_TIMELOCK);
-    }
-
-    function _shares() internal pure returns (Share[] memory shares) {
-        shares = new Share[](1);
-        shares[0] = Share({wallet: WRITER, share: FixedU18.wrap(uint256(WAD))});
-    }
-
-    function _singleWeightRecord(uint64 id, WeightRecord memory record)
-        internal
-        pure
-        returns (WeightRecordUpdate[] memory updates)
-    {
-        updates = new WeightRecordUpdate[](1);
-        updates[0] = WeightRecordUpdate({id: id, record: record});
-    }
-
-    /// @dev Registers STREAM_ID (EXPLICIT, WRITER) through both owners, then rolls past the
-    /// timelock so the next dispatched call settles it into existence.
-    function _registerAndActivate(uint64 id) internal {
-        vm.prank(owner1);
-        actor.registerStream(id, _record(0.1e18), WRITER, _shares(), _activation());
-        vm.prank(owner2);
-        actor.registerStream(id, _record(0.1e18), WRITER, _shares(), _activation());
-        vm.roll(block.number + Epoch.unwrap(MAINNET_TIMELOCK));
-    }
 
     /// @dev Whether f02 currently holds a queued per-stream op for `id` (reads the mock's state).
     function _hasPending(uint64 id, PendingOp op) internal view returns (bool) {
@@ -159,7 +107,7 @@ contract StreamWeightActorTest is MockRewardTest {
         assertTrue(found, "REGISTER queued for the stream");
 
         // Settling applies it as a live IMPLICIT stream.
-        vm.roll(block.number + Epoch.unwrap(MAINNET_TIMELOCK));
+        vm.roll(vm.getBlockNumber() + Epoch.unwrap(MAINNET_TIMELOCK));
         rewardActor().mockSettle();
 
         st = rewardActor().mockState();
@@ -326,7 +274,7 @@ contract StreamWeightActorTest is MockRewardTest {
         assertFalse(_hasPending(STREAM_ID, PendingOp.REGISTER), "pending slot cleared by the cancel");
 
         // Rolling past the registration's activation epoch applies nothing.
-        vm.roll(block.number + Epoch.unwrap(MAINNET_TIMELOCK));
+        vm.roll(vm.getBlockNumber() + Epoch.unwrap(MAINNET_TIMELOCK));
         rewardActor().mockSettle();
         assertEq(rewardActor().mockState().streams.length, 0, "cancelled registration never applies");
 

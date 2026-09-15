@@ -13,8 +13,6 @@ pragma solidity ^0.8.36;
 // The SRA never receives or holds value.
 //
 // Storage: 2 ERC-7201 namespaces (Registry/Quarter),
-//       reusing Solstice.Owners (dual Safe) and Solstice.PendingTasks (governance queue).
-//       The allowlists are event-only (AdmittedListsUpdated is the authoritative snapshot).
 //
 // Governance: every method runs the dual-Safe unanimous path with no hold (unanimousNoHold) —
 // the second approval executes immediately. A task clears only when its body executes without
@@ -22,23 +20,19 @@ pragma solidity ^0.8.36;
 // included), so the task stays pending and the second owner can re-approve the same calldata —
 // a failed run strands nothing. The second Safe MUST dry-run the calldata before approving.
 
+import {BURN_ADDRESS} from "fvm-solidity/FVMActors.sol";
+import {FVMActor} from "fvm-solidity/FVMActor.sol";
+
+import {IServiceRewardsActor} from "./interfaces/IServiceRewardsActor.sol";
 import {Epoch, currentEpoch} from "./lib/Epoch.sol";
 import {FixedU18, ONE, ZERO} from "./lib/FixedU18.sol";
 import {FVMRewards} from "./lib/FVMRewards.sol";
 import {SERVICE_ID, Share} from "./lib/FVMRewardTypes.sol";
-import {BURN_ADDRESS} from "fvm-solidity/FVMActors.sol";
-import {FVMActor} from "fvm-solidity/FVMActor.sol";
-import {OwnersLibrary} from "./lib/Owners.sol";
-import {UnanimousGovernance} from "./lib/UnanimousGovernance.sol";
-// Top-level SRA types (Binding / FilecoinPayVolume) and the ERC-7201 storage layout live in
-// separate library files (SraTypes.sol / SraStorage.sol), so the proxy and implementation share
-// the same storage layout (single source of truth); test files import the types from SraTypes.sol.
 import {Binding, FilecoinPayVolume, Reassignment} from "./lib/SraTypes.sol";
 import {SraStorage} from "./lib/SraStorage.sol";
+import {UnanimousProxied} from "./lib/UnanimousProxied.sol";
 
-contract ServiceRewardsActor is UnanimousGovernance {
-    using OwnersLibrary for address;
-
+contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
     /// @dev Total share (f02 encoding constraint: Σ shares must be exactly == 1e18).
     FixedU18 private constant SHARE_TOTAL = ONE;
 
@@ -70,7 +64,6 @@ contract ServiceRewardsActor is UnanimousGovernance {
         address indexed payer, address indexed operator, address indexed orchestrator, bool inherit
     );
     event BindingCanceled(address indexed payer, address indexed operator, address indexed orchestrator);
-    event OwnersReplaced(address indexed prevOwner, address indexed newOwner);
     event AdmittedListsUpdated(address[] stablecoins, address[] filecoinPayContracts);
     event PricingParamsUpdated(
         uint256 minLotFloor,
@@ -96,8 +89,7 @@ contract ServiceRewardsActor is UnanimousGovernance {
     error AlreadySubmitted(uint64 q);
     error NotLatestQuarter(uint64 q); // FIP-0118 §4.2: an older quarter's shares can never overwrite a newer quarter's
     error TooManyPairs(); // registerPairs batch exceeds MAX_PAIRS
-    error ZeroWallet(address wallet); // the zero address is never a valid payout wallet
-    error UnresolvedWallet(address wallet); // wallet does not resolve to an existing actor (FIP §2.4.4)
+    error ZeroWallet(); // the zero address is never a valid payout wallet
     error DuplicateWallet(address wallet); // another admitted row resolves to the same actor id (byte-equal or cross-spelling)
     error InvalidParameter();
 
@@ -116,10 +108,7 @@ contract ServiceRewardsActor is UnanimousGovernance {
         Epoch verificationWindow,
         Epoch activationEpoch,
         Epoch upgradeHold
-    ) {
-        owner1.addOwner();
-        owner2.addOwner();
-
+    ) UnanimousProxied(owner1, owner2, upgradeHold) {
         require(
             Epoch.unwrap(epochsPerQuarter) > 0 && Epoch.unwrap(postPeriod) > 0 && Epoch.unwrap(verificationWindow) > 0
                 && uint256(Epoch.unwrap(postPeriod)) + uint256(Epoch.unwrap(verificationWindow))
@@ -132,9 +121,6 @@ contract ServiceRewardsActor is UnanimousGovernance {
         VERIFICATION_WINDOW = verificationWindow;
         ACTIVATION_EPOCH = activationEpoch;
         SRA_UPGRADE_HOLD = upgradeHold;
-
-        // id allocator starts at 1: 0 is the unregistered sentinel (activeIdOf[addr] == 0)
-        SraStorage.registry().nextId = 1;
     }
 
     // ------------------------------------------------------------------------
@@ -343,9 +329,9 @@ contract ServiceRewardsActor is UnanimousGovernance {
         SraStorage.SraStorageRegistry storage r = SraStorage.registry();
         require(r.activeIdOf[orch] == 0, AlreadyAdmitted(orch));
         require(r.admittedIds.length < MAX_ORCHESTRATORS, AtCapacity());
-        _assertWalletAdmissible(wallet, 0); // zero → resolve → resolved-id uniqueness
-        uint64 id = r.nextId;
-        r.nextId = id + 1;
+        _assertWalletAdmissible(wallet, 0);
+        uint64 id = r.allocatedIds + 1;
+        r.allocatedIds = id;
         SraStorage.OrchestratorInfo storage o = r.orchestrators[id];
         o.orchestrator = orch;
         o.wallet = wallet;
@@ -404,7 +390,7 @@ contract ServiceRewardsActor is UnanimousGovernance {
         SraStorage.SraStorageRegistry storage r = SraStorage.registry();
         uint64 id = r.activeIdOf[oldOrch];
         require(id != 0 && r.orchestrators[id].admitted, NotAdmitted(oldOrch));
-        _assertWalletAdmissible(newWallet, id); // zero → resolve → resolved-id uniqueness; own row exempt
+        _assertWalletAdmissible(newWallet, id);
         address oldWallet = r.orchestrators[id].wallet;
         r.orchestrators[id].wallet = newWallet;
         // Immediate f02 wallet repoint: the id's row share stays (prospective — identity and accrued
@@ -438,14 +424,6 @@ contract ServiceRewardsActor is UnanimousGovernance {
             r.bindings[_pairId(rs[i].payer, rs[i].operator)] = id;
             emit BindingReassigned(rs[i].payer, rs[i].operator, rs[i].orch, rs[i].inherit);
         }
-    }
-
-    /// @notice Owner rotation, effective immediately (unanimousNoHold path,
-    ///         aligned with upstream SWA's replaceOwner).
-    function replaceOwner(address prevOwner, address newOwner) external unanimousNoHold(keccak256(msg.data)) {
-        prevOwner.removeOwner();
-        newOwner.addOwner();
-        emit OwnersReplaced(prevOwner, newOwner);
     }
 
     /// @notice Updates the stablecoin + Filecoin Pay allowlists (exclusive update, spec §4.2).
@@ -731,34 +709,18 @@ contract ServiceRewardsActor is UnanimousGovernance {
         return a < b;
     }
 
-    /// @dev Wallet-admission gate shared by addOrchestrator / replaceWallet:
-    ///      zero is rejected before any resolve — address(0)'s f410 resolution is registry-dependent
-    ///      (fresh devnet misses it, mainnet resolves it to a resident actor), so the local byte
-    ///      check must win in both worlds; the wallet must then resolve to an existing actor
-    ///      (FIP §2.4.4); the resolved id must not duplicate any other admitted row's. The dedup key
-    ///      is the resolved id, not the wallet bytes — one actor has two wire spellings (f410
-    ///      delegated vs masked 0xff…) that differ in bytes but resolve to one id. selfId excludes
-    ///      the row being replaced (its own re-spelling is a single row); addOrchestrator passes 0.
+    /// @notice Wallet-admission gate
+    /// @dev the wallet must uniquely resolve to an existing actor (FIP §2.4.4).
+    /// The dedup key is the actor id.
     function _assertWalletAdmissible(address wallet, uint64 selfId) internal view {
-        require(wallet != address(0), ZeroWallet(wallet));
-        uint64 wid = _resolveWallet(wallet);
+        require(wallet != address(0), ZeroWallet());
+        uint64 wid = FVMActor.getActorId(wallet);
         SraStorage.SraStorageRegistry storage r = SraStorage.registry();
         for (uint256 i = 0; i < r.admittedIds.length; i++) {
             uint64 otherId = r.admittedIds[i];
             if (otherId == selfId) continue;
-            // admitted rows resolved at admission; a row that no longer resolves is a data fault the
-            // admission must surface (revert names the stale wallet), not silently compare as unequal
-            if (_resolveWallet(r.orchestrators[otherId].wallet) == wid) revert DuplicateWallet(wallet);
+            if (FVMActor.getActorId(r.orchestrators[otherId].wallet) == wid) revert DuplicateWallet(wallet);
         }
-    }
-
-    /// @dev Resolves a payout wallet to its actor id; reverts UnresolvedWallet when the address maps
-    ///      to no existing actor (FIP §2.4.4: every payout wallet must exist on-chain before the SRA
-    ///      names it). The resolved id is the dedup key — both spellings of an actor land on it.
-    function _resolveWallet(address wallet) internal view returns (uint64 id) {
-        (bool exists, uint64 resolved) = FVMActor.tryGetActorId(wallet);
-        if (!exists) revert UnresolvedWallet(wallet);
-        return resolved;
     }
 
     /// @dev Resolves the current admitted id for an address; reverts NotAdmitted when unregistered/removed.

@@ -7,8 +7,7 @@ import {FixedU18} from "./lib/FixedU18.sol";
 import {GateParams, GateParamsLibrary} from "./lib/GateParams.sol";
 import {FVMRewards} from "./lib/FVMRewards.sol";
 import {PendingOp, SERVICE_ID, Share, WeightRecord, WeightRecordUpdate} from "./lib/FVMRewardTypes.sol";
-import {OwnersLibrary} from "./lib/Owners.sol";
-import {UnanimousGovernance} from "./lib/UnanimousGovernance.sol";
+import {UnanimousProxied} from "./lib/UnanimousProxied.sol";
 
 int256 constant STEP = 5e16; // 5%
 
@@ -16,24 +15,21 @@ int256 constant STEP = 5e16; // 5%
 /// (FIP-0118, solstice#3): registers, removes, reweights, and reassigns writers by stream id.
 /// @dev Writes require unanimous owner approval, except `cancelPending`/`cancelPendingWeight`
 /// (any single owner, immediate) and `quarterlyGateCheck` (fully permissionless).
-contract StreamWeightActor is UnanimousGovernance {
-    using OwnersLibrary for address;
-
+contract StreamWeightActor is UnanimousProxied {
     IServiceRewardsActor immutable SRA;
-    Epoch immutable HOLD;
 
     /// @notice Deploys the actor with its two initial owners, bound to a Service Rewards Actor.
     /// @param owner1 First owner.
     /// @param owner2 Second owner.
-    /// @param sra Service Rewards Actor gating `quarterlyGateCheck`.
-    /// @param hold Timelock applied to `setGateParams` updates
-    constructor(address owner1, address owner2, IServiceRewardsActor sra, Epoch hold) {
-        owner1.addOwner();
-        owner2.addOwner();
-
+    /// @param sra Service Rewards Actor
+    constructor(address owner1, address owner2, Epoch hold, IServiceRewardsActor sra)
+        UnanimousProxied(owner1, owner2, hold)
+    {
         SRA = sra;
-        HOLD = hold;
+    }
 
+    function initialize() public override {
+        super.initialize();
         GateParamsLibrary.init();
     }
 
@@ -93,33 +89,17 @@ contract StreamWeightActor is UnanimousGovernance {
     /// @dev Any current owner, immediate, bypassing unanimity.
     /// @param id Stream id the pending operation targets.
     /// @param op Kind of pending operation to cancel.
-    function cancelPending(uint64 id, PendingOp op) external {
+    function cancelPending(uint64 id, PendingOp op) external anyOwner {
         // any owner can immediately cancel any pending operation
-        require(msg.sender.isOwner());
         FVMRewards.cancelPending(id, op);
     }
 
     /// @notice Cancels a queued discretionary weight-schedule write (SetWeightRecords).
     /// @dev Any current owner, immediate. Cannot cancel a gate-originated StepWeightRecords write.
     /// @param op Weight operation to cancel.
-    function cancelPendingWeight(PendingOp op) external {
+    function cancelPendingWeight(PendingOp op) external anyOwner {
         // any owner can immediately cancel any pending operation
-        require(msg.sender.isOwner());
         FVMRewards.cancelPendingWeight(op);
-    }
-
-    /// @notice Replaces one of the two owners.
-    /// @param prevOwner Owner being removed.
-    /// @param newOwner Owner being added.
-    function replaceOwner(address prevOwner, address newOwner) external unanimousNoHold(keccak256(msg.data)) {
-        prevOwner.removeOwner();
-        newOwner.addOwner();
-    }
-
-    /// @notice An owner cancels a pending unanimous task before it executes.
-    /// @param taskId The pending task's identifier, usually keccak256(msg.data) of its submission.
-    function veto(bytes32 taskId) external {
-        _veto(taskId);
     }
 
     /// @notice All 8 gate steps have already been taken.

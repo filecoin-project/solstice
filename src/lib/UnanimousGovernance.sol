@@ -17,9 +17,13 @@ contract UnanimousGovernance {
     event Rejected(bytes32 indexed taskId, address indexed owner);
 
     error HoldUntil(Epoch until);
-    error NotOwner(address account);
     error AlreadyApproved();
     error TaskNotFound(bytes32 taskId);
+
+    modifier anyOwner() {
+        require(msg.sender.isOwner(), OwnersLibrary.NotOwner(msg.sender));
+        _;
+    }
 
     /// @notice Executes the wrapped function once every current owner has approved `taskId`.
     /// @dev If `hold` is zero, execution happens on the approval that reaches unanimity.
@@ -32,6 +36,8 @@ contract UnanimousGovernance {
         PendingTask memory loaded = taskInfo.task;
         OwnerSet allOwners = OwnersLibrary.getAllOwners();
 
+        require(allOwners != EMPTY_SET, OwnersLibrary.NotOwner(msg.sender));
+
         // modify
         if (loaded.approvals & allOwners == allOwners) {
             // already approved: permissionless completion
@@ -42,7 +48,7 @@ contract UnanimousGovernance {
             _;
         } else {
             // approve
-            require(msg.sender.isOwner(), NotOwner(msg.sender));
+            require(msg.sender.isOwner(), OwnersLibrary.NotOwner(msg.sender));
             OwnerSet ownerBit = msg.sender.asOwnerSet();
             if (loaded.modified == UNSUBMITTED) {
                 emit Submitted(taskId);
@@ -61,6 +67,11 @@ contract UnanimousGovernance {
             } else {
                 // wait
                 taskInfo.task = loaded;
+                assembly ("memory-safe") {
+                    // exit successfully returning no data
+                    // works even for internal functions
+                    stop()
+                }
             }
         }
     }
@@ -74,7 +85,7 @@ contract UnanimousGovernance {
         OwnerSet allOwners = OwnersLibrary.getAllOwners();
 
         // approve
-        require(msg.sender.isOwner(), NotOwner(msg.sender));
+        require(msg.sender.isOwner(), OwnersLibrary.NotOwner(msg.sender));
         OwnerSet ownerBit = msg.sender.asOwnerSet();
         if (loaded.modified == UNSUBMITTED) {
             emit Submitted(taskId);
@@ -93,16 +104,20 @@ contract UnanimousGovernance {
         } else {
             // wait
             taskInfo.task = loaded;
+            assembly ("memory-safe") {
+                // exit successfully returning no data
+                // works even for internal functions
+                stop()
+            }
         }
     }
 
     /// @param taskId The identifier of the pending task to reject
-    function _veto(bytes32 taskId) internal {
+    function _veto(bytes32 taskId) internal anyOwner {
         // load
         PendingTaskInfo storage taskInfo = PendingTaskLibrary.getTasksSlot()[taskId];
 
         // modify
-        require(msg.sender.isOwner(), NotOwner(msg.sender));
         if (taskInfo.task.modified == UNSUBMITTED) revert TaskNotFound(taskId);
         delete taskInfo.task;
 

@@ -10,6 +10,11 @@ pragma solidity ^0.8.36;
 //   the constructor signature (7 params) is a test-side derivation
 //   FilecoinPayVolume is a single USD total (FIP-0118 FIPs#1275: off-chain conversion)
 
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+
+import {RESOLVE_ADDRESS} from "fvm-solidity/FVMPrecompiles.sol";
+import {FVMAddress} from "fvm-solidity/FVMAddress.sol";
+import {FVMActor as MockFVMActor} from "fvm-solidity/mocks/FVMActor.sol";
 import {MockRewardTest} from "./mocks/MockRewardTest.sol";
 import {WAD, MAINNET_TIMELOCK} from "./mocks/FVMRewardActor.sol";
 
@@ -19,10 +24,7 @@ import {FixedU18} from "../src/lib/FixedU18.sol";
 import {Binding} from "../src/lib/SraTypes.sol";
 import {SERVICE_ID, Share, WeightRecord} from "../src/lib/FVMRewardTypes.sol";
 import {FVMRewards} from "../src/lib/FVMRewards.sol";
-
-import {RESOLVE_ADDRESS} from "fvm-solidity/FVMPrecompiles.sol";
-import {FVMAddress} from "fvm-solidity/FVMAddress.sol";
-import {FVMActor as MockFVMActor} from "fvm-solidity/mocks/FVMActor.sol";
+import {UnanimousProxied} from "../src/lib/UnanimousProxied.sol";
 
 /// @notice Common test base: deploys the SRA, builds owners, registers service stream 2, quarterly time utilities.
 contract SRATestBase is MockRewardTest {
@@ -42,19 +44,29 @@ contract SRATestBase is MockRewardTest {
     // activation parameters (spec marks it TODO); this constant is the test-side deployment value.
     uint64 internal constant SRA_UPGRADE_HOLD = 20160;
 
+    function _newSra() internal returns (ServiceRewardsActor serviceRewardsActor) {
+        address sraImpl = address(
+            new ServiceRewardsActor(
+                owner1,
+                owner2,
+                Epoch.wrap(EPOCHS_PER_QUARTER),
+                Epoch.wrap(POST_PERIOD),
+                Epoch.wrap(VERIFICATION_WINDOW),
+                Epoch.wrap(ACTIVATION_EPOCH),
+                Epoch.wrap(SRA_UPGRADE_HOLD)
+            )
+        );
+        address proxy = address(new ERC1967Proxy(sraImpl, abi.encodeCall(UnanimousProxied.initialize, ())));
+        serviceRewardsActor = ServiceRewardsActor(proxy);
+    }
+
     function setUp() public virtual override {
         super.setUp();
         owner1 = makeAddr("sra-owner1");
         owner2 = makeAddr("sra-owner2");
-        sra = new ServiceRewardsActor(
-            owner1,
-            owner2,
-            Epoch.wrap(EPOCHS_PER_QUARTER),
-            Epoch.wrap(POST_PERIOD),
-            Epoch.wrap(VERIFICATION_WINDOW),
-            Epoch.wrap(ACTIVATION_EPOCH),
-            Epoch.wrap(SRA_UPGRADE_HOLD)
-        );
+
+        sra = _newSra();
+
         _registerServiceStream();
     }
 
@@ -125,7 +137,7 @@ contract SRATestBase is MockRewardTest {
     // on-chain before the SRA names it). Forge has no real FVM registry behind that resolution: the
     // mock RESOLVE precompile (fvm-solidity mocks/FVMActor, etched in MockFVMTest.setUp) reports
     // exists=false for every address without a mockResolveAddress entry — so any test wallet an
-    // admission/replace resolves must be registered first, or the call reverts UnresolvedWallet.
+    // admission/replace resolves must be registered first, or the call reverts EVMActorNotFound.
     // Registration writes a mock entry only; the address stays identical to makeAddr(name) (a pure
     // derivation), so switching a wallet to _wallet never changes the address a test exercises.
     uint64 internal constant AUTO_RESOLVE_ID_BASE = 1_000_000; // above every id this suite pins explicitly
