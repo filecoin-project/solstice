@@ -57,6 +57,7 @@ contract UnanimousProxied is Initializable, UnanimousGovernance, UUPSUpgradeable
         super.upgradeToAndCall(newImplementation, data);
     }
 
+    /// @dev the authorization occurs in upgradeToAndCall via its unanimous modifer
     function _authorizeUpgrade(address newImplementation) internal override {}
 
     /// @notice An owner cancels a pending unanimous task before it executes.
