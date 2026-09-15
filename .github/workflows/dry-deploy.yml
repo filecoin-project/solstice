@@ -25,4 +25,4 @@ jobs:
 
       - name: Dry run on calibnet
         run: |
-          forge script script/Deploy.s.sol --rpc-url https://api.calibration.node.glif.io/rpc/v1
+          forge script script/Deploy.s.sol --chain-id 314159
