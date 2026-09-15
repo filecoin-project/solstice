@@ -76,6 +76,11 @@ contract UnanimousProxiedTest is Test {
 
         bytes32 emptyTaskId = keccak256(abi.encodeCall(proxy.upgradeToAndCall, (implementation, bytes(""))));
 
+        vm.deal(owner1, 1);
+        vm.prank(owner1);
+        vm.expectRevert(UnanimousProxied.NonzeroCallValue.selector);
+        proxy.upgradeToAndCall{value: 1}(implementation, "");
+
         vm.prank(owner1);
         vm.expectEmit(address(proxy));
         emit UnanimousGovernance.Submitted(emptyTaskId);
@@ -94,6 +99,10 @@ contract UnanimousProxiedTest is Test {
         proxy.upgradeToAndCall(implementation, "");
 
         vm.roll(until);
+
+        vm.expectRevert(UnanimousProxied.NonzeroCallValue.selector);
+        proxy.upgradeToAndCall{value: 1}(implementation, "");
+
         vm.expectEmit(address(proxy));
         emit IERC1967.Upgraded(implementation);
         proxy.upgradeToAndCall(implementation, "");
