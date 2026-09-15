@@ -61,21 +61,6 @@ contract DeployScript is Script {
         vm.writeJson(vm.toString(swa), CONFIG_PATH, string.concat(key, ".swa"));
     }
 
-    /// @dev Verifies a deployed contract via sourcify; skipped outside an actual broadcast since
-    /// unbroadcast addresses have no onchain bytecode to verify against.
-    function _verify(address deployed, string memory contractPath) internal {
-        string[] memory inputs = new string[](8);
-        inputs[0] = "forge";
-        inputs[1] = "verify-contract";
-        inputs[2] = vm.toString(deployed);
-        inputs[3] = contractPath;
-        inputs[4] = "--chain";
-        inputs[5] = vm.toString(block.chainid);
-        inputs[6] = "--verifier";
-        inputs[7] = "sourcify";
-        vm.ffi(inputs);
-    }
-
     function run() public returns (address sra, address swa) {
         string memory key = string.concat(".", vm.toString(block.chainid));
         Config memory config = _loadConfig(vm.readFile(CONFIG_PATH), key);
@@ -103,11 +88,6 @@ contract DeployScript is Script {
 
         if (vm.isContext(VmSafe.ForgeContext.ScriptBroadcast)) {
             _writeDeployedAddresses(key, sra, swa);
-
-            _verify(sraImplementation, "src/ServiceRewardsActor.sol:ServiceRewardsActor");
-            _verify(swaImplementation, "src/StreamWeightActor.sol:StreamWeightActor");
-            _verify(sra, "lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy");
-            _verify(swa, "lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy");
         }
     }
 }

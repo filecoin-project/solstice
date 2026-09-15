@@ -19,7 +19,6 @@ remappings = [
 ]
 
 fs_permissions = [{ access = "read-write", path = "./deployments.json" }]
-ffi = true # Deploy.s.sol shells out to `forge verify-contract` after a broadcast.
 
 # Fast invariant campaign for local iteration; CI overrides with FOUNDRY_PROFILE=ci.
 [profile.default.invariant]
