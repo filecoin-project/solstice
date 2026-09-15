@@ -64,7 +64,6 @@ contract DeployScript is Script {
     /// @dev Verifies a deployed contract via sourcify; skipped outside an actual broadcast since
     /// unbroadcast addresses have no onchain bytecode to verify against.
     function _verify(address deployed, string memory contractPath) internal {
-
         string[] memory inputs = new string[](8);
         inputs[0] = "forge";
         inputs[1] = "verify-contract";
