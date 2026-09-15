@@ -3,7 +3,9 @@ pragma solidity ^0.8.36;
 
 import {Test} from "forge-std/Test.sol";
 
+import {IERC1967} from "@openzeppelin/contracts/interfaces/IERC1967.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {Epoch} from "../src/lib/Epoch.sol";
 import {OwnersLibrary} from "../src/lib/Owners.sol";
@@ -64,5 +66,20 @@ contract UnanimousProxiedTest is Test {
         vm.expectEmit(address(proxy));
         emit UnanimousGovernance.Rejected(taskId, owner1);
         proxy.veto(taskId);
+
+        vm.prank(owner1);
+        proxy.upgradeToAndCall(implementation, "");
+        vm.prank(owner2);
+        proxy.upgradeToAndCall(implementation, "");
+
+        vm.roll(vm.getBlockNumber() + Epoch.unwrap(hold));
+        vm.expectEmit(address(proxy));
+        emit IERC1967.Upgraded(implementation);
+        proxy.upgradeToAndCall(implementation, "");
+
+        assertEq(address(uint160(uint256(vm.load(address(proxy), ERC1967Utils.IMPLEMENTATION_SLOT)))), implementation);
+
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
+        proxy.initialize();
     }
 }
