@@ -1,31 +1,26 @@
 # First-deployment code review
 
-Reviewed the working tree based on commit `88f70fe1e64e9e2e3b6609e4a673205a1cf0228f` on 2026-09-15. Production code was not changed. Solidity files under `test/review/` are minimal reproducers: a passing test demonstrates current behavior, not a fix.
+Reviewed the working tree based on commit `88f70fe1e64e9e2e3b6609e4a673205a1cf0228f` on 2026-09-15. Production code was not changed. Solidity files under `test/review/` are minimal reproducers: a passing test demonstrates current behavior, not a fix. Findings were reevaluated against [FIPs PR #1286](https://github.com/filecoin-project/FIPs/pull/1286) at head `7897ef0c1ea5cc95fb5ebf83b11c51a2eb4c3a9a`.
 
 ## Executive conclusion
 
-No critical issue, direct permissionless theft path, or arbitrary-caller privilege escalation was found.
+No critical/high issue, direct permissionless theft path, or arbitrary-caller privilege escalation was found.
 
-The review found two release-blocking correctness failures:
+One medium integration/correctness finding remains: SRA wallet replacement can report success while f02 rejects the payout-map update, leaving the old wallet earning. PR #1286 adds payment-channel recipients as another concrete rejection case.
 
-1. SRA wallet replacement can report success while f02 rejects the payout-map update, leaving the old wallet earning.
-2. SWA gate retuning can desynchronize its authoritative step counter from f02's service weight, allowing one later gate to skip several intended 5-point levels.
-
-Both require governance action and are therefore not standalone external exploits. Their impact is still material because the contracts claim that successful governance operations atomically update reward allocation.
-
-Additional findings are specification mismatches or governance/configuration footguns. Severity below weights attacker reachability and realistic preconditions, not only worst-case impact.
+W-01, R-02, W-02, R-03, and R-04 are withdrawn because PR #1286 explicitly defines the observed behavior or assigns synchronization to governance sequencing. The remaining findings are governance/configuration footguns.
 
 | ID | Severity | Finding | Attacker model |
 |---|---|---|---|
 | R-01 | Medium | Wallet replacement ignores f02 rejection and diverges payout state | Reachable state plus ordinary governance replacement |
-| W-01 | Medium | Gate-step retune is not synchronized with f02 weight | Unanimous SWA governance action |
-| R-02 | Medium | New admission can contribute to an already-ended quarter | Unanimous SRA governance admission plus admitted orchestrator |
-| W-02 | Low | Same-epoch transaction ordering changes retuned gate result | Matured unanimous retune plus transaction ordering |
+| W-01 | Withdrawn | Gate-step/weight synchronization is a governance sequencing requirement | PR #1286 clarification |
+| R-02 | Withdrawn | Admission applies immediately, including the current posting period | PR #1286 clarification |
+| W-02 | Withdrawn | Same-epoch transaction order determines the active gate parameters | PR #1286 clarification |
 | G-01 | Low | Recycled owner bits inherit stale approvals | 159 unanimously approved rotations after a parked approval |
 | G-02 | Low | Zero-address owner rotation permanently bricks unanimity | Unanimous governance mistake |
-| R-03 | Low | Self-service cancellation bypasses governed binding transfer semantics | Cooperation by current holder, then another admitted orchestrator |
-| R-04 | Low | Wallet replacement omits specified wallet liveness proof | Unanimous governance mistake; no added authorization bypass |
-| D-01 | Low | Checked-in activation epoch is zero | Operator deploys unresolved placeholder configuration |
+| R-03 | Withdrawn | `CancelBinding` is an intended cooperative self-service exit | PR #1286 clarification |
+| R-04 | Withdrawn | `ReplaceWallet` intentionally omits `extradata` | PR #1286 clarification |
+| D-01 | Low | Checked-in production timing is unresolved/stale | Operator deploys checked-in configuration unchanged |
 | D-02 | Informational | Deployment epoch JSON silently truncates to uint64 | Malformed operator-controlled configuration |
 
 ## Contract findings
@@ -38,65 +33,31 @@ Additional findings are specification mismatches or governance/configuration foo
 
 A reachable example is f02's payable-row bound. Start with 64 old payable recipients and 64 current recipients, the permitted union of 128. After current-period accrual, replacing one current recipient introduces a 129th union member during the fold, so f02 rejects the call. SRA nevertheless records and announces the new wallet. Future rewards continue accruing to the old wallet; a compromised wallet rotation therefore appears successful without stopping payment. Later `SetShares` operations may also remain blocked until claims reduce the union.
 
+PR #1286 adds another concrete rejection case: f02 rejects payment-channel recipients because `Collect` deletes the actor. SRA's `_assertWalletAdmissible` checks only nonzero address, actor-ID resolution, and uniqueness, so it can accept a payment channel, commit the replacement, ignore f02's rejection, and emit success.
+
 The reproducer constructs the full state and asserts that SRA returns success while f02's map still contains the old recipient:
 
 ```sh
 forge test --match-path test/review/RewardsReplaceCapacity.t.sol -vv
 ```
 
-**Recommendation:** use the reverting `replaceAddress` path unless the return code is the exact, deliberately accepted absent-row case. If absent-row success is required, classify that response explicitly and revert for every other exit. Keep SRA registry mutation, native actor mutation, and event emission atomic.
+**Recommendation:** make SRA mutation conditional on native success. The current f02 illegal-argument exit does not distinguish an absent old row from capacity, invalid-recipient-type, duplicate, and other failures, so allowlisting that code is unsafe. Make absent-row replacement a native success, provide a distinct absent-row result, or track when the row cannot exist and skip only that call. Also reject payment-channel wallets locally if actor-type inspection is available.
 
 `removeOrchestrator` also ignores `tryReplaceAddress` at `ServiceRewardsActor.sol:374`, but this review did not prove the same capacity rejection for burn replacement because burning removes rather than adds a union member. Audit and explicitly classify its possible exits; do not infer the demonstrated replacement failure applies identically.
 
-### W-01 — Medium: gate counter retunes are not synchronized with f02 weight
+### W-01 — Withdrawn: gate counter retunes are not synchronized with f02 weight
 
-**Locations:** `src/StreamWeightActor.sol:118-149`; accepted FIP-0118 §3.1.1, “The counter is the authority.”
+PR #1286 requires a discretionary f02 w2 write and matching `steps` update to be part of the same published governance action and sequenced so no `QuarterlyGateCheck` applies between their effective epochs. It does not require contract-level atomicity. The demonstrated independent `steps = 7` retune violates that governance procedure rather than the clarified contract specification.
 
-`setGateParams` permits governance to replace `steps` independently after the SWA hold. It neither writes the matching f02 service weight nor shares an effective epoch with such a write. `quarterlyGateCheck` later derives the new service weight solely from the stored counter:
+This remains a deployment/runbook obligation because the contract does not enforce the sequencing rule, but it is withdrawn as a code finding.
 
-```solidity
-int256 next = (int256(uint256(loaded.steps)) + 3) * STEP;
-```
+### R-02 — Withdrawn: a new admission can post for an already-ended quarter
 
-Starting with f02 at 10%, governance can set `steps = 7`; one passing quarter then queues 50%, skipping 15% through 45%. Setting `steps = 8` makes `StepsComplete` block the gate entirely even if f02 is still at 10%. Lowering the counter can repeat levels.
+PR #1286 explicitly makes `AddOrchestrator` immediate and states that an orchestrator admitted during Q's posting period may post `FPV_i(Q)` and enter that quarter's submitted map. The implementation matches that clarified behavior.
 
-```sh
-forge test --match-path test/review/StreamRetuneReview.t.sol \
-  --match-test test_IndependentCounterRetuneSkipsServiceWeightLevels -vv
-```
+### W-02 — Withdrawn: same-epoch ordering changes a retuned gate result
 
-**Recommendation:** make a step-counter change and its corresponding f02 record one indivisible governance operation with the same effective epoch. Alternatively, remove independent `steps` mutation from `setGateParams` and provide a purpose-built synchronized retune method.
-
-### R-02 — Medium: a new admission can post for an already-ended quarter
-
-**Locations:** `src/ServiceRewardsActor.sol:293-304,328-342,468-489`; accepted FIP-0118 §3.2 `AddOrchestrator`.
-
-`addOrchestrator` records only an immediate `admitted` boolean. `postVolume` and `correctVolume` check that live boolean, not an admission-effective quarter. Governance can admit an orchestrator during Q's post/verification interval, after measurement quarter Q has ended, and the orchestrator can immediately post or be backfilled for Q. Its value enters both `AggregatedFPV(Q)` and `SubmitShares(Q)`. The accepted FIP instead says an orchestrator admitted in Q first posts for Q+1.
-
-```sh
-forge test --match-path test/review/RewardsAdmissionLifecycle.t.sol \
-  --match-test test_NewAdmissionCanPostForAlreadyEndedQuarter -vv
-```
-
-**Recommendation:** store the admission-effective quarter and enforce it in both posting and correction. Apply the same temporal model when deciding whether bindings contribute.
-
-### W-02 — Low: same-epoch ordering changes a retuned gate result
-
-**Location:** `src/StreamWeightActor.sol:118-149`; accepted FIP-0118 §3.1.1 `SetGateParams` timing.
-
-The contract stores `lastCheckedQuarter` but not the epoch of the last successful check. When a held retune matures at epoch E, both orderings can succeed:
-
-- gate check then retune: Q is tested against old parameters;
-- retune then gate check: the same Q is tested against new parameters.
-
-With Q volume between the two thresholds, transaction ordering changes whether the service weight steps. The specification requires a retune's effective epoch to be strictly later than the last gate-check epoch.
-
-```sh
-forge test --match-path test/review/StreamRetuneReview.t.sol \
-  --match-test test_SameEpochRetuneOrderingChangesGateOutcome -vv
-```
-
-**Recommendation:** store the last successful gate-check epoch and reject retune application unless its effective epoch is strictly later. This does not replace W-01's synchronized weight/counter requirement.
+PR #1286 removes the strict-later-epoch requirement. Transaction execution order intentionally determines whether a gate observes the old or new parameters. The remaining sequencing requirement is the paired w2/`steps` rule described under W-01.
 
 ### G-01 — Low: recycled owner bits inherit stale approvals
 
@@ -126,49 +87,28 @@ forge test --match-path test/review/GovernanceReview.t.sol \
 
 **Recommendation:** reject zero in the constructor/initializer path and in `addOwner`/`replaceOwner`. The existing test that explicitly accepts zero should be removed rather than updated to preserve unsafe behavior.
 
-### R-03 — Low: self-service binding cancellation bypasses governed transfer semantics
+### R-03 — Withdrawn: self-service binding cancellation bypasses governed transfer semantics
 
-**Locations:** `src/ServiceRewardsActor.sol:252-288`; accepted FIP-0118 §3.2 binding lifecycle.
+PR #1286 explicitly defines `CancelBinding` as a cooperative self-service exit by the current orchestrator. Release follows execution order, another admitted orchestrator may claim the unbound pair, and contested transfers still use governed `ReassignBinding`. The implementation matches that lifecycle.
 
-`cancelBinding` lets the current orchestrator delete a live binding. Any other admitted orchestrator can then claim it through `registerPairs`, with no Registry governance `ReassignBinding` decision and no `inherit` scope recorded. The accepted FIP describes live transfer through governed reassignment and release through orchestrator removal; it does not define this unilateral live-release path.
+### R-04 — Withdrawn: wallet replacement omits the specified wallet liveness proof
 
-```sh
-forge test --match-path test/review/RewardsBindingLifecycle.t.sol -vv
-```
-
-This is not a unilateral theft: the existing holder must first release the pair. The risk is bypass of the dispute/audit lifecycle and a race among admitted orchestrators after release.
-
-**Recommendation:** remove `cancelBinding` unless self-service release is deliberately added to the normative lifecycle. If retained, specify attribution timing and a deterministic claimant/approval rule rather than making the released pair first-come-first-served.
-
-### R-04 — Low: wallet replacement omits the specified wallet liveness proof
-
-**Location:** `src/ServiceRewardsActor.sol:389-400`; accepted FIP-0118 §3.2 `ReplaceWallet(old,new,extradata)`.
-
-The ABI accepts only `(oldOrch,newWallet)`. It cannot carry or verify the old-wallet signature used for an ordinary rotation or the new-wallet liveness signature used for lost-key recovery. Both Registry owners can select an existing actor address without proof anyone controls its key.
-
-```sh
-forge test --match-path test/review/RewardsAdmissionLifecycle.t.sol \
-  --match-test test_RegistryOwnersCanReplaceWalletWithoutOrchestratorSignature -vv
-```
-
-The FIP explicitly makes this signature a liveness/request-evidence check, not additional authorization. Therefore this omission does not create a new theft capability beyond malicious unanimous Registry governance, which the FIP already acknowledges can redirect rewards.
-
-**Recommendation:** add the specified payload and validate the old- or new-wallet proof according to rotation mode. Domain-separate the signature by chain ID, SRA proxy, orchestrator, old wallet, new wallet, nonce, and mode.
+PR #1286 deliberately changes `ReplaceWallet(old,new,extradata)` to `ReplaceWallet(old,new)` and removes the wallet co-signature. The public governance request and Section 4.3 remedy are the specified protections. The contract ABI matches.
 
 ## Deployment notes, not exploits
 
-### D-01 — Low: checked-in activation epoch is zero
+### D-01 — Low: checked-in production timing is unresolved/stale
 
-**Locations:** `deployments.json:10,23`; `script/Deploy.s.sol:41-56,70-79`; `src/ServiceRewardsActor.sol:132-156`.
+**Locations:** `deployments.json:7-11,20-24`; `script/Deploy.s.sol:41-56,70-79`; `src/ServiceRewardsActor.sol:132-156`.
 
-Both checked-in network entries pass `activationEpoch = 0` into immutable SRA timing. If deployed as-is at a later height, quarter windows remain anchored to genesis. The documented script succeeds; zero is not treated as an unresolved placeholder. At controlled mainnet chain ID and height 6,000,000, a fresh deployment already considers gate quarter Q2 bound and cannot submit Q0 as the latest quarter.
+Both checked-in network entries pass `activationEpoch = 0` into immutable SRA timing. If deployed as-is at a later height, quarter windows remain anchored to genesis. Mainnet also uses `epochsPerQuarter = 259200`, while PR #1286 specifies `262974`. The deployment script accepts and permanently embeds both values.
 
 ```sh
 forge test --match-path test/review/DeploymentReview.t.sol \
   --match-test test_CheckedInMainnetConfigStartsQuartersAtGenesis -vv
 ```
 
-This is operator-controlled configuration, not an exploit. Resolve and verify the exact migration activation epoch before deployment, and fail closed on an unset production value.
+This is operator-controlled configuration, not an exploit. Resolve the exact migration activation epoch, update mainnet quarter length to `262974`, and fail closed on unset or network-inconsistent production values. Calibration's compressed quarter length is a separate network parameter.
 
 ### D-02 — Informational: JSON epoch fields silently truncate
 
@@ -187,14 +127,14 @@ Reject values above `type(uint64).max` before conversion. This input is operator
 
 - UUPS authorization was traced through OpenZeppelin. Preliminary governance approvals execute `assembly stop()`, terminating the whole proxy delegatecall before `_upgradeToAndCallUUPS`; a held, fully approved completion returns normally and performs the upgrade. The early-success behavior is unusual but not an authorization bypass.
 - Default gate state matches the accepted schedule: `lastCheckedQuarter = 1`, so the first check consumes Q2; the default target and ratio are exact fixed-point values.
-- FVM method numbers, `PendingOp` order, and CBOR tuple shapes were compared with builtin-actors PR #1782 head `faa3a01657bdd2c2dccd6e3c2c5b0d8e9d72489b`. That revision includes `ReplaceAddress`; no unsupported-method finding is claimed.
+- FVM method numbers, `PendingOp` order, and CBOR tuple shapes were compared with builtin-actors PR #1782 head `faa3a01657bdd2c2dccd6e3c2c5b0d8e9d72489b`. That revision includes `ReplaceAddress` and payment-channel recipient rejection; no unsupported-method finding is claimed.
 - Share largest-remainder arithmetic, quarter A/B mirror storage, wallet actor-ID deduplication, and the principal register/remove/reassign paths have substantial unit, fuzz, differential, invariant, and symbolic coverage. No additional defect was demonstrated in those areas.
 
 ## Deployment gates and residual risks
 
 These are release checks, not findings:
 
-- `.github/workflows/dry-deploy.yml:26-28` runs with a calibration chain ID but no RPC URL. It is a local EVM run, not a calibration fork or exact FEVM/native-actor integration. Exercise deployment, approvals, `SetShares`, `ReplaceAddress`, gate stepping, and claims against the exact target bundle and migration state.
+- `.github/workflows/dry-deploy.yml:26-28` runs with a calibration chain ID but no RPC URL. It is a local EVM run, not a calibration fork or exact FEVM/native-actor integration. Exercise deployment, approvals, `SetShares`, `ReplaceAddress` rejection cases, gate stepping, and claims against the exact target bundle and migration state.
 - `DeployScript.run()` deploys implementations and proxies; it does not seat the initial orchestrator or install f02's SWA actor ID/SRA writer. Verify the combined migration procedure, proxy actor IDs, initial recipient, timing values, and f02 hold.
 - Independently authenticate all four configured governance addresses and their multisig thresholds/modules.
 - Effective Foundry configuration selects `evm_version = osaka`; `foundry.toml` does not pin it. Verify and pin the FEVM-compatible target.
@@ -203,8 +143,9 @@ These are release checks, not findings:
 
 ## Verification and sources
 
-- Final `forge test`: 439 passed, 0 failed, 0 skipped across 30 suites, including all ten review reproducer tests.
+- Final post-reevaluation `forge test`: 434 passed, 0 failed, 0 skipped across 27 suites, including all five retained review reproducer tests. Final `forge fmt --check` passed.
 - `forge script script/Deploy.s.sol --chain-id 314159` succeeded locally and explicitly reported that an RPC URL is required for on-chain simulation.
 - `forge build --sizes` produced the sizes above; it returned nonzero for the oversized test-only mock.
 - [Accepted FIP-0118](https://github.com/filecoin-project/FIPs/blob/master/FIPS/fip-0118.md), especially §§2.2, 3.1.1, 3.2, and 4.
+- [FIPs PR #1286](https://github.com/filecoin-project/FIPs/pull/1286), evaluated at head `7897ef0c1ea5cc95fb5ebf83b11c51a2eb4c3a9a`.
 - [builtin-actors PR #1782](https://github.com/filecoin-project/builtin-actors/pull/1782), integration reference at review-time head `faa3a01657bdd2c2dccd6e3c2c5b0d8e9d72489b`. The PR was open at review time and is not proof of the deployed network bundle.
