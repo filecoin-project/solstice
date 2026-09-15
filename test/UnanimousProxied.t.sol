@@ -72,7 +72,12 @@ contract UnanimousProxiedTest is Test {
         vm.prank(owner2);
         proxy.upgradeToAndCall(implementation, "");
 
-        vm.roll(vm.getBlockNumber() + Epoch.unwrap(hold));
+        vm.roll(vm.getBlockNumber() + Epoch.unwrap(hold) - 1);
+        uint256 until = vm.getBlockNumber() + 1;
+        vm.expectRevert(abi.encodeWithSelector(UnanimousGovernance.HoldUntil.selector, until));
+        proxy.upgradeToAndCall(implementation, "");
+
+        vm.roll(until);
         vm.expectEmit(address(proxy));
         emit IERC1967.Upgraded(implementation);
         proxy.upgradeToAndCall(implementation, "");
