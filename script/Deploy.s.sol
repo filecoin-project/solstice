@@ -42,7 +42,7 @@ contract DeployScript is Script {
 
     function _readEpoch(string memory json, string memory key, string memory field) internal pure returns (Epoch) {
         uint256 value = json.readUint(string.concat(key, ".", field));
-        require(value <= type(uint64).max, BadEpoch(value);
+        require(value <= type(uint64).max, BadEpoch(value));
         return Epoch.wrap(uint64(value));
     }
 
