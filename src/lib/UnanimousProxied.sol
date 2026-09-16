@@ -38,7 +38,21 @@ contract UnanimousProxied is Initializable, UnanimousGovernance, UUPSUpgradeable
         emit OwnerReplaced(prevOwner, newOwner);
     }
 
-    function _authorizeUpgrade(address newImplementation) internal override unanimous(keccak256(msg.data), HOLD) {}
+    error NonzeroCallValue();
+
+    /// @dev Solidity doesn't let you override a payable method as nonpayable.
+    ///      This is a modifier so that it can be applied before `unanimous`
+    modifier nonpayablePayable() {
+        require(msg.value == 0, NonzeroCallValue());
+        _;
+    }
+
+    function _authorizeUpgrade(address newImplementation)
+        internal
+        override
+        nonpayablePayable
+        unanimous(keccak256(msg.data), HOLD)
+    {}
 
     /// @notice An owner cancels a pending unanimous task before it executes.
     /// @param taskId The pending task's identifier, usually keccak256(msg.data) of its submission.
