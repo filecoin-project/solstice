@@ -32,6 +32,8 @@ contract SRARegistryTest is SRATestBase {
             new ServiceRewardsActor(
                 owner1,
                 owner2,
+                orch,
+                wallet,
                 Epoch.wrap(EPOCHS_PER_QUARTER),
                 Epoch.wrap(POST_PERIOD),
                 Epoch.wrap(VERIFICATION_WINDOW),
@@ -43,32 +45,30 @@ contract SRARegistryTest is SRATestBase {
         vm.expectEmit(true, false, false, true);
         emit ServiceRewardsActor.OrchestratorAdmitted(orch, wallet);
         ServiceRewardsActor seeded = ServiceRewardsActor(
-            address(
-                new ERC1967Proxy(implementation, abi.encodeWithSignature("initialize(address,address)", orch, wallet))
-            )
+            address(new ERC1967Proxy(implementation, abi.encodeCall(ServiceRewardsActor.initialize, ())))
         );
 
         assertTrue(seeded.isAdmitted(orch));
         assertEq(seeded.admittedCount(), 1);
+        assertEq(seeded.INITIAL_ORCHESTRATOR(), orch);
+        assertEq(seeded.INITIAL_ORCHESTRATOR_WALLET(), wallet);
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        seeded.initialize(orch, wallet);
+        seeded.initialize();
     }
 
-    function test_Initialize_WithoutInitialOrchestrator_Reverts() public {
-        address implementation = address(
-            new ServiceRewardsActor(
-                owner1,
-                owner2,
-                Epoch.wrap(EPOCHS_PER_QUARTER),
-                Epoch.wrap(POST_PERIOD),
-                Epoch.wrap(VERIFICATION_WINDOW),
-                Epoch.wrap(ACTIVATION_EPOCH),
-                Epoch.wrap(SRA_UPGRADE_HOLD)
-            )
+    function test_Constructor_WithoutInitialOrchestrator_Reverts() public {
+        vm.expectRevert(ServiceRewardsActor.InvalidParameter.selector);
+        new ServiceRewardsActor(
+            owner1,
+            owner2,
+            address(0),
+            makeAddr("seed-wallet"),
+            Epoch.wrap(EPOCHS_PER_QUARTER),
+            Epoch.wrap(POST_PERIOD),
+            Epoch.wrap(VERIFICATION_WINDOW),
+            Epoch.wrap(ACTIVATION_EPOCH),
+            Epoch.wrap(SRA_UPGRADE_HOLD)
         );
-
-        vm.expectRevert(ServiceRewardsActor.InitialOrchestratorRequired.selector);
-        new ERC1967Proxy(implementation, abi.encodeWithSignature("initialize()"));
     }
 
     /// addOrchestrator carries a distinct payout wallet (no default wallet=orch); the

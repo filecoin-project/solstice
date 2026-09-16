@@ -51,6 +51,8 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
     Epoch private immutable POST_PERIOD;
     Epoch private immutable VERIFICATION_WINDOW;
     Epoch private immutable ACTIVATION_EPOCH;
+    address public immutable INITIAL_ORCHESTRATOR;
+    address public immutable INITIAL_ORCHESTRATOR_WALLET;
 
     /// @notice Upgrade-hold duration in epochs, fixed at deployment (spec 95eb9e0 §4.2: the
     ///         SRA's upgrade hold is SRA state, not a governance parameter).
@@ -92,9 +94,10 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
     error ZeroWallet(); // the zero address is never a valid payout wallet
     error DuplicateWallet(address wallet); // another admitted row resolves to the same actor id (byte-equal or cross-spelling)
     error InvalidParameter();
-    error InitialOrchestratorRequired();
 
     /// @param owner1,owner2 the two governance owners
+    /// @param initialOrchestrator identity seated by the activation migration
+    /// @param initialOrchestratorWallet payout wallet assigned by the activation migration
     /// @param epochsPerQuarter quarter length (epochs)
     /// @param postPeriod posting window (epochs)
     /// @param verificationWindow verification window (epochs)
@@ -104,6 +107,8 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
     constructor(
         address owner1,
         address owner2,
+        address initialOrchestrator,
+        address initialOrchestratorWallet,
         Epoch epochsPerQuarter,
         Epoch postPeriod,
         Epoch verificationWindow,
@@ -116,7 +121,10 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
                     < uint256(Epoch.unwrap(epochsPerQuarter)),
             InvalidParameter()
         );
+        require(initialOrchestrator != address(0) && initialOrchestratorWallet != address(0), InvalidParameter());
 
+        INITIAL_ORCHESTRATOR = initialOrchestrator;
+        INITIAL_ORCHESTRATOR_WALLET = initialOrchestratorWallet;
         EPOCHS_PER_QUARTER = epochsPerQuarter;
         POST_PERIOD = postPeriod;
         VERIFICATION_WINDOW = verificationWindow;
@@ -124,18 +132,10 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
         SRA_UPGRADE_HOLD = upgradeHold;
     }
 
-    /// @dev The SRA must be initialized with the Orchestrator seated by the activation migration.
-    ///      Keeping the identity and payout wallet separate preserves the registry model even when
-    ///      deployment config initially assigns the same address to both roles.
-    function initialize(address initialOrchestrator, address initialWallet) public {
+    /// @dev Seats the Orchestrator configured for the activation migration when a fresh proxy is initialized.
+    function initialize() public override {
         super.initialize();
-        require(initialOrchestrator != address(0) && initialWallet != address(0), InvalidParameter());
-        _insertOrchestrator(SraStorage.registry(), initialOrchestrator, initialWallet);
-    }
-
-    /// @dev Prevents a proxy from being permanently initialized without its migration-seated entry.
-    function initialize() public pure override {
-        revert InitialOrchestratorRequired();
+        _insertOrchestrator(SraStorage.registry(), INITIAL_ORCHESTRATOR, INITIAL_ORCHESTRATOR_WALLET);
     }
 
     // ------------------------------------------------------------------------

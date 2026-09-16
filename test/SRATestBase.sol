@@ -7,7 +7,7 @@ pragma solidity ^0.8.36;
 // and constructor parameters the implementation must match.
 //
 // Test assumptions:
-//   the constructor signature (7 params) is a test-side derivation
+//   the constructor signature (9 params) is a test-side derivation
 //   FilecoinPayVolume is a single USD total (FIP-0118 FIPs#1275: off-chain conversion)
 
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
@@ -50,6 +50,8 @@ contract SRATestBase is MockRewardTest {
             new ServiceRewardsActor(
                 owner1,
                 owner2,
+                initialOrchestrator,
+                initialOrchestratorWallet,
                 Epoch.wrap(EPOCHS_PER_QUARTER),
                 Epoch.wrap(POST_PERIOD),
                 Epoch.wrap(VERIFICATION_WINDOW),
@@ -57,12 +59,7 @@ contract SRATestBase is MockRewardTest {
                 Epoch.wrap(SRA_UPGRADE_HOLD)
             )
         );
-        address proxy = address(
-            new ERC1967Proxy(
-                sraImpl,
-                abi.encodeWithSignature("initialize(address,address)", initialOrchestrator, initialOrchestratorWallet)
-            )
-        );
+        address proxy = address(new ERC1967Proxy(sraImpl, abi.encodeCall(ServiceRewardsActor.initialize, ())));
         serviceRewardsActor = ServiceRewardsActor(proxy);
     }
 

@@ -24,6 +24,8 @@ contract DifferentialSharesHarness is ServiceRewardsActor {
         ServiceRewardsActor(
             o1,
             o2,
+            o1,
+            o2,
             Epoch.wrap(epochsPerQuarter),
             Epoch.wrap(postPeriod),
             Epoch.wrap(verificationWindow),

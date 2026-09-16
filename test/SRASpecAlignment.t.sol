@@ -450,6 +450,8 @@ contract SRASpecAlignmentTest is SRATestBase {
         ServiceRewardsActor s2 = new ServiceRewardsActor(
             owner1,
             owner2,
+            initialOrchestrator,
+            initialOrchestratorWallet,
             Epoch.wrap(EPOCHS_PER_QUARTER),
             Epoch.wrap(POST_PERIOD),
             Epoch.wrap(VERIFICATION_WINDOW),

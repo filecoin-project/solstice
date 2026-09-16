@@ -232,6 +232,8 @@ contract SRAGovernanceTest is SRATestBase {
         new ServiceRewardsActor(
             owner1,
             owner2,
+            initialOrchestrator,
+            initialOrchestratorWallet,
             Epoch.wrap(0),
             Epoch.wrap(POST_PERIOD),
             Epoch.wrap(VERIFICATION_WINDOW),

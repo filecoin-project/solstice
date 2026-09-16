@@ -32,8 +32,8 @@ contract DeployScript is Script {
         Epoch hold;
     }
 
-    function initializeProxy(address implementation, bytes memory data) internal returns (address proxy) {
-        proxy = address(new ERC1967Proxy(implementation, data));
+    function initializeProxy(address implementation) internal returns (address proxy) {
+        proxy = address(new ERC1967Proxy(implementation, abi.encodeCall(UnanimousProxied.initialize, ())));
     }
 
     function _readAddress(string memory json, string memory key, string memory field) internal pure returns (address) {
@@ -79,6 +79,8 @@ contract DeployScript is Script {
             new ServiceRewardsActor(
                 config.sraOwner1,
                 config.sraOwner2,
+                config.initialOrchestrator,
+                config.initialOrchestratorWallet,
                 config.epochsPerQuarter,
                 config.postPeriod,
                 config.verificationWindow,
@@ -86,16 +88,11 @@ contract DeployScript is Script {
                 config.hold
             )
         );
-        sra = initializeProxy(
-            sraImplementation,
-            abi.encodeWithSignature(
-                "initialize(address,address)", config.initialOrchestrator, config.initialOrchestratorWallet
-            )
-        );
+        sra = initializeProxy(sraImplementation);
 
         address swaImplementation =
             address(new StreamWeightActor(config.swaOwner1, config.swaOwner2, config.hold, ServiceRewardsActor(sra)));
-        swa = initializeProxy(swaImplementation, abi.encodeCall(UnanimousProxied.initialize, ()));
+        swa = initializeProxy(swaImplementation);
 
         vm.stopBroadcast();
 
