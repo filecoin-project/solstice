@@ -15,6 +15,8 @@ contract QuarterWindowHarness is ServiceRewardsActor {
         ServiceRewardsActor(
             owner1,
             owner2,
+            owner1,
+            owner2,
             Epoch.wrap(1000), // epochsPerQuarter
             Epoch.wrap(300), // postPeriod
             Epoch.wrap(400), // verificationWindow

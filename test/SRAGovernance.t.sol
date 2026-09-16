@@ -37,7 +37,7 @@ contract SRAGovernanceTest is SRATestBase {
         sra.addOrchestrator(orch, orch); // second vote executes immediately
 
         assertTrue(sra.isAdmitted(orch));
-        assertEq(sra.admittedCount(), 1);
+        assertEq(sra.admittedCount(), 2);
     }
 
     /// a single vote (only owner1) does not execute.
@@ -232,6 +232,8 @@ contract SRAGovernanceTest is SRATestBase {
         new ServiceRewardsActor(
             owner1,
             owner2,
+            initialOrchestrator,
+            initialOrchestratorWallet,
             Epoch.wrap(0),
             Epoch.wrap(POST_PERIOD),
             Epoch.wrap(VERIFICATION_WINDOW),

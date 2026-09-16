@@ -23,6 +23,8 @@ contract DeployScript is Script {
         address swaOwner2;
         address sraOwner1;
         address sraOwner2;
+        address initialOrchestrator;
+        address initialOrchestratorWallet;
         Epoch epochsPerQuarter;
         Epoch postPeriod;
         Epoch verificationWindow;
@@ -52,6 +54,8 @@ contract DeployScript is Script {
             swaOwner2: _readAddress(json, key, "swaOwner2"),
             sraOwner1: _readAddress(json, key, "sraOwner1"),
             sraOwner2: _readAddress(json, key, "sraOwner2"),
+            initialOrchestrator: _readAddress(json, key, "initialOrchestrator"),
+            initialOrchestratorWallet: _readAddress(json, key, "initialOrchestratorWallet"),
             epochsPerQuarter: _readEpoch(json, key, "epochsPerQuarter"),
             postPeriod: _readEpoch(json, key, "postPeriod"),
             verificationWindow: _readEpoch(json, key, "verificationWindow"),
@@ -75,6 +79,8 @@ contract DeployScript is Script {
             new ServiceRewardsActor(
                 config.sraOwner1,
                 config.sraOwner2,
+                config.initialOrchestrator,
+                config.initialOrchestratorWallet,
                 config.epochsPerQuarter,
                 config.postPeriod,
                 config.verificationWindow,

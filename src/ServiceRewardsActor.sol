@@ -51,6 +51,8 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
     Epoch private immutable POST_PERIOD;
     Epoch private immutable VERIFICATION_WINDOW;
     Epoch private immutable ACTIVATION_EPOCH;
+    address private immutable INITIAL_ORCHESTRATOR;
+    address private immutable INITIAL_ORCHESTRATOR_WALLET;
 
     /// @notice Upgrade-hold duration in epochs, fixed at deployment (spec 95eb9e0 §4.2: the
     ///         SRA's upgrade hold is SRA state, not a governance parameter).
@@ -95,6 +97,8 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
     error InvalidParameter();
 
     /// @param owner1,owner2 the two governance owners
+    /// @param initialOrchestrator identity seated by the activation migration
+    /// @param initialOrchestratorWallet payout wallet assigned by the activation migration
     /// @param epochsPerQuarter quarter length (epochs)
     /// @param postPeriod posting window (epochs)
     /// @param verificationWindow verification window (epochs)
@@ -104,6 +108,8 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
     constructor(
         address owner1,
         address owner2,
+        address initialOrchestrator,
+        address initialOrchestratorWallet,
         Epoch epochsPerQuarter,
         Epoch postPeriod,
         Epoch verificationWindow,
@@ -116,12 +122,21 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
                     < uint256(Epoch.unwrap(epochsPerQuarter)),
             InvalidParameter()
         );
+        require(initialOrchestrator != address(0) && initialOrchestratorWallet != address(0), InvalidParameter());
 
+        INITIAL_ORCHESTRATOR = initialOrchestrator;
+        INITIAL_ORCHESTRATOR_WALLET = initialOrchestratorWallet;
         EPOCHS_PER_QUARTER = epochsPerQuarter;
         POST_PERIOD = postPeriod;
         VERIFICATION_WINDOW = verificationWindow;
         ACTIVATION_EPOCH = activationEpoch;
         SRA_UPGRADE_HOLD = upgradeHold;
+    }
+
+    /// @dev Seats the Orchestrator configured for the activation migration when a fresh proxy is initialized.
+    function initialize() public override {
+        super.initialize();
+        _insertOrchestrator(SraStorage.registry(), INITIAL_ORCHESTRATOR, INITIAL_ORCHESTRATOR_WALLET);
     }
 
     // ------------------------------------------------------------------------
@@ -331,6 +346,10 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
         require(r.activeIdOf[orch] == 0, AlreadyAdmitted(orch));
         require(r.admittedIds.length < MAX_ORCHESTRATORS, AtCapacity());
         _assertWalletAdmissible(wallet, 0);
+        _insertOrchestrator(r, orch, wallet);
+    }
+
+    function _insertOrchestrator(SraStorage.SraStorageRegistry storage r, address orch, address wallet) internal {
         uint64 id = r.allocatedIds + 1;
         r.allocatedIds = id;
         SraStorage.OrchestratorInfo storage o = r.orchestrators[id];

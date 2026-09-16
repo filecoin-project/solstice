@@ -409,10 +409,10 @@ contract SRASpecAlignmentTest is SRATestBase {
         assertTrue(sra.isAdmitted(c));
     }
 
-    /// 接近容量时 wallet 校验仍工作：64 满 → remove 1（容量 63）→ admit 撞剩余 wallet → 拒绝。
+    /// 接近容量时 wallet 校验仍工作：seed + 63 满 → remove 1（容量 63）→ admit 撞剩余 wallet → 拒绝。
     /// （容量未满，触发的是 wallet 冲突而非 AtCapacity，证明遍历未被容量短路。）
     function test_Admit_WalletCheckAtHighCapacity() public {
-        for (uint256 i = 0; i < 64; i++) {
+        for (uint256 i = 0; i < 63; i++) {
             _admit(
                 makeAddr(string.concat("d7-cap-", vm.toString(i))), makeAddr(string.concat("d7-cap-", vm.toString(i)))
             );
@@ -448,6 +448,8 @@ contract SRASpecAlignmentTest is SRATestBase {
         ServiceRewardsActor s2 = new ServiceRewardsActor(
             owner1,
             owner2,
+            initialOrchestrator,
+            initialOrchestratorWallet,
             Epoch.wrap(EPOCHS_PER_QUARTER),
             Epoch.wrap(POST_PERIOD),
             Epoch.wrap(VERIFICATION_WINDOW),

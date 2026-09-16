@@ -106,6 +106,8 @@ contract SRAAdversarial is SRATestBase {
         ServiceRewardsActor big = new ServiceRewardsActor(
             owner1,
             owner2,
+            initialOrchestrator,
+            initialOrchestratorWallet,
             Epoch.wrap(1 << 40), // EPOCHS_PER_QUARTER: uint64.max × 2^40 ≈ 2^104 > 2^64
             Epoch.wrap(POST_PERIOD),
             Epoch.wrap(VERIFICATION_WINDOW),
@@ -304,7 +306,7 @@ contract SRAAdversarial is SRATestBase {
 
         Binding[] memory empty = new Binding[](0);
         _registerPairsAs(orch, empty);
-        assertEq(sra.admittedCount(), 1); // state unchanged
+        assertEq(sra.admittedCount(), 2); // initial seed plus orch; state unchanged
     }
 
     /// setAdmittedLists is event-only (snapshot semantics): the second approval (full vote) executes
@@ -377,6 +379,8 @@ contract SRAAdversarial is SRATestBase {
         new ServiceRewardsActor(
             owner1,
             owner2,
+            initialOrchestrator,
+            initialOrchestratorWallet,
             Epoch.wrap(500), // EPOCHS
             Epoch.wrap(300), // POST
             Epoch.wrap(400), // VERIFY: 300 + 400 = 700 > 500 -> overlap
@@ -393,6 +397,8 @@ contract SRAAdversarial is SRATestBase {
         new ServiceRewardsActor(
             owner1,
             owner2,
+            initialOrchestrator,
+            initialOrchestratorWallet,
             Epoch.wrap(type(uint64).max), // EPOCHS: 2^64 - 1
             Epoch.wrap(uint64(2 ** 63)), // POST
             Epoch.wrap(uint64(2 ** 63)), // VERIFY: uint64 sum wraps to 0; uint256 sum = 2^64 > EPOCHS -> rejected
@@ -409,6 +415,8 @@ contract SRAAdversarial is SRATestBase {
         new ServiceRewardsActor(
             owner1,
             owner2,
+            initialOrchestrator,
+            initialOrchestratorWallet,
             Epoch.wrap(700), // EPOCHS
             Epoch.wrap(300), // POST
             Epoch.wrap(400), // VERIFY: 300 + 400 = 700 == EPOCHS -> rejected (strict)
