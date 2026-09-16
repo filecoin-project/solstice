@@ -51,8 +51,8 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
     Epoch private immutable POST_PERIOD;
     Epoch private immutable VERIFICATION_WINDOW;
     Epoch private immutable ACTIVATION_EPOCH;
-    address public immutable INITIAL_ORCHESTRATOR;
-    address public immutable INITIAL_ORCHESTRATOR_WALLET;
+    address private immutable INITIAL_ORCHESTRATOR;
+    address private immutable INITIAL_ORCHESTRATOR_WALLET;
 
     /// @notice Upgrade-hold duration in epochs, fixed at deployment (spec 95eb9e0 §4.2: the
     ///         SRA's upgrade hold is SRA state, not a governance parameter).

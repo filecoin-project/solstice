@@ -50,8 +50,6 @@ contract SRARegistryTest is SRATestBase {
 
         assertTrue(seeded.isAdmitted(orch));
         assertEq(seeded.admittedCount(), 1);
-        assertEq(seeded.INITIAL_ORCHESTRATOR(), orch);
-        assertEq(seeded.INITIAL_ORCHESTRATOR_WALLET(), wallet);
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         seeded.initialize();
     }
