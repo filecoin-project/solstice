@@ -304,7 +304,7 @@ contract SRAAdversarial is SRATestBase {
 
         Binding[] memory empty = new Binding[](0);
         _registerPairsAs(orch, empty);
-        assertEq(sra.admittedCount(), 1); // state unchanged
+        assertEq(sra.admittedCount(), 2); // initial seed plus orch; state unchanged
     }
 
     /// setAdmittedLists is event-only (snapshot semantics): the second approval (full vote) executes

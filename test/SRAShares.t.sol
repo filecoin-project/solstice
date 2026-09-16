@@ -197,10 +197,12 @@ contract SRASharesTest is SRATestBase {
     // 64-full + submitShares combination (mock MAX_RECIPIENTS boundary + map traversal cap)
     // ------------------------------------------------------------------------
 
-    /// All 64 posted -> submitShares share map has exactly 64 recipients (mock boundary), Σ exact.
-    /// The 64-way split divides evenly (1e18 % 64 == 0) -> each share exactly == 1e18/64, no remainder top-up.
+    /// The seeded Orchestrator plus 63 later admissions all post, so submitShares reaches the
+    /// 64-recipient mock boundary. The 64-way split divides evenly (1e18 % 64 == 0).
     function test_SubmitShares_AtFullCapacity_SixtyFourRecipients() public {
-        for (uint256 i = 0; i < 64; i++) {
+        vm.roll(_quarterStart(0) + 1);
+        _postAs(initialOrchestrator, 0, _fpv(100e18)); // admitted rows without a post do not enter the share map
+        for (uint256 i = 0; i < 63; i++) {
             _admitAndPost(100e18);
         }
         assertEq(sra.admittedCount(), 64);

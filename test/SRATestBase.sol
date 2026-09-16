@@ -24,13 +24,14 @@ import {FixedU18} from "../src/lib/FixedU18.sol";
 import {Binding} from "../src/lib/SraTypes.sol";
 import {SERVICE_ID, Share, WeightRecord} from "../src/lib/FVMRewardTypes.sol";
 import {FVMRewards} from "../src/lib/FVMRewards.sol";
-import {UnanimousProxied} from "../src/lib/UnanimousProxied.sol";
 
 /// @notice Common test base: deploys the SRA, builds owners, registers service stream 2, quarterly time utilities.
 contract SRATestBase is MockRewardTest {
     ServiceRewardsActor internal sra;
     address internal owner1;
     address internal owner2;
+    address internal initialOrchestrator;
+    address internal initialOrchestratorWallet;
 
     // ---- small test window constants (constructor config) ----
     // quarter 1000 epochs, posting 300, verification 400; ACTIVATION = 100000
@@ -56,7 +57,12 @@ contract SRATestBase is MockRewardTest {
                 Epoch.wrap(SRA_UPGRADE_HOLD)
             )
         );
-        address proxy = address(new ERC1967Proxy(sraImpl, abi.encodeCall(UnanimousProxied.initialize, ())));
+        address proxy = address(
+            new ERC1967Proxy(
+                sraImpl,
+                abi.encodeWithSignature("initialize(address,address)", initialOrchestrator, initialOrchestratorWallet)
+            )
+        );
         serviceRewardsActor = ServiceRewardsActor(proxy);
     }
 
@@ -64,6 +70,9 @@ contract SRATestBase is MockRewardTest {
         super.setUp();
         owner1 = makeAddr("sra-owner1");
         owner2 = makeAddr("sra-owner2");
+        initialOrchestrator = makeAddr("initial-orchestrator");
+        initialOrchestratorWallet = makeAddr("initial-orchestrator-wallet");
+        _ensureResolvable(initialOrchestratorWallet);
 
         sra = _newSra();
 

@@ -23,6 +23,8 @@ contract DeployScript is Script {
         address swaOwner2;
         address sraOwner1;
         address sraOwner2;
+        address initialOrchestrator;
+        address initialOrchestratorWallet;
         Epoch epochsPerQuarter;
         Epoch postPeriod;
         Epoch verificationWindow;
@@ -30,8 +32,8 @@ contract DeployScript is Script {
         Epoch hold;
     }
 
-    function initializeProxy(address implementation) internal returns (address proxy) {
-        proxy = address(new ERC1967Proxy(implementation, abi.encodeCall(UnanimousProxied.initialize, ())));
+    function initializeProxy(address implementation, bytes memory data) internal returns (address proxy) {
+        proxy = address(new ERC1967Proxy(implementation, data));
     }
 
     function _readAddress(string memory json, string memory key, string memory field) internal pure returns (address) {
@@ -52,6 +54,8 @@ contract DeployScript is Script {
             swaOwner2: _readAddress(json, key, "swaOwner2"),
             sraOwner1: _readAddress(json, key, "sraOwner1"),
             sraOwner2: _readAddress(json, key, "sraOwner2"),
+            initialOrchestrator: _readAddress(json, key, "initialOrchestrator"),
+            initialOrchestratorWallet: _readAddress(json, key, "initialOrchestratorWallet"),
             epochsPerQuarter: _readEpoch(json, key, "epochsPerQuarter"),
             postPeriod: _readEpoch(json, key, "postPeriod"),
             verificationWindow: _readEpoch(json, key, "verificationWindow"),
@@ -82,11 +86,16 @@ contract DeployScript is Script {
                 config.hold
             )
         );
-        sra = initializeProxy(sraImplementation);
+        sra = initializeProxy(
+            sraImplementation,
+            abi.encodeWithSignature(
+                "initialize(address,address)", config.initialOrchestrator, config.initialOrchestratorWallet
+            )
+        );
 
         address swaImplementation =
             address(new StreamWeightActor(config.swaOwner1, config.swaOwner2, config.hold, ServiceRewardsActor(sra)));
-        swa = initializeProxy(swaImplementation);
+        swa = initializeProxy(swaImplementation, abi.encodeCall(UnanimousProxied.initialize, ()));
 
         vm.stopBroadcast();
 

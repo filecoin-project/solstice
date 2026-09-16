@@ -92,6 +92,7 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
     error ZeroWallet(); // the zero address is never a valid payout wallet
     error DuplicateWallet(address wallet); // another admitted row resolves to the same actor id (byte-equal or cross-spelling)
     error InvalidParameter();
+    error InitialOrchestratorRequired();
 
     /// @param owner1,owner2 the two governance owners
     /// @param epochsPerQuarter quarter length (epochs)
@@ -121,6 +122,20 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
         VERIFICATION_WINDOW = verificationWindow;
         ACTIVATION_EPOCH = activationEpoch;
         SRA_UPGRADE_HOLD = upgradeHold;
+    }
+
+    /// @dev The SRA must be initialized with the Orchestrator seated by the activation migration.
+    ///      Keeping the identity and payout wallet separate preserves the registry model even when
+    ///      deployment config initially assigns the same address to both roles.
+    function initialize(address initialOrchestrator, address initialWallet) public {
+        super.initialize();
+        require(initialOrchestrator != address(0) && initialWallet != address(0), InvalidParameter());
+        _insertOrchestrator(SraStorage.registry(), initialOrchestrator, initialWallet);
+    }
+
+    /// @dev Prevents a proxy from being permanently initialized without its migration-seated entry.
+    function initialize() public pure override {
+        revert InitialOrchestratorRequired();
     }
 
     // ------------------------------------------------------------------------
@@ -330,6 +345,10 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
         require(r.activeIdOf[orch] == 0, AlreadyAdmitted(orch));
         require(r.admittedIds.length < MAX_ORCHESTRATORS, AtCapacity());
         _assertWalletAdmissible(wallet, 0);
+        _insertOrchestrator(r, orch, wallet);
+    }
+
+    function _insertOrchestrator(SraStorage.SraStorageRegistry storage r, address orch, address wallet) internal {
         uint64 id = r.allocatedIds + 1;
         r.allocatedIds = id;
         SraStorage.OrchestratorInfo storage o = r.orchestrators[id];

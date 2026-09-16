@@ -7,8 +7,12 @@ pragma solidity ^0.8.36;
 //   - registerPairs: uniqueness, admission gating, re-claimable after Remove release
 //   - replaceWallet: payout-wallet swap, identity does not move (spec §3.2); reassignBinding: binding reassignment
 
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+
 import {SRATestBase} from "./SRATestBase.sol";
 import {FixedU18} from "../src/lib/FixedU18.sol";
+import {Epoch} from "../src/lib/Epoch.sol";
 import {ServiceRewardsActor} from "../src/ServiceRewardsActor.sol";
 import {Binding, FilecoinPayVolume} from "../src/lib/SraTypes.sol";
 
@@ -21,6 +25,51 @@ contract SRARegistryTest is SRATestBase {
     // ------------------------------------------------------------------------
     // Orchestrator admission
     // ------------------------------------------------------------------------
+    function test_Initialize_SeedsInitialOrchestratorAndEmitsAdmission() public {
+        address orch = makeAddr("seed-orchestrator");
+        address wallet = makeAddr("seed-wallet");
+        address implementation = address(
+            new ServiceRewardsActor(
+                owner1,
+                owner2,
+                Epoch.wrap(EPOCHS_PER_QUARTER),
+                Epoch.wrap(POST_PERIOD),
+                Epoch.wrap(VERIFICATION_WINDOW),
+                Epoch.wrap(ACTIVATION_EPOCH),
+                Epoch.wrap(SRA_UPGRADE_HOLD)
+            )
+        );
+
+        vm.expectEmit(true, false, false, true);
+        emit ServiceRewardsActor.OrchestratorAdmitted(orch, wallet);
+        ServiceRewardsActor seeded = ServiceRewardsActor(
+            address(
+                new ERC1967Proxy(implementation, abi.encodeWithSignature("initialize(address,address)", orch, wallet))
+            )
+        );
+
+        assertTrue(seeded.isAdmitted(orch));
+        assertEq(seeded.admittedCount(), 1);
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
+        seeded.initialize(orch, wallet);
+    }
+
+    function test_Initialize_WithoutInitialOrchestrator_Reverts() public {
+        address implementation = address(
+            new ServiceRewardsActor(
+                owner1,
+                owner2,
+                Epoch.wrap(EPOCHS_PER_QUARTER),
+                Epoch.wrap(POST_PERIOD),
+                Epoch.wrap(VERIFICATION_WINDOW),
+                Epoch.wrap(ACTIVATION_EPOCH),
+                Epoch.wrap(SRA_UPGRADE_HOLD)
+            )
+        );
+
+        vm.expectRevert(ServiceRewardsActor.InitialOrchestratorRequired.selector);
+        new ERC1967Proxy(implementation, abi.encodeWithSignature("initialize()"));
+    }
 
     /// addOrchestrator carries a distinct payout wallet (no default wallet=orch); the
     /// OrchestratorAdmitted event carries the wallet, while bindingOf resolves the pair to the
@@ -43,9 +92,9 @@ contract SRARegistryTest is SRATestBase {
         assertNotEq(sra.bindingOf(makeAddr("payer"), makeAddr("operator")), wallet);
     }
 
-    /// Once the admitted total reaches 64, the 65th admit is rejected.
+    /// Once the seeded Orchestrator plus 63 later admissions reaches 64, the next admit is rejected.
     function test_Admit_AtCapacity_Reverts() public {
-        for (uint256 i = 0; i < 64; i++) {
+        for (uint256 i = 0; i < 63; i++) {
             _admit(makeAddr(string.concat("orch-", vm.toString(i))), makeAddr(string.concat("orch-", vm.toString(i))));
         }
         assertEq(sra.admittedCount(), 64);
@@ -60,7 +109,7 @@ contract SRARegistryTest is SRATestBase {
 
     /// After Remove frees a slot, a new orchestrator can be admitted.
     function test_Admit_RemoveFreesSlot() public {
-        for (uint256 i = 0; i < 64; i++) {
+        for (uint256 i = 0; i < 63; i++) {
             _admit(makeAddr(string.concat("orch-", vm.toString(i))), makeAddr(string.concat("orch-", vm.toString(i))));
         }
         address removed = makeAddr("orch-0");
@@ -83,7 +132,7 @@ contract SRARegistryTest is SRATestBase {
         _remove(orch);
 
         assertFalse(sra.isAdmitted(orch));
-        assertEq(sra.admittedCount(), 0);
+        assertEq(sra.admittedCount(), 1, "initial Orchestrator remains admitted");
     }
 
     // ------------------------------------------------------------------------
@@ -378,18 +427,18 @@ contract SRARegistryTest is SRATestBase {
 
     /// orchestratorCount reflects admission/removal counts (consistent with admittedCount).
     function test_OrchestratorCount_ReflectsAdmissions() public {
-        assertEq(sra.orchestratorCount(), 0);
+        assertEq(sra.orchestratorCount(), 1);
 
         address a = makeAddr("orchA");
         address b = makeAddr("orchB");
         _admit(a, a);
         _admit(b, b);
-        assertEq(sra.orchestratorCount(), 2);
+        assertEq(sra.orchestratorCount(), 3);
         assertEq(sra.orchestratorCount(), sra.admittedCount()); // view consistency
 
         _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
         _remove(a);
-        assertEq(sra.orchestratorCount(), 1);
+        assertEq(sra.orchestratorCount(), 2);
     }
 
     // ------------------------------------------------------------------------
@@ -430,24 +479,25 @@ contract SRARegistryTest is SRATestBase {
         assertEq(FixedU18.unwrap(f.usd), 0);
     }
 
-    /// id allocation is monotonic and never reuses an id: 0 is the unregistered sentinel, ids start at 1 and
-    /// increase strictly — remove + re-admit of the same address consumes a new id (never the archived one).
+    /// id allocation is monotonic and never reuses an id: 0 is the unregistered sentinel, and the
+    /// deployment-seeded Orchestrator consumes id 1. Later admissions increase strictly; remove +
+    /// re-admit of the same address consumes a new id (never the archived one).
     /// Reads the ERC-7201 registry slot directly (no public getter — the id is internal to the identity model).
     function test_Admit_IdMonotonic_NeverReused() public {
         bytes32 slot = bytes32(uint256(REGISTRY_SLOT) + 3); // allocatedIds sits alone in slot3's low 64 bits (no admittedCount packing)
-        assertEq(uint64(uint256(vm.load(address(sra), slot))), 0, "allocatedIds starts at 0");
+        assertEq(uint64(uint256(vm.load(address(sra), slot))), 1, "initial Orchestrator consumes id 1");
 
         address a = makeAddr("id-a");
         _admit(a, a);
-        assertEq(uint64(uint256(vm.load(address(sra), slot))), 1, "first admit consumes id 1");
+        assertEq(uint64(uint256(vm.load(address(sra), slot))), 2, "first later admit consumes id 2");
 
         _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
         _remove(a);
         _admit(a, a); // re-admit allocates a NEW id (never reused)
-        assertEq(uint64(uint256(vm.load(address(sra), slot))), 2, "re-admit allocates a fresh id");
+        assertEq(uint64(uint256(vm.load(address(sra), slot))), 3, "re-admit allocates a fresh id");
 
         _admit(makeAddr("id-b"), makeAddr("id-b"));
-        assertEq(uint64(uint256(vm.load(address(sra), slot))), 3, "ids increase strictly");
+        assertEq(uint64(uint256(vm.load(address(sra), slot))), 4, "ids increase strictly");
     }
 
     // ------------------------------------------------------------------------
@@ -484,44 +534,47 @@ contract SRARegistryTest is SRATestBase {
     /// O(1) removal core: removing a middle element swaps the last one into its slot — the swapped
     /// element's admittedIndex must be rewritten to the new position (swap double-write).
     function test_Remove_MiddleElement_SwapUpdatesIndex() public {
+        _remove(initialOrchestrator);
         address a = makeAddr("mid-a");
         address b = makeAddr("mid-b");
         address c = makeAddr("mid-c");
         _admit(a, a);
         _admit(b, b);
-        _admit(c, c); // ids 1, 2, 3
+        _admit(c, c); // ids 2, 3, 4
 
         _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
-        _remove(b); // remove middle (id 2): list [1, 3] — id 3 swapped into position 1
+        _remove(b); // remove middle (id 3): list [2, 4] — id 4 swapped into position 1
 
         assertEq(_admittedIdsLength(), 2);
-        assertEq(_admittedIdAt(0), 1);
-        assertEq(_admittedIdAt(1), 3, "last element swapped into removed slot");
-        assertEq(_admittedIndexOf(3), 1, "swapped element's admittedIndex rewritten");
-        assertEq(_admittedIndexOf(1), 0, "untouched element's admittedIndex intact");
-        assertEq(_admittedIndexOf(2), 0, "removed id's admittedIndex cleared (dead pointer)");
+        assertEq(_admittedIdAt(0), 2);
+        assertEq(_admittedIdAt(1), 4, "last element swapped into removed slot");
+        assertEq(_admittedIndexOf(4), 1, "swapped element's admittedIndex rewritten");
+        assertEq(_admittedIndexOf(2), 0, "untouched element's admittedIndex intact");
+        assertEq(_admittedIndexOf(3), 0, "removed id's admittedIndex cleared (dead pointer)");
         _assertIndexConsistent();
     }
 
     /// Removing the last element: no swap; remaining indices unchanged.
     function test_Remove_LastElement_IndexIntact() public {
+        _remove(initialOrchestrator);
         address a = makeAddr("last-a");
         address b = makeAddr("last-b");
         _admit(a, a);
-        _admit(b, b); // ids 1, 2
+        _admit(b, b); // ids 2, 3
 
         _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
-        _remove(b); // remove last (id 2): list [1]
+        _remove(b); // remove last (id 3): list [2]
 
         assertEq(_admittedIdsLength(), 1);
-        assertEq(_admittedIdAt(0), 1);
-        assertEq(_admittedIndexOf(1), 0, "remaining element's index unchanged");
-        assertEq(_admittedIndexOf(2), 0, "removed id's admittedIndex cleared (dead pointer)");
+        assertEq(_admittedIdAt(0), 2);
+        assertEq(_admittedIndexOf(2), 0, "remaining element's index unchanged");
+        assertEq(_admittedIndexOf(3), 0, "removed id's admittedIndex cleared (dead pointer)");
         _assertIndexConsistent();
     }
 
     /// Multiple removals in sequence: the index invariant holds after every step (head/middle/last mixed).
     function test_Remove_ConsecutiveRemoves_IndexAlwaysConsistent() public {
+        _remove(initialOrchestrator);
         address a = makeAddr("seq-a");
         address b = makeAddr("seq-b");
         address c = makeAddr("seq-c");
@@ -529,47 +582,48 @@ contract SRARegistryTest is SRATestBase {
         _admit(a, a);
         _admit(b, b);
         _admit(c, c);
-        _admit(d, d); // ids 1, 2, 3, 4
+        _admit(d, d); // ids 2, 3, 4, 5
 
         _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
-        _remove(a); // head: list [4, 2, 3]
-        assertEq(_admittedIndexOf(4), 0, "head removal swaps last to front");
-        assertEq(_admittedIndexOf(1), 0, "removed id's admittedIndex cleared (dead pointer)");
-        _assertIndexConsistent();
-
-        _remove(c); // middle: list [4, 2]
-        assertEq(_admittedIndexOf(2), 1, "middle removal swaps last to slot 1");
-        assertEq(_admittedIndexOf(3), 0, "removed id's admittedIndex cleared (dead pointer)");
-        _assertIndexConsistent();
-
-        _remove(b); // last: list [4]
+        _remove(a); // head: list [5, 3, 4]
+        assertEq(_admittedIndexOf(5), 0, "head removal swaps last to front");
         assertEq(_admittedIndexOf(2), 0, "removed id's admittedIndex cleared (dead pointer)");
         _assertIndexConsistent();
 
+        _remove(c); // middle: list [5, 3]
+        assertEq(_admittedIndexOf(3), 1, "middle removal swaps last to slot 1");
+        assertEq(_admittedIndexOf(4), 0, "removed id's admittedIndex cleared (dead pointer)");
+        _assertIndexConsistent();
+
+        _remove(b); // last: list [5]
+        assertEq(_admittedIndexOf(3), 0, "removed id's admittedIndex cleared (dead pointer)");
+        _assertIndexConsistent();
+
         assertEq(_admittedIdsLength(), 1);
-        assertEq(_admittedIdAt(0), 4);
+        assertEq(_admittedIdAt(0), 5);
     }
 
     /// Re-admit after removal: the new id is pushed at list.length — its admittedIndex must be that position.
     /// Removes the last element (id 2): its stale admittedIndex would be 1, colliding with the new id's push
     /// position — clearing the dead pointer is what keeps the two apart.
     function test_Remove_ThenAdmit_NewAdmitGetsPushIndex() public {
+        _remove(initialOrchestrator);
         address a = makeAddr("readmit-a");
         address b = makeAddr("readmit-b");
         _admit(a, a);
-        _admit(b, b); // ids 1, 2; list [1, 2]
+        _admit(b, b); // ids 2, 3; list [2, 3]
 
         _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
-        _remove(b); // list [1] (length 1)
-        assertEq(_admittedIndexOf(2), 0, "removed id's admittedIndex cleared (dead pointer)");
+        _remove(b); // list [2] (length 1)
+        assertEq(_admittedIndexOf(3), 0, "removed id's admittedIndex cleared (dead pointer)");
 
         address c = makeAddr("readmit-c");
-        _admit(c, c); // id 3 pushed at position 1
+        _admit(c, c); // id 4 pushed at position 1
 
         assertEq(_admittedIdsLength(), 2);
-        assertEq(_admittedIdAt(0), 1);
-        assertEq(_admittedIdAt(1), 3);
-        assertEq(_admittedIndexOf(3), 1, "new admit's admittedIndex == push position (list.length)");
+        assertEq(_admittedIdAt(0), 2);
+        assertEq(_admittedIdAt(1), 4);
+        assertEq(_admittedIndexOf(4), 1, "new admit's admittedIndex == push position (list.length)");
         _assertIndexConsistent();
     }
 }
