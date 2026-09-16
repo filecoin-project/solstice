@@ -341,6 +341,7 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
     /// @dev Re-admit of a previously removed/replaced address allocates a fresh id — a fresh identity with no
     ///      bindings, FilecoinPayVolume, or history. Because ids are never reused and the address mapping (activeIdOf)
     ///      is cleared on remove/replace, there is no residual alias-chain or state to clean up.
+    /// @dev If supplying a masked wallet, the owners must check that the underlying actor ID is valid.
     function addOrchestrator(address orch, address wallet) external unanimousNoHold(keccak256(msg.data)) {
         SraStorage.SraStorageRegistry storage r = SraStorage.registry();
         require(r.activeIdOf[orch] == 0, AlreadyAdmitted(orch));
@@ -406,6 +407,7 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
     /// @dev The new payout wallet must be non-zero, resolve to an existing actor's id, and its
     ///      resolved id must not duplicate any other admitted row's (the row being replaced is
     ///      exempt — re-spelling its own actor is a single row; FIP §2.4.4).
+    /// @dev If supplying a masked newWallet, the owners must check that the underlying actor ID is valid.
     function replaceWallet(address oldOrch, address newWallet) external unanimousNoHold(keccak256(msg.data)) {
         SraStorage.SraStorageRegistry storage r = SraStorage.registry();
         uint64 id = r.activeIdOf[oldOrch];
@@ -734,6 +736,7 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
     /// @notice Wallet-admission gate
     /// @dev the wallet must uniquely resolve to an existing actor (FIP §2.4.4).
     /// The dedup key is the actor id.
+    /// Known issue: masked addresses can pass the getActorId check even if their actorId is invalid.
     function _assertWalletAdmissible(address wallet, uint64 selfId) internal view {
         require(wallet != address(0), ZeroWallet());
         uint64 wid = FVMActor.getActorId(wallet);
