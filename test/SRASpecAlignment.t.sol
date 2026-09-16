@@ -276,19 +276,19 @@ contract SRASpecAlignmentTest is SRATestBase {
         address orch = makeAddr("d3-orch");
         _admit(orch, orch);
 
-        vm.roll(_quarterStart(0) + 1); // posting window
-        _postAs(orch, 0, _fpv(100e18));
+        vm.roll(_quarterStart(1) + 1); // posting window
+        _postAs(orch, 1, _fpv(100e18));
 
-        vm.roll(_postEnd(0) + 1); // verification window
+        vm.roll(_postEnd(1) + 1); // verification window
         vm.recordLogs();
-        _correctVolume(orch, 0, 250e18);
+        _correctVolume(orch, 1, 250e18);
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
         uint256 hits;
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].topics[0] != ServiceRewardsActor.VolumeCorrected.selector) continue;
             hits++;
-            assertEq(uint64(uint256(logs[i].topics[1])), 0, "indexed quarter");
+            assertEq(uint64(uint256(logs[i].topics[1])), 1, "indexed quarter");
             assertEq(address(uint160(uint256(logs[i].topics[2]))), orch, "indexed orchestrator");
             assertEq(FixedU18.unwrap(abi.decode(logs[i].data, (FixedU18))), 250e18, "corrected volume");
         }
@@ -300,19 +300,19 @@ contract SRASpecAlignmentTest is SRATestBase {
         address orch = makeAddr("d3-zero");
         _admit(orch, orch);
 
-        vm.roll(_quarterStart(0) + 1); // posting window
-        _postAs(orch, 0, _fpv(100e18));
+        vm.roll(_quarterStart(1) + 1); // posting window
+        _postAs(orch, 1, _fpv(100e18));
 
-        vm.roll(_postEnd(0) + 1); // verification window
+        vm.roll(_postEnd(1) + 1); // verification window
         vm.recordLogs();
-        _correctVolume(orch, 0, 0);
+        _correctVolume(orch, 1, 0);
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
         uint256 hits;
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].topics[0] != ServiceRewardsActor.VolumeCorrected.selector) continue;
             hits++;
-            assertEq(uint64(uint256(logs[i].topics[1])), 0, "indexed quarter");
+            assertEq(uint64(uint256(logs[i].topics[1])), 1, "indexed quarter");
             assertEq(address(uint160(uint256(logs[i].topics[2]))), orch, "indexed orchestrator");
             assertEq(FixedU18.unwrap(abi.decode(logs[i].data, (FixedU18))), 0, "cleared volume");
         }
@@ -403,7 +403,6 @@ contract SRASpecAlignmentTest is SRATestBase {
         address c = makeAddr("d7-reuse-c");
         _admit(a, w);
 
-        _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
         _remove(a);
 
         _admit(c, w); // removed orchestrator's wallet is reusable
@@ -418,7 +417,6 @@ contract SRASpecAlignmentTest is SRATestBase {
                 makeAddr(string.concat("d7-cap-", vm.toString(i))), makeAddr(string.concat("d7-cap-", vm.toString(i)))
             );
         }
-        _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
         _remove(makeAddr("d7-cap-0"));
         assertEq(sra.admittedCount(), 63);
 

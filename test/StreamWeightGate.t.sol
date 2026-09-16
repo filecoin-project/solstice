@@ -384,13 +384,14 @@ contract StreamWeightGateTest is SWATestBase {
     ///      does not mask the NotBound guard (call too early), only the zero-volume case returns 0.
     function test_QuarterlyGateCheck_QuarterNotBound_Reverts() public {
         IServiceRewardsActor sra = _sraMock();
+        uint64 q = 2;
         vm.mockCallRevert(
             address(sra),
-            abi.encodeWithSelector(IServiceRewardsActor.aggregatedFilecoinPayVolume.selector, uint64(2)),
-            abi.encodeWithSelector(ServiceRewardsActor.NotBound.selector, uint64(2))
+            abi.encodeCall(IServiceRewardsActor.aggregatedFilecoinPayVolume, (q)),
+            abi.encodeWithSelector(ServiceRewardsActor.NotBound.selector, q)
         );
 
-        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.NotBound.selector, uint64(2)));
+        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.NotBound.selector, q));
         actor.quarterlyGateCheck();
     }
 

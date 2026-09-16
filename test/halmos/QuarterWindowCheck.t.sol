@@ -37,7 +37,7 @@ contract QuarterWindowCheck is QuarterWindowHarness, Test {
     function check_T3_QuarterProgression(uint64 q) public view {
         vm.assume(q <= 3);
         uint256 gap = Epoch.unwrap(_quarterStart(q + 1)) - Epoch.unwrap(_quarterStart(q));
-        uint256 gap0 = Epoch.unwrap(_quarterStart(1)) - Epoch.unwrap(_quarterStart(0));
+        uint256 gap0 = Epoch.unwrap(_quarterStart(2)) - Epoch.unwrap(_quarterStart(1));
         assert(gap == gap0);
     }
 

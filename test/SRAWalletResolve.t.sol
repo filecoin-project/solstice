@@ -217,7 +217,6 @@ contract SRAWalletResolveTest is SRATestBase {
         address c = _wallet("c13-c");
         _admit(a, eoaE);
 
-        _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
         _remove(a);
 
         _admit(c, masked42); // id 42 freed by the removal -> the masked spelling is admitted

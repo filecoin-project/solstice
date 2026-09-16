@@ -88,20 +88,20 @@ contract SRAGovernanceTest is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_quarterStart(0) + 1); // posting period
-        _postAs(orch, 0, _fpv(100e18));
+        vm.roll(_quarterStart(1) + 1); // posting period
+        _postAs(orch, 1, _fpv(100e18));
 
-        vm.roll(_postEnd(0) + 1); // verification window
+        vm.roll(_postEnd(1) + 1); // verification window
         vm.prank(owner1);
-        sra.correctVolume(orch, 0, FixedU18.wrap(250e18));
+        sra.correctVolume(orch, 1, FixedU18.wrap(250e18));
         // after the first vote not effective (not full vote): the value is still the posted value
-        FilecoinPayVolume memory f1 = sra.fpvOf(0, orch);
+        FilecoinPayVolume memory f1 = sra.fpvOf(1, orch);
         assertEq(FixedU18.unwrap(f1.usd), 100e18);
 
         vm.prank(owner2);
-        sra.correctVolume(orch, 0, FixedU18.wrap(250e18)); // second vote executes immediately
+        sra.correctVolume(orch, 1, FixedU18.wrap(250e18)); // second vote executes immediately
 
-        FilecoinPayVolume memory f2 = sra.fpvOf(0, orch);
+        FilecoinPayVolume memory f2 = sra.fpvOf(1, orch);
         assertEq(FixedU18.unwrap(f2.usd), 250e18);
     }
 
@@ -109,15 +109,15 @@ contract SRAGovernanceTest is SRATestBase {
     function test_CorrectVolume_SameOwnerTwice_Reverts() public {
         address orch = makeAddr("orch");
         _admit(orch, orch);
-        vm.roll(_quarterStart(0) + 1);
-        _postAs(orch, 0, _fpv(100e18));
-        vm.roll(_postEnd(0) + 1);
+        vm.roll(_quarterStart(1) + 1);
+        _postAs(orch, 1, _fpv(100e18));
+        vm.roll(_postEnd(1) + 1);
 
         vm.prank(owner1);
-        sra.correctVolume(orch, 0, FixedU18.wrap(_fpv(200e18)));
+        sra.correctVolume(orch, 1, FixedU18.wrap(_fpv(200e18)));
         vm.prank(owner1);
         vm.expectRevert(abi.encodeWithSelector(UnanimousGovernance.AlreadyApproved.selector));
-        sra.correctVolume(orch, 0, FixedU18.wrap(_fpv(200e18)));
+        sra.correctVolume(orch, 1, FixedU18.wrap(_fpv(200e18)));
     }
 
     // ------------------------------------------------------------------------

@@ -64,7 +64,6 @@ contract SRARegistryTest is SRATestBase {
             _admit(makeAddr(string.concat("orch-", vm.toString(i))), makeAddr(string.concat("orch-", vm.toString(i))));
         }
         address removed = makeAddr("orch-0");
-        _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
         _remove(removed);
         assertEq(sra.admittedCount(), 63);
 
@@ -186,7 +185,6 @@ contract SRARegistryTest is SRATestBase {
         _registerPairsAs(orchA, pairs);
         assertEq(sra.bindingOf(makeAddr("payer"), makeAddr("operator")), orchA);
 
-        _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
         _remove(orchA);
 
         // released binding reads as unclaimed immediately (bindingOf returns 0 for a removed id)
@@ -387,7 +385,6 @@ contract SRARegistryTest is SRATestBase {
         assertEq(sra.orchestratorCount(), 2);
         assertEq(sra.orchestratorCount(), sra.admittedCount()); // view consistency
 
-        _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
         _remove(a);
         assertEq(sra.orchestratorCount(), 1);
     }
@@ -410,10 +407,11 @@ contract SRARegistryTest is SRATestBase {
         _registerPairsAs(oldOrch, pairs);
         assertEq(sra.bindingOf(makeAddr("payer"), makeAddr("operator")), oldOrch);
 
-        vm.roll(_quarterStart(0) + 1); // q0 posting window
-        _postAs(oldOrch, 0, _fpv(100e18));
+        vm.roll(_quarterStart(1) + 1); // q1 posting window
+        _postAs(oldOrch, 1, _fpv(100e18));
+        vm.roll(_bindingStart(1) + 1);
+        sra.submitShares(1);
 
-        _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
         _remove(oldOrch);
         assertFalse(sra.isAdmitted(oldOrch));
 
@@ -425,8 +423,8 @@ contract SRARegistryTest is SRATestBase {
         _registerPairsAs(third, pairs); // no revert -> the old id's binding is not inherited
         assertEq(sra.bindingOf(makeAddr("payer"), makeAddr("operator")), third);
 
-        // the removed identity's FilecoinPayVolume does not carry over: the fresh id's quarter-0 record is empty
-        FilecoinPayVolume memory f = sra.fpvOf(0, oldOrch);
+        // the removed identity's FilecoinPayVolume does not carry over: the fresh id's quarter-1 record is empty
+        FilecoinPayVolume memory f = sra.fpvOf(1, oldOrch);
         assertEq(FixedU18.unwrap(f.usd), 0);
     }
 
@@ -441,7 +439,6 @@ contract SRARegistryTest is SRATestBase {
         _admit(a, a);
         assertEq(uint64(uint256(vm.load(address(sra), slot))), 1, "first admit consumes id 1");
 
-        _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
         _remove(a);
         _admit(a, a); // re-admit allocates a NEW id (never reused)
         assertEq(uint64(uint256(vm.load(address(sra), slot))), 2, "re-admit allocates a fresh id");
@@ -491,7 +488,6 @@ contract SRARegistryTest is SRATestBase {
         _admit(b, b);
         _admit(c, c); // ids 1, 2, 3
 
-        _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
         _remove(b); // remove middle (id 2): list [1, 3] — id 3 swapped into position 1
 
         assertEq(_admittedIdsLength(), 2);
@@ -510,7 +506,6 @@ contract SRARegistryTest is SRATestBase {
         _admit(a, a);
         _admit(b, b); // ids 1, 2
 
-        _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
         _remove(b); // remove last (id 2): list [1]
 
         assertEq(_admittedIdsLength(), 1);
@@ -531,7 +526,6 @@ contract SRARegistryTest is SRATestBase {
         _admit(c, c);
         _admit(d, d); // ids 1, 2, 3, 4
 
-        _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
         _remove(a); // head: list [4, 2, 3]
         assertEq(_admittedIndexOf(4), 0, "head removal swaps last to front");
         assertEq(_admittedIndexOf(1), 0, "removed id's admittedIndex cleared (dead pointer)");
@@ -559,7 +553,6 @@ contract SRARegistryTest is SRATestBase {
         _admit(a, a);
         _admit(b, b); // ids 1, 2; list [1, 2]
 
-        _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
         _remove(b); // list [1] (length 1)
         assertEq(_admittedIndexOf(2), 0, "removed id's admittedIndex cleared (dead pointer)");
 
