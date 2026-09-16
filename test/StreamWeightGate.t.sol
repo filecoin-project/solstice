@@ -7,7 +7,7 @@ import {SWATestBase} from "./SWATestBase.sol";
 import {StreamWeightActor} from "../src/StreamWeightActor.sol";
 import {ServiceRewardsActor} from "../src/ServiceRewardsActor.sol";
 import {IServiceRewardsActor} from "../src/interfaces/IServiceRewardsActor.sol";
-import {SERVICE_ID, WeightRecord} from "../src/lib/FVMRewardTypes.sol";
+import {SERVICE_ID, WeightRecord, WeightRecordUpdate} from "../src/lib/FVMRewardTypes.sol";
 import {Epoch} from "../src/lib/Epoch.sol";
 import {FixedU18} from "../src/lib/FixedU18.sol";
 import {FVMRewards} from "../src/lib/FVMRewards.sol";
@@ -490,5 +490,43 @@ contract StreamWeightGateTest is SWATestBase {
         (,, steps, lastChecked) = _storedGateParams();
         assertEq(steps, 1, "retry takes the step");
         assertEq(lastChecked, 2, "retry advances the quarter");
+    }
+
+    function test_QuarterlyGateCheck_PendingSetWeightRecords_BlocksInterleavedCheck() public {
+        _registerAndActivate(SERVICE_ID);
+
+        WeightRecord memory fifty = WeightRecord({
+            vStart: 0.5e18, slope: 0, tStart: Epoch.wrap(uint64(vm.getBlockNumber())), floor: 0.5e18, cap: 0.5e18
+        });
+        WeightRecordUpdate[] memory updates = _singleWeightRecord(SERVICE_ID, fifty);
+        vm.prank(owner1);
+        actor.setWeightRecords(updates);
+        vm.prank(owner2);
+        actor.setWeightRecords(updates);
+
+        GateParams memory terminal = _gateParams(3500 ether, 2.7 ether, 8);
+        _submitGateParams(terminal);
+
+        Epoch until = Epoch.wrap(uint64(vm.getBlockNumber()) + Epoch.unwrap(MAINNET_TIMELOCK));
+        vm.roll(vm.getBlockNumber() + Epoch.unwrap(MAINNET_TIMELOCK));
+
+        IServiceRewardsActor sra = _sraMock();
+        _mockFpv(sra, 2, 3500 ether);
+        _mockQuarterStart(sra, 2, 1000);
+
+        vm.expectRevert(abi.encodeWithSelector(StreamWeightActor.PendingWeightWrite.selector, until));
+        actor.quarterlyGateCheck();
+
+        actor.setGateParams(terminal);
+        (,, uint64 steps,) = _storedGateParams();
+        assertEq(steps, 8, "paired steps land, not an interleaved step");
+
+        vm.roll(vm.getBlockNumber() + 1);
+        vm.expectRevert(StreamWeightActor.StepsComplete.selector);
+        actor.quarterlyGateCheck();
+
+        rewardActor().mockSettle();
+        MockState memory state = rewardActor().mockState();
+        assertEq(state.streams[0].weightRecord.vStart, 0.5e18, "interleaved gate did not overwrite the paired retune");
     }
 }

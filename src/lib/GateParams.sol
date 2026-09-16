@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 pragma solidity ^0.8.36;
 
+import {Epoch} from "./Epoch.sol";
 import {FixedU18} from "./FixedU18.sol";
 
 FixedU18 constant VOL_TARGET_ENTRY = FixedU18.wrap(3500 ether);
@@ -26,6 +27,7 @@ library GateParamsLibrary {
     struct GateParamsInfo {
         uint64 lastCheckedQuarter;
         GateParams params;
+        Epoch pendingWeightUntil;
     }
 
     // keccak256(abi.encode(uint256(keccak256("Solstice.GateParams")) - 1)) & ~bytes32(uint256(0xff));
