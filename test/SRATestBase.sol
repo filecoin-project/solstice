@@ -207,14 +207,6 @@ contract SRATestBase is MockRewardTest {
         sra.removeOrchestrator(orch);
     }
 
-    /// @dev Binds and submits quarter 0 to lift the spec §3.2 remove guard in tests that exercise
-    ///      removal semantics (slot/index/release) without caring about quarter timing.
-    ///      submitShares(0) is a no-op when quarter 0 has no volume; nextQuarter advances to 1.
-    function _crankQuarter0() internal {
-        vm.roll(_bindingStart(0) + 1); // q0 binds (one epoch past the binding start)
-        sra.submitShares(0);
-    }
-
     /// @notice correctVolume uses unanimousNoHold: the second vote executes, no roll needed.
     /// @dev value is an 18-decimal USD figure; wrapped to FixedU18 at the contract boundary.
     function _correctVolume(address orch, uint64 q, uint256 value) internal {

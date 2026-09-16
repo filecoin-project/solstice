@@ -32,7 +32,7 @@ contract SRAAdversarial is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_quarterStart(0) + 1); // inside Q0's posting window
+        vm.roll(_quarterStart(1) + 1); // inside Q1's posting window
         vm.prank(orch);
         vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.NotInPostingWindow.selector, uint64(10)));
         sra.postVolume(10, FixedU18.wrap(_fpv(100e18)));
@@ -46,7 +46,7 @@ contract SRAAdversarial is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_quarterStart(0) + 1);
+        vm.roll(_quarterStart(1) + 1);
         vm.prank(orch);
         vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.InvalidParameter.selector));
         sra.postVolume(type(uint64).max, FixedU18.wrap(_fpv(100e18)));
@@ -58,7 +58,7 @@ contract SRAAdversarial is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_postEnd(0)); // first epoch of Q0's verification window
+        vm.roll(_postEnd(1)); // first epoch of Q1's verification window
         vm.prank(owner1);
         sra.correctVolume(orch, 10, FixedU18.wrap(_fpv(100e18)));
         vm.prank(owner2);
@@ -71,7 +71,7 @@ contract SRAAdversarial is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_postEnd(0));
+        vm.roll(_postEnd(1));
         vm.prank(owner1);
         sra.correctVolume(orch, type(uint64).max, FixedU18.wrap(_fpv(100e18)));
         vm.prank(owner2);
@@ -81,7 +81,7 @@ contract SRAAdversarial is SRATestBase {
 
     /// aggregatedFilecoinPayVolume on a future quarter (before its binding) -> NotBound(q).
     function test_AggregatedFilecoinPayVolume_FutureQuarter_NotBound() public {
-        vm.roll(_bindingStart(0) + 1); // Q0 binding complete
+        vm.roll(_bindingStart(1) + 1); // Q1 binding complete
         vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.NotBound.selector, uint64(10)));
         sra.aggregatedFilecoinPayVolume(10);
     }
@@ -94,7 +94,7 @@ contract SRAAdversarial is SRATestBase {
 
     /// q = uint64.max on submitShares -> _afterBinding calls _quarterStart, guard fires (uint64 width) -> InvalidParameter.
     function test_SubmitShares_MaxQuarter_RangeGuard_InvalidParameter() public {
-        vm.roll(_bindingStart(0) + 1);
+        vm.roll(_bindingStart(1) + 1);
         vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.InvalidParameter.selector));
         sra.submitShares(type(uint64).max);
     }
@@ -128,9 +128,9 @@ contract SRAAdversarial is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_quarterStart(0) + 1);
-        _postAs(orch, 0, _fpv(1e30));
-        assertEq(FixedU18.unwrap(sra.fpvOf(0, orch).usd), 1e30);
+        vm.roll(_quarterStart(1) + 1);
+        _postAs(orch, 1, _fpv(1e30));
+        assertEq(FixedU18.unwrap(sra.fpvOf(1, orch).usd), 1e30);
     }
 
     /// usd == MAX_FILECOIN_PAY_VOLUME_USD + 1 is rejected with InvalidParameter.
@@ -138,10 +138,10 @@ contract SRAAdversarial is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_quarterStart(0) + 1);
+        vm.roll(_quarterStart(1) + 1);
         vm.prank(orch);
         vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.InvalidParameter.selector));
-        sra.postVolume(0, FixedU18.wrap(_fpv(1e30 + 1)));
+        sra.postVolume(1, FixedU18.wrap(_fpv(1e30 + 1)));
     }
 
     // ------------------------------------------------------------------------
@@ -352,12 +352,12 @@ contract SRAAdversarial is SRATestBase {
         _admit(a, a);
         _admit(b, b);
 
-        vm.roll(_quarterStart(0) + 1);
-        _postAs(a, 0, _fpv(1e30));
-        _postAs(b, 0, _fpv(1e30));
+        vm.roll(_quarterStart(1) + 1);
+        _postAs(a, 1, _fpv(1e30));
+        _postAs(b, 1, _fpv(1e30));
 
-        vm.roll(_bindingStart(0) + 1);
-        sra.submitShares(0);
+        vm.roll(_bindingStart(1) + 1);
+        sra.submitShares(1);
 
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
         assertEq(_sumShares(shares), 1e18);
@@ -432,40 +432,40 @@ contract SRAAdversarial is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_quarterStart(2) + 1); // Q2 posting window; Q1 is a gap (no writes)
-        _postAs(orch, 2, _fpv(100e18));
-        assertEq(FixedU18.unwrap(sra.fpvOf(2, orch).usd), 100e18, "gap-skipped write lands in the active slot");
-        assertEq(FixedU18.unwrap(sra.fpvOf(1, orch).usd), 0, "gap quarter has no contribution (prevFpv = 0)");
+        vm.roll(_quarterStart(3) + 1); // Q3 posting window; Q2 is a gap (no writes)
+        _postAs(orch, 3, _fpv(100e18));
+        assertEq(FixedU18.unwrap(sra.fpvOf(3, orch).usd), 100e18, "gap-skipped write lands in the active slot");
+        assertEq(FixedU18.unwrap(sra.fpvOf(2, orch).usd), 0, "gap quarter has no contribution (prevFpv = 0)");
     }
 
-    /// The governance path skips gap quarters the same way (CorrectVolume in Q2's
-    /// verification window succeeds; Q1 was unwritten).
+    /// The governance path skips gap quarters the same way (CorrectVolume in Q3's
+    /// verification window succeeds; Q2 was unwritten).
     function test_CorrectVolume_SkipsGapQuarter() public {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_quarterStart(2) + POST_PERIOD + 1); // Q2 verification window
-        _correctVolume(orch, 2, _fpv(100e18));
-        assertEq(FixedU18.unwrap(sra.fpvOf(2, orch).usd), 100e18, "governance write skips the gap quarter");
+        vm.roll(_quarterStart(3) + POST_PERIOD + 1); // Q3 verification window
+        _correctVolume(orch, 3, _fpv(100e18));
+        assertEq(FixedU18.unwrap(sra.fpvOf(3, orch).usd), 100e18, "governance write skips the gap quarter");
     }
 
-    /// A no-volume quarter must not deadlock the system — q0 has volume,
-    /// q1 is a gap, q2 must still accept writes.
+    /// A no-volume quarter must not deadlock the system — q1 has volume,
+    /// q2 is a gap, q3 must still accept writes.
     function test_GapQuarter_NoDeadlock() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
         _admit(a, a);
         _admit(b, b);
 
-        vm.roll(_quarterStart(0) + 1); // Q0 posting window
-        _postAs(a, 0, _fpv(100e18));
+        vm.roll(_quarterStart(1) + 1); // Q1 posting window
+        _postAs(a, 1, _fpv(100e18));
 
-        // Q1: nobody writes (all SPs have zero volume) — the gap.
-        vm.roll(_quarterStart(2) + 1); // Q2 posting window
-        _postAs(b, 2, _fpv(50e18)); // must succeed
-        assertEq(FixedU18.unwrap(sra.fpvOf(2, b).usd), 50e18, "post-gap write succeeds");
-        assertEq(FixedU18.unwrap(sra.fpvOf(1, a).usd), 0, "gap quarter: prevFpv zero for q0's contributor");
-        assertEq(FixedU18.unwrap(sra.fpvOf(1, b).usd), 0, "gap quarter: prevFpv zero for the new writer too");
+        // Q2: nobody writes (all SPs have zero volume) — the gap.
+        vm.roll(_quarterStart(3) + 1); // Q3 posting window
+        _postAs(b, 3, _fpv(50e18)); // must succeed
+        assertEq(FixedU18.unwrap(sra.fpvOf(3, b).usd), 50e18, "post-gap write succeeds");
+        assertEq(FixedU18.unwrap(sra.fpvOf(2, a).usd), 0, "gap quarter: prevFpv zero for q1's contributor");
+        assertEq(FixedU18.unwrap(sra.fpvOf(2, b).usd), 0, "gap quarter: prevFpv zero for the new writer too");
     }
 
     function _sumShares(Share[] memory shares) internal pure returns (uint256 sum) {

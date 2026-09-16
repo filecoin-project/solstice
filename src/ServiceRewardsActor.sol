@@ -86,8 +86,9 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
     error NotInPostingWindow(uint64 q);
     error NotInVerificationWindow(uint64 q);
     error NotBound(uint64 q);
+    error InvalidQuarter(uint64 q);
     error AlreadyPosted(uint64 q);
-    error PendingShares(uint64 q); // FIP-0118 §3.2: RemoveOrchestrator reverts while an ended quarter awaits its share map
+    error PendingShares(uint64 q); // FIP-0118 §3.2: removal waits for the current reporting quarter's share map
     error AlreadySubmitted(uint64 q);
     error NotLatestQuarter(uint64 q); // FIP-0118 §4.2: an older quarter's shares can never overwrite a newer quarter's
     error TooManyPairs(); // registerPairs batch exceeds MAX_PAIRS
@@ -174,9 +175,8 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
     /// @dev Quarter containing `nowE`, derived from the clock alone:
     ///      E(q) = ACTIVATION_EPOCH + q * EPOCHS_PER_QUARTER, so the time quarter is a pure
     ///      function of the epoch. Unlike the slot tags (which advance only on writes), this never
-    ///      lags: a gap quarter with no volume is still a *time* quarter. Pre-activation epochs
-    ///      (possible in test environments; the contract itself starts at ACTIVATION_EPOCH)
-    ///      saturate to quarter 0, matching the initial submission line (nextQuarter = 0).
+    ///      lags: a gap quarter with no volume is still a *time* quarter. Quarter 0 is the
+    ///      activation span before quarter 1's first posting window opens.
     function _quarterOf(Epoch nowE) internal view returns (uint64) {
         if (nowE < ACTIVATION_EPOCH) return 0;
         unchecked {
@@ -187,23 +187,23 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
         }
     }
 
-    /// @dev True while the just-ended time quarter awaits its share map: the submission line
-    ///      (nextQuarter) has not advanced past it (nextQuarter != nowQ + 1). FIP-0118 §3.2 gates
-    ///      RemoveOrchestrator on this state — removal reverts until the ended quarter's SubmitShares
-    ///      has run.
+    /// @dev True while the current reporting quarter awaits its share map: the last submitted
+    ///      quarter differs from the clock-derived quarter. Quarter 0 is reserved, so the zero
+    ///      default means removal is allowed throughout the activation span. From quarter 1 onward,
+    ///      FIP-0118 §3.2 gates removal until that quarter's SubmitShares has run.
     function _pendingSharesQuarter() internal view returns (bool hasPending, uint64 q) {
         SraStorage.SraStorageQuarter storage qt = SraStorage.quarter();
         if (currentEpoch() < ACTIVATION_EPOCH) return (false, 0);
         uint64 nowQ = _quarterOf(currentEpoch());
-        if (qt.nextQuarter != nowQ + 1) return (true, nowQ);
+        if (qt.lastSubmittedQuarter != nowQ) return (true, nowQ);
         return (false, 0);
     }
 
     // ------------------------------------------------------------------------
     // A/B mirror slots — each of the two slots carries its own quarter tag (SraStorageQuarter
-    // .mirrorAQuarter/.mirrorBQuarter). Tags store quarter + 1, so the never-written slot owns
-    // tag 0 exclusively: quarter 0's data (tag 1) is never confusable with vacancy. Writes target
-    // _slotForWrite; reads match by tag (_slotQuarterOf).
+    // .mirrorAQuarter/.mirrorBQuarter). Tags store quarter + 1, so tag 0 belongs exclusively to
+    // never-written slots; the first reportable quarter (1) uses tag 2. Writes target _slotForWrite;
+    // reads match by tag (_slotQuarterOf).
     // ------------------------------------------------------------------------
 
     /// @dev True when slot tag `tag` names quarter q: tags store q + 1, so tag 0 (never written)
@@ -306,6 +306,7 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
     /// @notice During posting, at most one posting per quarter; the value is a single USD total
     ///         (FilecoinPayVolume_i(Q): stablecoin face USD + off-chain-converted FIL volume, FIP-0118 FIPs#1275).
     function postVolume(uint64 q, FixedU18 fpv) external {
+        require(q != 0, InvalidQuarter(q));
         SraStorage.SraStorageRegistry storage r = SraStorage.registry();
         uint64 id = r.activeIdOf[msg.sender];
         SraStorage.OrchestratorInfo storage o = r.orchestrators[id];
@@ -362,11 +363,11 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
     }
 
     /// @notice Permanent removal; releases all bindings (pairs return to unclaimed) (spec §4.2).
-    /// @dev Timing guard (spec §3.2): RemoveOrchestrator reverts while an ended quarter awaits
-    ///      its share map — from the end of a quarter until that quarter's SubmitShares has run.
-    ///      Governance clears the pending quarter by cranking SubmitShares first, then removes in a
-    ///      later message (spec keeps the flows separate: SubmitShares is the only moment survivors
-    ///      gain from a removal, FIP-0118 §3.2).
+    /// @dev Timing guard (spec §3.2): from the start of each reportable quarter,
+    ///      RemoveOrchestrator reverts until that quarter's SubmitShares has run. Governance clears
+    ///      the pending quarter by cranking SubmitShares first, then removes in a later message
+    ///      (spec keeps the flows separate: SubmitShares is the only moment survivors gain from a
+    ///      removal, FIP-0118 §3.2).
     function removeOrchestrator(address orch) external unanimousNoHold(keccak256(msg.data)) {
         SraStorage.SraStorageRegistry storage r = SraStorage.registry();
         uint64 id = r.activeIdOf[orch];
@@ -374,9 +375,9 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
         require(id != 0 && o.admitted, NotAdmitted(orch));
         (bool hasPending, uint64 pendingQ) = _pendingSharesQuarter();
         if (hasPending) revert PendingShares(pendingQ);
-        // No aggregate deduction: the guard makes any removal post-binding (nextQuarter == nowQ + 1
-        // implies the active quarter was already submitted), so the aggregate is a binding snapshot;
-        // the orchestrator's exclusion from later quarters follows from it leaving the admitted list.
+        // No aggregate deduction: the guard makes any removal post-binding
+        // (lastSubmittedQuarter == nowQ implies the active reporting quarter was already submitted),
+        // so the aggregate is a binding snapshot; exclusion from later quarters follows from removal.
         o.admitted = false;
         r.activeIdOf[orch] = 0;
         uint64 idx = o.admittedIndex;
@@ -399,9 +400,9 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
     /// @dev O(1) wallet re-point: only the id's wallet field changes. bindings and quarterly mirror
     ///      state both key on the id, so they keep resolving to the same orchestrator (the identity
     ///      never moves), and historical quarter FilecoinPayVolume remains aggregated. Strictly
-    ///      prospective (spec §3.2): the swap is not gated on the submission line — an ended quarter
-    ///      awaiting its share map keeps the old wallet for the already-bound map; the new wallet
-    ///      pays from the next submission onward.
+    ///      prospective (spec §3.2): the swap is not gated on the last submitted quarter — an ended
+    ///      quarter awaiting its share map keeps the old wallet for the already-bound map; the new
+    ///      wallet pays from the next submission onward.
     /// @dev The new payout wallet must be non-zero, resolve to an existing actor's id, and its
     ///      resolved id must not duplicate any other admitted row's (the row being replaced is
     ///      exempt — re-spelling its own actor is a single row; FIP §2.4.4).
@@ -485,6 +486,7 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
     ///         window itself is the hold (spec §4.2), allows bidirectional correction. Value is a single USD total (FIP-0118 FIPs#1275).
     /// @dev The unanimousNoHold modifier handles dual-Safe owner validation; the function body validates the verification window.
     function correctVolume(address orch, uint64 q, FixedU18 value) external unanimousNoHold(keccak256(msg.data)) {
+        require(q != 0, InvalidQuarter(q));
         require(_inVerificationWindow(q), NotInVerificationWindow(q));
         uint64 id = _requireAdmittedId(orch);
 
@@ -516,6 +518,7 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
     ///         Reverts when this quarter's map has already been submitted (FIP-0118 §4.2); an all-zero quarter is a
     ///         benign no-op: SplitRule is not evaluated and the existing share map stands (FIPs#1275).
     function submitShares(uint64 q) external {
+        require(q != 0, InvalidQuarter(q));
         require(_afterBinding(q), NotBound(q));
         // FIP-0118 §4.2: SubmitShares operates on the **latest** quarter whose volumes are bound, so an
         // older quarter's shares can never overwrite a newer quarter's. Because _afterBinding is monotonic
@@ -525,7 +528,7 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
 
         SraStorage.SraStorageRegistry storage r = SraStorage.registry();
         SraStorage.SraStorageQuarter storage qt = SraStorage.quarter();
-        require(q + 1 != qt.nextQuarter, AlreadySubmitted(q));
+        require(q != qt.lastSubmittedQuarter, AlreadySubmitted(q));
 
         // Slot selection by quarter tag: the slot tagged q+1 holds this quarter's
         // input; a bound quarter with no tagged slot (gap — posting/verification elapsed with no
@@ -533,7 +536,7 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
         // existing map stands.
         (bool hit, uint8 slot) = _slotQuarterOf(q);
         if (!hit) {
-            qt.nextQuarter = q + 1;
+            qt.lastSubmittedQuarter = q;
             return;
         }
         Share[] memory shares = new Share[](r.admittedIds.length);
@@ -546,7 +549,7 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
         // FIP-0118: an all-zero quarter is a benign no-op — no SplitRule, no SetShares, existing map stands.
         // It still counts as submitted (the quarter cannot be resubmitted).
         if (total == ZERO) {
-            qt.nextQuarter = q + 1;
+            qt.lastSubmittedQuarter = q;
             return;
         }
 
@@ -635,7 +638,7 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
     /// @dev Submits a computed share map (submitShares' tail): trims zero-share rows
     ///      (largest-remainder can floor a tiny usd to 0 when the residue top-up round count is
     ///      smaller than the active count; real f02 SetShares rejects share==0 entries, as does the
-    ///      mock), advances the submission line (CEI: before the external call) and pushes to f02.
+    ///      mock), records the submitted quarter (CEI: before the external call) and pushes to f02.
     function _submitMap(
         SraStorage.SraStorageQuarter storage qt,
         uint64 q,
@@ -656,7 +659,7 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
             }
         }
 
-        qt.nextQuarter = q + 1; // CEI: mark before the external call
+        qt.lastSubmittedQuarter = q; // CEI: mark before the external call
         FVMRewards.setShares(SERVICE_ID, shares);
         emit SharesSubmitted(q, shares.length, total); // totalUsd as FixedU18 (18-decimal USD)
     }

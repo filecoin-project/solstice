@@ -23,13 +23,41 @@ contract SRAQuarterTest is SRATestBase {
     // quarterStart — the SRA-side FIP-0118 Start(q+1) anchor
     // ------------------------------------------------------------------------
 
-    /// quarterStart(q) is the anchor epoch of quarter q's cycle: the first epoch of its posting
-    /// window (FIP-0118 Start(q+1)). test_PostVolume_AtQuarterStart_Allowed shows posting opens
-    /// exactly at this value, so it is the window's left edge.
+    /// quarterStart(q) is the FIP-0118 Start(q+1) anchor. Quarter 0 remains the
+    /// activation anchor, but only quarters 1 and later are reportable.
     function test_QuarterStart_AnchorsPostingWindow() public view {
         assertEq(Epoch.unwrap(sra.quarterStart(0)), _quarterStart(0));
         assertEq(Epoch.unwrap(sra.quarterStart(1)), _quarterStart(1));
         assertEq(Epoch.unwrap(sra.quarterStart(0)), ACTIVATION_EPOCH);
+    }
+
+    function test_QuarterZero_MutationsRejected() public {
+        address orch = makeAddr("orch");
+        _admit(orch, orch);
+
+        vm.roll(_quarterStart(0));
+        vm.prank(orch);
+        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.InvalidQuarter.selector, uint64(0)));
+        sra.postVolume(0, FixedU18.wrap(_fpv(100e18)));
+
+        vm.prank(owner1);
+        sra.correctVolume(orch, 0, FixedU18.wrap(_fpv(100e18)));
+        vm.prank(owner2);
+        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.InvalidQuarter.selector, uint64(0)));
+        sra.correctVolume(orch, 0, FixedU18.wrap(_fpv(100e18)));
+
+        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.InvalidQuarter.selector, uint64(0)));
+        sra.submitShares(0);
+    }
+
+    function test_Remove_AllowedThroughoutActivationQuarter() public {
+        address orch = makeAddr("orch");
+        _admit(orch, orch);
+
+        vm.roll(_bindingStart(0) + 1);
+        _remove(orch);
+
+        assertFalse(sra.isAdmitted(orch));
     }
 
     // ------------------------------------------------------------------------
@@ -41,9 +69,9 @@ contract SRAQuarterTest is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_quarterStart(0) + 1); // E+1
-        _postAs(orch, 0, _fpv(100e18));
-        FilecoinPayVolume memory f = sra.fpvOf(0, orch);
+        vm.roll(_quarterStart(1) + 1); // E+1
+        _postAs(orch, 1, _fpv(100e18));
+        FilecoinPayVolume memory f = sra.fpvOf(1, orch);
         assertEq(FixedU18.unwrap(f.usd), 100e18);
     }
 
@@ -53,10 +81,10 @@ contract SRAQuarterTest is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_quarterStart(0) + 1); // E+1
+        vm.roll(_quarterStart(1) + 1); // E+1
         vm.expectEmit(true, true, true, true, address(sra));
-        emit ServiceRewardsActor.VolumePosted(0, orch, FixedU18.wrap(_fpv(100e18)));
-        _postAs(orch, 0, _fpv(100e18));
+        emit ServiceRewardsActor.VolumePosted(1, orch, FixedU18.wrap(_fpv(100e18)));
+        _postAs(orch, 1, _fpv(100e18));
     }
 
     /// E is the first epoch of the posting window ([E, E+POST)): posting at E succeeds.
@@ -64,9 +92,9 @@ contract SRAQuarterTest is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_quarterStart(0)); // now == E: first posting epoch
-        _postAs(orch, 0, _fpv(100e18));
-        assertEq(FixedU18.unwrap(sra.fpvOf(0, orch).usd), 100e18);
+        vm.roll(_quarterStart(1)); // now == E: first posting epoch
+        _postAs(orch, 1, _fpv(100e18));
+        assertEq(FixedU18.unwrap(sra.fpvOf(1, orch).usd), 100e18);
     }
 
     /// E-1 is before the posting window opens.
@@ -74,10 +102,10 @@ contract SRAQuarterTest is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_quarterStart(0) - 1); // now == E-1: posting not yet open
+        vm.roll(_quarterStart(1) - 1); // now == E-1: posting not yet open
         vm.prank(orch);
-        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.NotInPostingWindow.selector, uint64(0)));
-        sra.postVolume(0, FixedU18.wrap(_fpv(100e18)));
+        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.NotInPostingWindow.selector, uint64(1)));
+        sra.postVolume(1, FixedU18.wrap(_fpv(100e18)));
     }
 
     /// the posting window's right boundary E+POST is exclusive: posting at E+POST is rejected.
@@ -85,10 +113,10 @@ contract SRAQuarterTest is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_postEnd(0)); // now == E+POST: past the posting window
+        vm.roll(_postEnd(1)); // now == E+POST: past the posting window
         vm.prank(orch);
-        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.NotInPostingWindow.selector, uint64(0)));
-        sra.postVolume(0, FixedU18.wrap(_fpv(100e18)));
+        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.NotInPostingWindow.selector, uint64(1)));
+        sra.postVolume(1, FixedU18.wrap(_fpv(100e18)));
     }
 
     /// E+POST-1 is the last epoch of the posting window: posting succeeds.
@@ -96,9 +124,9 @@ contract SRAQuarterTest is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_postEnd(0) - 1); // now == E+POST-1: last posting epoch
-        _postAs(orch, 0, _fpv(100e18));
-        assertEq(FixedU18.unwrap(sra.fpvOf(0, orch).usd), 100e18);
+        vm.roll(_postEnd(1) - 1); // now == E+POST-1: last posting epoch
+        _postAs(orch, 1, _fpv(100e18));
+        assertEq(FixedU18.unwrap(sra.fpvOf(1, orch).usd), 100e18);
     }
 
     /// E+POST+1 enters verification; posting is rejected.
@@ -106,10 +134,10 @@ contract SRAQuarterTest is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_postEnd(0) + 1);
+        vm.roll(_postEnd(1) + 1);
         vm.prank(orch);
         vm.expectRevert();
-        sra.postVolume(0, FixedU18.wrap(_fpv(100e18)));
+        sra.postVolume(1, FixedU18.wrap(_fpv(100e18)));
     }
 
     /// at most once per quarter — the second posting reverts (posted flag).
@@ -117,12 +145,12 @@ contract SRAQuarterTest is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_quarterStart(0) + 1);
-        _postAs(orch, 0, _fpv(100e18));
+        vm.roll(_quarterStart(1) + 1);
+        _postAs(orch, 1, _fpv(100e18));
 
         vm.prank(orch);
         vm.expectRevert();
-        sra.postVolume(0, FixedU18.wrap(_fpv(200e18)));
+        sra.postVolume(1, FixedU18.wrap(_fpv(200e18)));
     }
 
     /// Zero posting is rejected — a zero total is equivalent to not posting, so
@@ -131,10 +159,10 @@ contract SRAQuarterTest is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_quarterStart(0) + 1);
+        vm.roll(_quarterStart(1) + 1);
         vm.prank(orch);
         vm.expectRevert(); // InvalidParameter — zero total rejected
-        sra.postVolume(0, FixedU18.wrap(0));
+        sra.postVolume(1, FixedU18.wrap(0));
     }
 
     /// CorrectVolume(0) clears a posted value (equivalent to not posted) —
@@ -143,15 +171,15 @@ contract SRAQuarterTest is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_quarterStart(0) + 1);
-        _postAs(orch, 0, _fpv(100e18));
+        vm.roll(_quarterStart(1) + 1);
+        _postAs(orch, 1, _fpv(100e18));
 
-        vm.roll(_postEnd(0) + 1); // verification window
-        _correctVolume(orch, 0, 0); // clear to zero
+        vm.roll(_postEnd(1) + 1); // verification window
+        _correctVolume(orch, 1, 0); // clear to zero
 
-        vm.roll(_bindingStart(0) + 1); // post-binding
-        assertEq(FixedU18.unwrap(sra.fpvOf(0, orch).usd), 0);
-        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(0)), 0);
+        vm.roll(_bindingStart(1) + 1); // post-binding
+        assertEq(FixedU18.unwrap(sra.fpvOf(1, orch).usd), 0);
+        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(1)), 0);
     }
 
     // ------------------------------------------------------------------------
@@ -163,12 +191,12 @@ contract SRAQuarterTest is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_quarterStart(0) + 1);
-        _postAs(orch, 0, _fpv(100e18));
+        vm.roll(_quarterStart(1) + 1);
+        _postAs(orch, 1, _fpv(100e18));
 
-        vm.roll(_postEnd(0) + 1); // verification window
-        _correctVolume(orch, 0, _fpv(250e18));
-        assertEq(FixedU18.unwrap(sra.fpvOf(0, orch).usd), 250e18);
+        vm.roll(_postEnd(1) + 1); // verification window
+        _correctVolume(orch, 1, _fpv(250e18));
+        assertEq(FixedU18.unwrap(sra.fpvOf(1, orch).usd), 250e18);
     }
 
     /// bidirectional correction — downward succeeds.
@@ -176,12 +204,12 @@ contract SRAQuarterTest is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_quarterStart(0) + 1);
-        _postAs(orch, 0, _fpv(100e18));
+        vm.roll(_quarterStart(1) + 1);
+        _postAs(orch, 1, _fpv(100e18));
 
-        vm.roll(_postEnd(0) + 1);
-        _correctVolume(orch, 0, _fpv(40e18));
-        assertEq(FixedU18.unwrap(sra.fpvOf(0, orch).usd), 40e18);
+        vm.roll(_postEnd(1) + 1);
+        _correctVolume(orch, 1, _fpv(40e18));
+        assertEq(FixedU18.unwrap(sra.fpvOf(1, orch).usd), 40e18);
     }
 
     /// multiple corrections within the window; the last one wins (whole replacement).
@@ -189,13 +217,13 @@ contract SRAQuarterTest is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_quarterStart(0) + 1);
-        _postAs(orch, 0, _fpv(100e18));
+        vm.roll(_quarterStart(1) + 1);
+        _postAs(orch, 1, _fpv(100e18));
 
-        vm.roll(_postEnd(0) + 1);
-        _correctVolume(orch, 0, _fpv(200e18));
-        _correctVolume(orch, 0, _fpv(300e18));
-        assertEq(FixedU18.unwrap(sra.fpvOf(0, orch).usd), 300e18);
+        vm.roll(_postEnd(1) + 1);
+        _correctVolume(orch, 1, _fpv(200e18));
+        _correctVolume(orch, 1, _fpv(300e18));
+        assertEq(FixedU18.unwrap(sra.fpvOf(1, orch).usd), 300e18);
     }
 
     /// an unposted orchestrator can be backfilled within the verification window (posted=false -> written).
@@ -203,9 +231,9 @@ contract SRAQuarterTest is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_postEnd(0) + 1); // unposted, straight into verification
-        _correctVolume(orch, 0, _fpv(150e18));
-        assertEq(FixedU18.unwrap(sra.fpvOf(0, orch).usd), 150e18);
+        vm.roll(_postEnd(1) + 1); // unposted, straight into verification
+        _correctVolume(orch, 1, _fpv(150e18));
+        assertEq(FixedU18.unwrap(sra.fpvOf(1, orch).usd), 150e18);
     }
 
     /// E+POST is the first epoch of the verification window ([E+POST, E+POST+VERIFY)):
@@ -214,9 +242,9 @@ contract SRAQuarterTest is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_postEnd(0)); // now == E+POST: first verification epoch
-        _correctVolume(orch, 0, _fpv(200e18));
-        assertEq(FixedU18.unwrap(sra.fpvOf(0, orch).usd), 200e18);
+        vm.roll(_postEnd(1)); // now == E+POST: first verification epoch
+        _correctVolume(orch, 1, _fpv(200e18));
+        assertEq(FixedU18.unwrap(sra.fpvOf(1, orch).usd), 200e18);
     }
 
     /// E+POST-1 is still in the posting window: correctVolume is rejected.
@@ -224,12 +252,12 @@ contract SRAQuarterTest is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_postEnd(0) - 1); // now == E+POST-1: verification not yet open
+        vm.roll(_postEnd(1) - 1); // now == E+POST-1: verification not yet open
         vm.prank(owner1);
-        sra.correctVolume(orch, 0, FixedU18.wrap(_fpv(200e18)));
+        sra.correctVolume(orch, 1, FixedU18.wrap(_fpv(200e18)));
         vm.prank(owner2);
-        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.NotInVerificationWindow.selector, uint64(0)));
-        sra.correctVolume(orch, 0, FixedU18.wrap(_fpv(200e18)));
+        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.NotInVerificationWindow.selector, uint64(1)));
+        sra.correctVolume(orch, 1, FixedU18.wrap(_fpv(200e18)));
     }
 
     /// the verification window's right boundary E+POST+VERIFY is exclusive: correctVolume at that
@@ -238,15 +266,15 @@ contract SRAQuarterTest is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_quarterStart(0) + 1); // E+1: post (valid under both window conventions)
-        _postAs(orch, 0, _fpv(100e18));
+        vm.roll(_quarterStart(1) + 1); // E+1: post (valid under both window conventions)
+        _postAs(orch, 1, _fpv(100e18));
 
-        vm.roll(_bindingStart(0)); // now == E+POST+VERIFY: past the verification window
+        vm.roll(_bindingStart(1)); // now == E+POST+VERIFY: past the verification window
         vm.prank(owner1);
-        sra.correctVolume(orch, 0, FixedU18.wrap(_fpv(200e18)));
+        sra.correctVolume(orch, 1, FixedU18.wrap(_fpv(200e18)));
         vm.prank(owner2);
-        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.NotInVerificationWindow.selector, uint64(0)));
-        sra.correctVolume(orch, 0, FixedU18.wrap(_fpv(200e18)));
+        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.NotInVerificationWindow.selector, uint64(1)));
+        sra.correctVolume(orch, 1, FixedU18.wrap(_fpv(200e18)));
     }
 
     /// E+POST+VERIFY-1 is the last epoch of the verification window: correctVolume succeeds.
@@ -254,12 +282,12 @@ contract SRAQuarterTest is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_quarterStart(0) + 1); // E+1
-        _postAs(orch, 0, _fpv(100e18));
+        vm.roll(_quarterStart(1) + 1); // E+1
+        _postAs(orch, 1, _fpv(100e18));
 
-        vm.roll(_bindingStart(0) - 1); // now == E+POST+VERIFY-1: last verification epoch
-        _correctVolume(orch, 0, _fpv(200e18));
-        assertEq(FixedU18.unwrap(sra.fpvOf(0, orch).usd), 200e18);
+        vm.roll(_bindingStart(1) - 1); // now == E+POST+VERIFY-1: last verification epoch
+        _correctVolume(orch, 1, _fpv(200e18));
+        assertEq(FixedU18.unwrap(sra.fpvOf(1, orch).usd), 200e18);
     }
 
     /// after the window closes (E+POST+VERIFY+1) CorrectVolume is rejected (value bound).
@@ -267,15 +295,15 @@ contract SRAQuarterTest is SRATestBase {
         address orch = makeAddr("orch");
         _admit(orch, orch);
 
-        vm.roll(_quarterStart(0) + 1);
-        _postAs(orch, 0, _fpv(100e18));
+        vm.roll(_quarterStart(1) + 1);
+        _postAs(orch, 1, _fpv(100e18));
 
-        vm.roll(_bindingStart(0) + 1); // post-binding
+        vm.roll(_bindingStart(1) + 1); // post-binding
         vm.prank(owner1);
-        sra.correctVolume(orch, 0, FixedU18.wrap(_fpv(200e18)));
+        sra.correctVolume(orch, 1, FixedU18.wrap(_fpv(200e18)));
         vm.prank(owner2);
         vm.expectRevert(); // window closed
-        sra.correctVolume(orch, 0, FixedU18.wrap(_fpv(200e18)));
+        sra.correctVolume(orch, 1, FixedU18.wrap(_fpv(200e18)));
     }
 
     // ------------------------------------------------------------------------
@@ -286,15 +314,15 @@ contract SRAQuarterTest is SRATestBase {
     function test_AggregatedFilecoinPayVolume_BeforeBinding_RevertsNotBound() public {
         address orch = makeAddr("orch");
         _admit(orch, orch);
-        vm.roll(_quarterStart(0) + 1);
-        _postAs(orch, 0, _fpv(100e18));
+        vm.roll(_quarterStart(1) + 1);
+        _postAs(orch, 1, _fpv(100e18));
 
         // Revert NotBound during posting/verification (not bound) — the SWA can distinguish this from a zero-volume quarter
-        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.NotBound.selector, 0));
-        sra.aggregatedFilecoinPayVolume(0);
-        vm.roll(_bindingStart(0) - 1); // last verification epoch: still not bound
-        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.NotBound.selector, 0));
-        sra.aggregatedFilecoinPayVolume(0);
+        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.NotBound.selector, 1));
+        sra.aggregatedFilecoinPayVolume(1);
+        vm.roll(_bindingStart(1) - 1); // last verification epoch: still not bound
+        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.NotBound.selector, 1));
+        sra.aggregatedFilecoinPayVolume(1);
     }
 
     /// after binding aggregatedFilecoinPayVolume = Σ each orchestrator's bound USD value (pure view, FIPs#1275).
@@ -304,12 +332,12 @@ contract SRAQuarterTest is SRATestBase {
         _admit(orchA, orchA);
         _admit(orchB, orchB);
 
-        vm.roll(_quarterStart(0) + 1);
-        _postAs(orchA, 0, _fpv(100e18));
-        _postAs(orchB, 0, _fpv(250e18));
+        vm.roll(_quarterStart(1) + 1);
+        _postAs(orchA, 1, _fpv(100e18));
+        _postAs(orchB, 1, _fpv(250e18));
 
-        vm.roll(_bindingStart(0) + 1);
-        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(0)), 350e18);
+        vm.roll(_bindingStart(1) + 1);
+        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(1)), 350e18);
     }
 
     /// Some orchestrators did not post -> aggregatedFilecoinPayVolume skips them (usd==0 continue).
@@ -319,12 +347,12 @@ contract SRAQuarterTest is SRATestBase {
         _admit(orchA, orchA);
         _admit(orchB, orchB);
 
-        vm.roll(_quarterStart(0) + 1);
-        _postAs(orchA, 0, _fpv(100e18));
+        vm.roll(_quarterStart(1) + 1);
+        _postAs(orchA, 1, _fpv(100e18));
 
-        vm.roll(_bindingStart(0) + 1); // post-binding
+        vm.roll(_bindingStart(1) + 1); // post-binding
         // B unposted (posted=false) -> skipped; only A aggregated
-        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(0)), 100e18);
+        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(1)), 100e18);
     }
 
     // ------------------------------------------------------------------------
@@ -385,20 +413,20 @@ contract SRAQuarterTest is SRATestBase {
 
     function test_PostVolume_NotAdmitted_Reverts() public {
         address stranger = makeAddr("stranger");
-        vm.roll(_quarterStart(0) + 1); // posting window
+        vm.roll(_quarterStart(1) + 1); // posting window
         vm.prank(stranger);
         vm.expectRevert(); // NotAdmitted(stranger)
-        sra.postVolume(0, FixedU18.wrap(_fpv(100e18)));
+        sra.postVolume(1, FixedU18.wrap(_fpv(100e18)));
     }
 
     /// correctVolume's target not admitted -> NotAdmitted revert at the second vote's body execution.
     function test_CorrectVolume_NotAdmitted_Reverts() public {
         address stranger = makeAddr("stranger");
-        vm.roll(_postEnd(0) + 1); // verification window
+        vm.roll(_postEnd(1) + 1); // verification window
         vm.prank(owner1);
-        sra.correctVolume(stranger, 0, FixedU18.wrap(100e18)); // first vote approve
+        sra.correctVolume(stranger, 1, FixedU18.wrap(100e18)); // first vote approve
         vm.prank(owner2);
         vm.expectRevert(); // second vote executes the body -> NotAdmitted(stranger)
-        sra.correctVolume(stranger, 0, FixedU18.wrap(100e18));
+        sra.correctVolume(stranger, 1, FixedU18.wrap(100e18));
     }
 }

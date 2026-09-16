@@ -47,7 +47,7 @@ contract SRAInvariantHandler is SRATestBase {
     uint256 internal constant ORCH_POOL = 20;
     uint256 internal constant PAYER_POOL = 5;
     uint256 internal constant OPERATOR_POOL = 5;
-    uint256 internal constant MAX_Q = 2; // explores quarters 0/1/2
+    uint256 internal constant MAX_Q = 3; // explores reportable quarters 1/2/3
 
     // ---- orchestrator pool and handler-side expected state ----
     address[] internal _orchPool;
@@ -143,7 +143,7 @@ contract SRAInvariantHandler is SRATestBase {
     function remove(uint256 idx) external {
         address orch = _pickOrch(idx);
         if (!sra.isAdmitted(orch)) return;
-        for (uint64 qq = 0; qq <= MAX_Q; qq++) {
+        for (uint64 qq = 1; qq <= MAX_Q; qq++) {
             _crankSubmitShares(qq);
         }
         bytes32 taskId = _taskId(sra.removeOrchestrator.selector, abi.encode(orch));
@@ -229,7 +229,7 @@ contract SRAInvariantHandler is SRATestBase {
 
     /// @notice An orchestrator posts a pure-stablecoin FilecoinPayVolume (no FIL periods).
     function postVolume(uint256 q, uint256 orchIdx, uint256 usd) external {
-        uint64 qq = uint64(bound(q, 0, MAX_Q));
+        uint64 qq = uint64(bound(q, 1, MAX_Q));
         address orch = _pickOrch(orchIdx);
         if (!sra.isAdmitted(orch) || _posted[qq][orch]) return;
         // Sampling domain bound(1, 1e30) equals the contract's enforced input domain (postVolume rejects above 1e30).
@@ -243,7 +243,7 @@ contract SRAInvariantHandler is SRATestBase {
 
     /// @notice Dual-Safe correction/backfill (unanimousNoHold: the second vote executes).
     function correctVolume(uint256 q, uint256 orchIdx, uint256 usd) external {
-        uint64 qq = uint64(bound(q, 0, MAX_Q));
+        uint64 qq = uint64(bound(q, 1, MAX_Q));
         address orch = _pickOrch(orchIdx);
         if (!sra.isAdmitted(orch)) return;
         // Sampling domain bound(1, 1e30) equals the contract's enforced input domain (correctVolume rejects above 1e30).
@@ -262,7 +262,7 @@ contract SRAInvariantHandler is SRATestBase {
     ///         (e.g. AlreadySubmitted) or an all-zero no-op leaves the previous snapshot valid (the map did
     ///         not change), otherwise the invariant would compare a new snapshot against the stale map.
     function submitShares(uint256 q) external {
-        uint64 qq = uint64(bound(q, 0, MAX_Q));
+        uint64 qq = uint64(bound(q, 1, MAX_Q));
         uint256 target = _bindingStart(qq) + uint64(bound(q, 0, 50));
         if (block.number < target) vm.roll(target); // monotonic
         _crankSubmitShares(qq);

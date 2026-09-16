@@ -70,12 +70,12 @@ contract DifferentialSharesTest is SRATestBase {
         ServiceRewardsActor s = _newSra();
         address a = makeAddr("agg-single");
         _admitOn(s, a);
-        vm.roll(_quarterStart(0) + 1);
+        vm.roll(_quarterStart(1) + 1);
         vm.prank(a);
-        s.postVolume(0, FixedU18.wrap(350e18));
+        s.postVolume(1, FixedU18.wrap(350e18));
 
-        _rollTo(_bindingStart(0) + 1); // post-binding
-        assertEq(FixedU18.unwrap(s.aggregatedFilecoinPayVolume(0)), 350e18);
+        _rollTo(_bindingStart(1) + 1); // post-binding
+        assertEq(FixedU18.unwrap(s.aggregatedFilecoinPayVolume(1)), 350e18);
     }
 
     /// Multiple orchestrators: aggregatedFilecoinPayVolume == Σ posted USD totals.
@@ -85,15 +85,15 @@ contract DifferentialSharesTest is SRATestBase {
         for (uint256 k = 0; k < 3; k++) {
             address orch = makeAddr(string.concat("agg-", vm.toString(k)));
             _admitOn(s, orch);
-            vm.roll(_quarterStart(0) + 1);
+            vm.roll(_quarterStart(1) + 1);
             uint256 usd = 100e18 * (k + 1);
             vm.prank(orch);
-            s.postVolume(0, FixedU18.wrap(usd));
+            s.postVolume(1, FixedU18.wrap(usd));
             expected += usd;
         }
 
-        _rollTo(_bindingStart(0) + 1);
-        assertEq(FixedU18.unwrap(s.aggregatedFilecoinPayVolume(0)), expected);
+        _rollTo(_bindingStart(1) + 1);
+        assertEq(FixedU18.unwrap(s.aggregatedFilecoinPayVolume(1)), expected);
     }
 
     // ------------------------------------------------------------------------

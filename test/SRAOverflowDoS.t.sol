@@ -26,15 +26,15 @@ contract SRAOverflowDoS is SRATestBase {
         _admit(attacker, attacker);
         _admit(victim, victim);
 
-        vm.roll(_quarterStart(0) + 1);
+        vm.roll(_quarterStart(1) + 1);
         vm.prank(attacker);
-        try sra.postVolume(0, FixedU18.wrap(EXTREME)) {} catch {}
+        try sra.postVolume(1, FixedU18.wrap(EXTREME)) {} catch {}
 
         vm.prank(victim);
-        sra.postVolume(0, FixedU18.wrap(100e18));
+        sra.postVolume(1, FixedU18.wrap(100e18));
 
-        vm.roll(_bindingStart(0) + 1);
-        sra.submitShares(0); // must not overflow
+        vm.roll(_bindingStart(1) + 1);
+        sra.submitShares(1); // must not overflow
 
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
         assertEq(_sumShares(shares), 1e18);
@@ -46,10 +46,10 @@ contract SRAOverflowDoS is SRATestBase {
         address attacker = makeAddr("v3-reject");
         _admit(attacker, attacker);
 
-        vm.roll(_quarterStart(0) + 1);
+        vm.roll(_quarterStart(1) + 1);
         vm.prank(attacker);
         vm.expectRevert();
-        sra.postVolume(0, FixedU18.wrap(EXTREME));
+        sra.postVolume(1, FixedU18.wrap(EXTREME));
     }
 
     // ------------------------------------------------------------------------

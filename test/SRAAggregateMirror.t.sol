@@ -23,12 +23,12 @@ contract SRAggregateMirrorTest is SRATestBase {
         _admit(a, a);
         _admit(b, b);
 
-        vm.roll(_quarterStart(0) + 1); // posting
-        _postAs(a, 0, _fpv(100e18));
-        _postAs(b, 0, _fpv(200e18));
+        vm.roll(_quarterStart(1) + 1); // posting
+        _postAs(a, 1, _fpv(100e18));
+        _postAs(b, 1, _fpv(200e18));
 
-        vm.roll(_bindingStart(0) + 1); // post-binding
-        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(0)), 300e18);
+        vm.roll(_bindingStart(1) + 1); // post-binding
+        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(1)), 300e18);
     }
 
     /// Unposted orchestrator never enters the mirror.
@@ -38,11 +38,11 @@ contract SRAggregateMirrorTest is SRATestBase {
         _admit(a, a);
         _admit(b, b);
 
-        vm.roll(_quarterStart(0) + 1);
-        _postAs(a, 0, _fpv(100e18));
+        vm.roll(_quarterStart(1) + 1);
+        _postAs(a, 1, _fpv(100e18));
 
-        vm.roll(_bindingStart(0) + 1);
-        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(0)), 100e18);
+        vm.roll(_bindingStart(1) + 1);
+        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(1)), 100e18);
     }
 
     /// CorrectVolume adjusts the mirror (up / down / clear-to-zero).
@@ -52,16 +52,16 @@ contract SRAggregateMirrorTest is SRATestBase {
         _admit(a, a);
         _admit(b, b);
 
-        vm.roll(_quarterStart(0) + 1);
-        _postAs(a, 0, _fpv(100e18));
-        _postAs(b, 0, _fpv(200e18));
+        vm.roll(_quarterStart(1) + 1);
+        _postAs(a, 1, _fpv(100e18));
+        _postAs(b, 1, _fpv(200e18));
 
-        vm.roll(_postEnd(0) + 1); // verification window
-        _correctVolume(a, 0, _fpv(150e18)); // up
-        _correctVolume(b, 0, 0); // clear
+        vm.roll(_postEnd(1) + 1); // verification window
+        _correctVolume(a, 1, _fpv(150e18)); // up
+        _correctVolume(b, 1, 0); // clear
 
-        vm.roll(_bindingStart(0) + 1);
-        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(0)), 150e18);
+        vm.roll(_bindingStart(1) + 1);
+        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(1)), 150e18);
     }
 
     /// Replacement during posting transfers identity — the old orchestrator's contribution is
@@ -73,17 +73,17 @@ contract SRAggregateMirrorTest is SRATestBase {
         _admit(a, a);
         _admit(b, b);
 
-        vm.roll(_quarterStart(0) + 1);
-        _postAs(a, 0, _fpv(100e18));
-        _postAs(b, 0, _fpv(200e18));
+        vm.roll(_quarterStart(1) + 1);
+        _postAs(a, 1, _fpv(100e18));
+        _postAs(b, 1, _fpv(200e18));
 
         vm.prank(owner1);
         sra.replaceWallet(a, a2);
         vm.prank(owner2);
         sra.replaceWallet(a, a2); // second vote executes (unanimousNoHold) — still inside posting window
 
-        vm.roll(_bindingStart(0) + 1);
-        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(0)), 300e18); // inherited — no deduction
+        vm.roll(_bindingStart(1) + 1);
+        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(1)), 300e18); // inherited — no deduction
     }
 
     /// Removal after the pending quarter is submitted leaves the bound aggregate as a binding
@@ -95,14 +95,14 @@ contract SRAggregateMirrorTest is SRATestBase {
         _admit(a, a);
         _admit(b, b);
 
-        vm.roll(_quarterStart(0) + 1);
-        _postAs(a, 0, _fpv(100e18));
-        _postAs(b, 0, _fpv(200e18));
+        vm.roll(_quarterStart(1) + 1);
+        _postAs(a, 1, _fpv(100e18));
+        _postAs(b, 1, _fpv(200e18));
 
-        vm.roll(_bindingStart(0) + 1); // q0 binds
-        sra.submitShares(0); // guard lifts
+        vm.roll(_bindingStart(1) + 1); // q1 binds
+        sra.submitShares(1); // guard lifts
         _remove(a); // post-binding removal: the aggregate is a binding snapshot, not rewritten
-        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(0)), 300e18);
+        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(1)), 300e18);
     }
 
     /// Mirror switches quarters; the previous quarter falls back to the linear scan.
@@ -112,43 +112,43 @@ contract SRAggregateMirrorTest is SRATestBase {
         _admit(a, a);
         _admit(b, b);
 
-        vm.roll(_quarterStart(0) + 1);
-        _postAs(a, 0, _fpv(100e18));
-        vm.roll(_bindingStart(0) + 1);
-        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(0)), 100e18); // mirror for q=0
-
-        // quarter 1: mirror re-points; q=0 becomes historical (linear fallback)
         vm.roll(_quarterStart(1) + 1);
-        _postAs(b, 1, _fpv(50e18));
+        _postAs(a, 1, _fpv(100e18));
         vm.roll(_bindingStart(1) + 1);
-        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(0)), 100e18); // fallback scan
-        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(1)), 50e18); // mirror for q=1
+        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(1)), 100e18); // mirror for q1
+
+        // quarter 2: mirror re-points; q1 becomes historical (linear fallback)
+        vm.roll(_quarterStart(2) + 1);
+        _postAs(b, 2, _fpv(50e18));
+        vm.roll(_bindingStart(2) + 1);
+        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(1)), 100e18); // fallback scan
+        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(2)), 50e18); // mirror for q2
     }
 
     /// Lagging SubmitShares (spec: operates on the latest bound quarter, up to one quarter of lag):
-    /// q=0's mirror slot keeps its quarter tag while q=1 writes into the other slot, so the lagging
-    /// submitShares(0) matches the q=0 tag and collects both contributors from that slot.
+    /// q1's mirror slot keeps its quarter tag while q2 writes into the other slot, so the lagging
+    /// submitShares(1) matches the q1 tag and collects both contributors from that slot.
     function test_Mirror_SubmitShares_Lagging_ReadsPrevSlot() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
         _admit(a, a);
         _admit(b, b);
 
-        vm.roll(_quarterStart(0) + 1);
-        _postAs(a, 0, _fpv(100e18));
-        _postAs(b, 0, _fpv(200e18));
-
-        // q=1 writes into the second slot (a posts again — a fresh write only ever erases a
-        // superseded quarter, so q=0's tagged slot survives)
         vm.roll(_quarterStart(1) + 1);
-        _postAs(a, 1, _fpv(50e18));
+        _postAs(a, 1, _fpv(100e18));
+        _postAs(b, 1, _fpv(200e18));
 
-        // q=0 is still the latest bound quarter (q=1 not bound yet): lagging submit matches the q=0 tag
-        sra.submitShares(0);
+        // q2 writes into the second slot (a posts again — a fresh write only ever erases a
+        // superseded quarter, so q1's tagged slot survives)
+        vm.roll(_quarterStart(2) + 1);
+        _postAs(a, 2, _fpv(50e18));
+
+        // q1 is still the latest bound quarter (q2 not bound yet): lagging submit matches the q1 tag
+        sra.submitShares(1);
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
-        assertEq(shares.length, 2, "both q0 contributors from the mirror");
+        assertEq(shares.length, 2, "both q1 contributors from the mirror");
         // f02 stores shares in recipient order, so a's row is found by lookup, not by position.
-        assertEq(_shareOf(shares, a), uint256(1e18) / 3, "a weighted by its q0 value of 100, not its q1 value");
+        assertEq(_shareOf(shares, a), uint256(1e18) / 3, "a weighted by its q1 value of 100, not its q2 value");
         assertEq(_shareOf(shares, a) + _shareOf(shares, b), 1e18, "shares sum to 100%");
     }
 
@@ -160,20 +160,20 @@ contract SRAggregateMirrorTest is SRATestBase {
         _admit(a, a);
         _admit(b, b);
 
-        vm.roll(_quarterStart(0) + 1);
-        _postAs(a, 0, _fpv(100e18));
+        vm.roll(_quarterStart(1) + 1);
+        _postAs(a, 1, _fpv(100e18));
 
         // q=1: nobody posted — correctVolume backfill is the first write to q=1's own tagged slot
-        vm.roll(_postEnd(1) + 1);
-        _correctVolume(b, 1, _fpv(200e18));
+        vm.roll(_postEnd(2) + 1);
+        _correctVolume(b, 2, _fpv(200e18));
 
-        vm.roll(_bindingStart(1) + 1);
-        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(0)), 100e18); // q=0 snapshot intact
-        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(1)), 200e18); // q=1 counter
+        vm.roll(_bindingStart(2) + 1);
+        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(1)), 100e18); // q1 snapshot intact
+        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(2)), 200e18); // q2 counter
 
-        sra.submitShares(1); // q=1 latest bound, active quarter: reads fpv (b only)
+        sra.submitShares(2); // q2 latest bound, active quarter: reads fpv (b only)
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
-        assertEq(shares.length, 1, "backfill only contributor of q=1");
+        assertEq(shares.length, 1, "backfill only contributor of q2");
         assertEq(shares[0].wallet, b);
         assertEq(FixedU18.unwrap(shares[0].share), 1e18);
     }
@@ -187,58 +187,56 @@ contract SRAggregateMirrorTest is SRATestBase {
         _admit(a, a);
         _admit(b, b);
 
-        vm.roll(_quarterStart(0) + 1);
-        _postAs(a, 0, _fpv(100e18));
-        _postAs(b, 0, _fpv(200e18));
+        vm.roll(_quarterStart(1) + 1);
+        _postAs(a, 1, _fpv(100e18));
+        _postAs(b, 1, _fpv(200e18));
 
-        // q=1 nobody posted: correctVolume backfills land in a fresh q=1 slot, where every
+        // q2 nobody posted: correctVolume backfills land in a fresh q2 slot, where every
         // orchestrator's old value reads 0 — a: value < oldUsd cannot underflow; b: value > oldUsd
-        // lands exactly; neither may carry q=0's contribution into the q=1 counter.
-        vm.roll(_postEnd(1) + 1);
-        _correctVolume(a, 1, _fpv(50e18));
-        _correctVolume(b, 1, _fpv(300e18));
+        // lands exactly; neither may carry q1's contribution into the q2 counter.
+        vm.roll(_postEnd(2) + 1);
+        _correctVolume(a, 2, _fpv(50e18));
+        _correctVolume(b, 2, _fpv(300e18));
 
-        vm.roll(_bindingStart(1) + 1);
-        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(1)), 350e18); // 50 + 300, no leak from q0
+        vm.roll(_bindingStart(2) + 1);
+        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(2)), 350e18); // 50 + 300, no leak from q1
     }
 
-    /// Spec §3.2 timing guard: RemoveOrchestrator reverts while an ended quarter awaits its
-    /// share map — from the end of a quarter until that quarter's SubmitShares has run. A lag-window
-    /// remove (q0 bound, map not submitted, time already into q1) must revert PendingShares(1) —
-    /// the guard keys on the ended quarter, so q1 itself is pending until submitted; after
-    /// submitShares(0) clears the lag the same removal succeeds. This also guarantees the submitted
-    /// map is always consistent with the quarter counter (no removal binds between close-of-posting
-    /// and SubmitShares).
+    /// Spec §3.2 timing guard: from the start of reportable q2, RemoveOrchestrator reverts with
+    /// PendingShares(2) until q2's SubmitShares has run. Q1 remains the latest bound quarter during
+    /// q2's posting window, so governance first submits q1, then submits q2 after it binds; only then
+    /// can the same removal task succeed. This keeps the submitted map consistent with the quarter
+    /// counter because no removal can bind between close-of-posting and SubmitShares.
     function test_Mirror_Remove_PendingShares_Reverts() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
         _admit(a, a);
         _admit(b, b);
 
-        vm.roll(_quarterStart(0) + 1);
-        _postAs(a, 0, _fpv(100e18));
-        _postAs(b, 0, _fpv(200e18));
-
-        // q=1: a posts again — q0's tagged slot survives (a fresh write only ever erases a
-        // superseded quarter), q0 stays the latest bound quarter (map pending).
         vm.roll(_quarterStart(1) + 1);
-        _postAs(a, 1, _fpv(50e18));
+        _postAs(a, 1, _fpv(100e18));
+        _postAs(b, 1, _fpv(200e18));
 
-        // lag window: q0 bound, submitShares(0) not yet called -> the second vote (which executes
+        // q=1: a posts again — q1's tagged slot survives (a fresh write only ever erases a
+        // superseded quarter), q1 stays the latest bound quarter (map pending).
+        vm.roll(_quarterStart(2) + 1);
+        _postAs(a, 2, _fpv(50e18));
+
+        // lag window: q1 bound, submitShares(1) not yet called -> the second vote (which executes
         // the body under unanimousNoHold) hits the guard and reverts; the first approval persists.
         vm.prank(owner1);
         sra.removeOrchestrator(b); // vote 1 (approve)
-        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.PendingShares.selector, 1));
+        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.PendingShares.selector, 2));
         vm.prank(owner2);
-        sra.removeOrchestrator(b); // vote 2 executes the body: ended q1 awaits its share map -> guard reverts (vote rolls back)
+        sra.removeOrchestrator(b); // current reporting quarter q2 awaits its share map
 
-        // crank the pending quarters — q0 then q1 (both ended, q1's map holds a's contribution) —
+        // crank the pending quarters — q1 then q2 (q2's map holds a's contribution) —
         // then the same unanimous task completes on the second vote.
-        sra.submitShares(0);
+        sra.submitShares(1);
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
-        assertEq(shares.length, 2, "both q0 contributors submitted while still admitted");
-        vm.roll(_bindingStart(1) + 1); // q1 binds
-        sra.submitShares(1); // q1 submitted (map = [a]; b's q1 slot is zero)
+        assertEq(shares.length, 2, "both q1 contributors submitted while still admitted");
+        vm.roll(_bindingStart(2) + 1); // q2 binds
+        sra.submitShares(2); // q2 submitted (map = [a]; b's q2 slot is zero)
         vm.prank(owner2);
         sra.removeOrchestrator(b); // second vote again: full vote now executes, guard cleared
         assertEq(sra.isAdmitted(b), false, "removed after the pending quarters are cleared");
@@ -246,39 +244,39 @@ contract SRAggregateMirrorTest is SRATestBase {
 
     /// Spec §3.2: the guard covers the whole window from the end of a quarter until its
     /// SubmitShares has run — posting period, verification window and any crank delay — not only
-    /// the post-binding lag. With q0 submitted (nextQuarter = 1), a removal inside q1's
-    /// posting/verification window (q1 ended, not yet bound) must revert PendingShares(1); once
-    /// submitShares(1) clears q1 the same unanimous task completes.
+    /// the post-binding lag. With q1 submitted (lastSubmittedQuarter = 1), a removal inside q2's
+    /// posting/verification window must revert PendingShares(2); once submitShares(2) clears q2,
+    /// the same unanimous task completes.
     function test_Remove_InsidePostingVerificationWindow_Reverts() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
         _admit(a, a);
         _admit(b, b);
 
-        // q0 binds and submits — nextQuarter advances to 1, no pending quarter.
-        vm.roll(_quarterStart(0) + 1);
-        _postAs(a, 0, _fpv(100e18));
-        vm.roll(_bindingStart(0) + 1);
-        sra.submitShares(0);
-
-        // q1 posting window (E(1)+1): q1 has ended and awaits its share map -> the second vote
-        // (body execution) reverts; the first approval persists.
+        // q1 binds and submits — lastSubmittedQuarter becomes 1, so no quarter is pending.
         vm.roll(_quarterStart(1) + 1);
+        _postAs(a, 1, _fpv(100e18));
+        vm.roll(_bindingStart(1) + 1);
+        sra.submitShares(1);
+
+        // q2 posting window (E(1)+1): q2 has ended and awaits its share map -> the second vote
+        // (body execution) reverts; the first approval persists.
+        vm.roll(_quarterStart(2) + 1);
         vm.prank(owner1);
         sra.removeOrchestrator(b); // vote 1 (approve)
-        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.PendingShares.selector, 1));
+        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.PendingShares.selector, 2));
         vm.prank(owner2);
         sra.removeOrchestrator(b); // vote 2 executes the body: guard reverts
 
-        // q1 verification window (E(1)+POST+1): still before binding, still pending -> reverts again.
-        vm.roll(_postEnd(1) + 1);
-        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.PendingShares.selector, 1));
+        // q2 verification window (E(1)+POST+1): still before binding, still pending -> reverts again.
+        vm.roll(_postEnd(2) + 1);
+        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.PendingShares.selector, 2));
         vm.prank(owner2);
         sra.removeOrchestrator(b); // the persisted first approval + this second vote executes: guard reverts
 
-        // q1 binds and submits — guard lifts; the same task completes on the next second vote.
-        vm.roll(_bindingStart(1) + 1);
-        sra.submitShares(1);
+        // q2 binds and submits — guard lifts; the same task completes on the next second vote.
+        vm.roll(_bindingStart(2) + 1);
+        sra.submitShares(2);
         vm.prank(owner2);
         sra.removeOrchestrator(b); // second vote again: full vote now executes, guard cleared
         assertEq(sra.isAdmitted(b), false, "removed after q1 submitted");
@@ -286,27 +284,27 @@ contract SRAggregateMirrorTest is SRATestBase {
 
     /// The remove guard's latest-bound determination is *time-driven* (via _quarterOf), not derived
     /// from the slot tags — the tags advance only on writes, so a gap quarter (bound but unwritten)
-    /// would be missed: q1 bound, nobody wrote, no slot tagged q1, a tag-based reading wrongly
+    /// would be missed: q2 bound, nobody wrote, no slot tagged q2, a tag-based reading wrongly
     /// reports latest = 0 (already submitted) and lets removal pass. The time-derived guard reverts
-    /// until submitShares(1) (an all-zero no-op) clears q1.
+    /// until submitShares(2) (an all-zero no-op) clears q2.
     function test_Remove_PendingShares_GapWindow() public {
         address a = makeAddr("a");
         address b = makeAddr("b");
         _admit(a, a);
         _admit(b, b);
 
-        vm.roll(_quarterStart(0) + 1); // Q0 posting window
-        _postAs(a, 0, _fpv(100e18));
-        vm.roll(_bindingStart(0) + 1); // Q0 binds
-        sra.submitShares(0); // lastSubmittedQ = 1
+        vm.roll(_quarterStart(1) + 1); // Q1 posting window
+        _postAs(a, 1, _fpv(100e18));
+        vm.roll(_bindingStart(1) + 1); // Q1 binds
+        sra.submitShares(1); // lastSubmittedQ = 1
 
-        // Q1 gap: nobody writes (no slot tagged q1). Roll past Q1 binding, before Q2 begins.
-        vm.roll(_bindingStart(1) + 1);
+        // Q2 gap: nobody writes (no slot tagged q2). Roll past Q2 binding, before Q3 begins.
+        vm.roll(_bindingStart(2) + 1);
 
         // Time-derived latest bound = 1 (unsubmitted) -> the second vote (body execution) reverts.
         vm.prank(owner1);
         sra.removeOrchestrator(b); // vote 1 (approve)
-        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.PendingShares.selector, 1));
+        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.PendingShares.selector, 2));
         vm.prank(owner2);
         sra.removeOrchestrator(b); // vote 2 executes the body: gap-quarter pending -> guard reverts
     }
@@ -329,30 +327,30 @@ contract SRAggregateMirrorTest is SRATestBase {
         _admit(a, a);
         _admit(b, b);
 
-        // q0: both post (q0's slot)
-        vm.roll(_quarterStart(0) + 1);
-        _postAs(a, 0, _fpv(100e18));
-        _postAs(b, 0, _fpv(200e18));
+        // q1: both post (q1's slot)
+        vm.roll(_quarterStart(1) + 1);
+        _postAs(a, 1, _fpv(100e18));
+        _postAs(b, 1, _fpv(200e18));
 
-        // q1: only a is corrected (q1's own tagged slot — a:50)
-        vm.roll(_postEnd(1) + 1);
-        _correctVolume(a, 1, _fpv(50e18));
+        // q2: only a is corrected (q2's own tagged slot — a:50)
+        vm.roll(_postEnd(2) + 1);
+        _correctVolume(a, 2, _fpv(50e18));
 
-        // submit q1 (latest bound, active quarter): map = [a], lastSubmittedQ = 2
-        vm.roll(_bindingStart(1) + 1);
-        sra.submitShares(1);
+        // submit q2 (latest bound, active quarter): map = [a], lastSubmittedQ = 2
+        vm.roll(_bindingStart(2) + 1);
+        sra.submitShares(2);
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
         assertEq(shares.length, 1, "q1 map = a only");
         assertEq(shares[0].wallet, a);
 
-        // q2 binds with no contribution ever (no q2 slot exists): submitShares(2)
+        // q3 binds with no contribution ever (no q3 slot exists): submitShares(3)
         // must be an all-zero no-op — map unchanged, the quarter still counts as submitted.
-        vm.roll(_bindingStart(2) + 1);
-        sra.submitShares(2);
+        vm.roll(_bindingStart(3) + 1);
+        sra.submitShares(3);
         shares = rewardActor().getShares(SERVICE_ID);
         assertEq(shares.length, 1, "future bound quarter no-op leaves the map untouched");
         assertEq(shares[0].wallet, a, "map still the q1 distribution");
-        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(2)), 0, "q2 has no contributions");
+        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(3)), 0, "q2 has no contributions");
     }
 
     /// spec §3.2: the posting window itself reverts — from the end of a quarter until its
@@ -366,14 +364,14 @@ contract SRAggregateMirrorTest is SRATestBase {
         _admit(a, a);
         _admit(b, b);
 
-        vm.roll(_quarterStart(0) + 1); // Q0 posting window
-        _postAs(a, 0, _fpv(100e18));
-        _postAs(b, 0, _fpv(200e18));
+        vm.roll(_quarterStart(1) + 1); // Q1 posting window
+        _postAs(a, 1, _fpv(100e18));
+        _postAs(b, 1, _fpv(200e18));
 
-        // q0 ended and awaits its share map -> the second vote (body execution) reverts.
+        // q1 ended and awaits its share map -> the second vote (body execution) reverts.
         vm.prank(owner1);
         sra.removeOrchestrator(b); // vote 1 (approve)
-        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.PendingShares.selector, 0));
+        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.PendingShares.selector, 1));
         vm.prank(owner2);
         sra.removeOrchestrator(b); // vote 2 executes the body: guard reverts
     }
@@ -393,22 +391,22 @@ contract SRAggregateMirrorTest is SRATestBase {
         _admit(a, a);
         _admit(b, b);
 
-        vm.roll(_quarterStart(0) + 1); // Q0 posting window
-        _postAs(a, 0, _fpv(100e18));
-        _postAs(b, 0, _fpv(200e18));
+        vm.roll(_quarterStart(1) + 1); // Q1 posting window
+        _postAs(a, 1, _fpv(100e18));
+        _postAs(b, 1, _fpv(200e18));
 
-        vm.roll(_bindingStart(0) + 1); // Q0 binds
-        sra.submitShares(0);
+        vm.roll(_bindingStart(1) + 1); // Q1 binds
+        sra.submitShares(1);
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
         assertEq(shares.length, 2, "both contributors in the bound map");
-        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(0)), 300e18, "bound aggregate");
+        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(1)), 300e18, "bound aggregate");
         uint256 aShare = _shareOf(shares, a);
         uint256 bShare = _shareOf(shares, b);
         assertGt(aShare, 0, "a holds a share");
         assertGt(bShare, 0, "b holds a share");
 
         _remove(b); // post-binding removal: aggregate is a binding snapshot, must not drift
-        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(0)), 300e18, "bound aggregate unchanged after removal");
+        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(1)), 300e18, "bound aggregate unchanged after removal");
         shares = rewardActor().getShares(SERVICE_ID);
         // b's entry was repointed to f099 (stripped from storage): only a's share remains stored,
         // at its unchanged value; b's slice is recorded as the stripped burn.
@@ -428,14 +426,14 @@ contract SRAggregateMirrorTest is SRATestBase {
         _admit(a, a);
         _admit(b, b);
 
-        vm.roll(_quarterStart(0) + 1); // Q0 posting window
-        _postAs(a, 0, _fpv(100e18));
-        _postAs(b, 0, _fpv(200e18));
+        vm.roll(_quarterStart(1) + 1); // Q1 posting window
+        _postAs(a, 1, _fpv(100e18));
+        _postAs(b, 1, _fpv(200e18));
 
-        vm.roll(_postEnd(0) + 1); // Q0 verification window (E+POST+1)
+        vm.roll(_postEnd(1) + 1); // Q1 verification window (E+POST+1)
         vm.prank(owner1);
         sra.removeOrchestrator(b); // vote 1 (approve)
-        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.PendingShares.selector, 0));
+        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.PendingShares.selector, 1));
         vm.prank(owner2);
         sra.removeOrchestrator(b); // vote 2 executes the body: guard reverts
     }
@@ -448,24 +446,23 @@ contract SRAggregateMirrorTest is SRATestBase {
         _admit(a, a);
         _admit(b, b);
 
-        vm.roll(_quarterStart(0) + 1); // Q0 posting window
-        _postAs(a, 0, _fpv(100e18));
-        vm.roll(_bindingStart(0) + 1); // Q0 binds
-        sra.submitShares(0);
+        vm.roll(_quarterStart(1) + 1); // Q1 posting window
+        _postAs(a, 1, _fpv(100e18));
+        vm.roll(_bindingStart(1) + 1); // Q1 binds
+        sra.submitShares(1);
         Share[] memory shares = rewardActor().getShares(SERVICE_ID);
-        assertEq(shares.length, 1, "q0 map = a");
+        assertEq(shares.length, 1, "q1 map = a");
         assertEq(shares[0].wallet, a);
 
-        // Q1 gap (no slot); Q2: b posts into the vacant second slot.
-        vm.roll(_quarterStart(2) + 1);
-        _postAs(b, 2, _fpv(50e18));
+        // Q2 gap (no slot); Q3: b posts into the vacant second slot.
+        vm.roll(_quarterStart(3) + 1);
+        _postAs(b, 3, _fpv(50e18));
 
-        // Q1 binds with no contribution: submitShares(1) must be an all-zero no-op.
-        vm.roll(_bindingStart(1) + 1);
-        sra.submitShares(1);
+        // Q2 binds with no contribution: submitShares(2) must be an all-zero no-op.
+        sra.submitShares(2);
         shares = rewardActor().getShares(SERVICE_ID);
         assertEq(shares.length, 1, "gap quarter no-op leaves the map untouched");
-        assertEq(shares[0].wallet, a, "map still the q0 distribution");
-        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(1)), 0, "gap quarter has no contributions");
+        assertEq(shares[0].wallet, a, "map still the q1 distribution");
+        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(2)), 0, "gap quarter has no contributions");
     }
 }
