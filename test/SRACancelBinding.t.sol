@@ -267,7 +267,6 @@ contract SRACancelBindingTest is SRATestBase {
         Binding[] memory pairs = new Binding[](1);
         pairs[0] = _pair(payer, operator);
         _registerPairsAs(orchA, pairs);
-        _crankQuarter0(); // lift the §3.2 remove guard (q0 bound + submitted)
         _remove(orchA); // binding stays in storage but reads as unclaimed (spec §4.2)
 
         _expectPairNotBound(payer, operator);

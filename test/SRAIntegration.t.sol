@@ -26,18 +26,18 @@ contract SRAIntegrationTest is SRATestBase {
         _admitAndPost(600e18);
         _admitAndPost(300e18);
 
-        _rollTo(_bindingStart(0) + 1); // post-binding
+        _rollTo(_bindingStart(1) + 1); // post-binding
 
         assertEq(
-            FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(0)),
+            FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(1)),
             900e18,
             "aggregatedFilecoinPayVolume sums the bound USD values"
         );
 
         // no divergence: submitShares's internal total must == aggregatedFilecoinPayVolume (expectEmit captures totalUsd)
         vm.expectEmit(true, false, false, true, address(sra));
-        emit ServiceRewardsActor.SharesSubmitted(0, 2, FixedU18.wrap(900e18));
-        sra.submitShares(0);
+        emit ServiceRewardsActor.SharesSubmitted(1, 2, FixedU18.wrap(900e18));
+        sra.submitShares(1);
     }
 
     // ------------------------------------------------------------------------
@@ -48,12 +48,12 @@ contract SRAIntegrationTest is SRATestBase {
         address a = _admitAndPost(600e18);
         address b = _admitAndPost(300e18);
 
-        _rollTo(_bindingStart(0) + 1);
+        _rollTo(_bindingStart(1) + 1);
 
-        sra.submitShares(0);
+        sra.submitShares(1);
 
         assertEq(
-            FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(0)), 900e18, "post-submit aggregated matches final value"
+            FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(1)), 900e18, "post-submit aggregated matches final value"
         );
 
         // shares proportional to USD: a:b = 600:300 = 2:1, Σ == 1e18 (largest-remainder tops up the larger remainder a)
@@ -71,20 +71,20 @@ contract SRAIntegrationTest is SRATestBase {
 
     function test_Contract_AggregatedFilecoinPayVolume_PureView() public {
         _admitAndPost(100e18);
-        _rollTo(_bindingStart(0) + 1); // post-binding
-        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(0)), 100e18, "view equals the bound value");
+        _rollTo(_bindingStart(1) + 1); // post-binding
+        assertEq(FixedU18.unwrap(sra.aggregatedFilecoinPayVolume(1)), 100e18, "view equals the bound value");
     }
 
     // ------------------------------------------------------------------------
     // helpers
     // ------------------------------------------------------------------------
 
-    /// @dev Admits and posts an orchestrator with a single USD total (within q=0's posting window).
+    /// @dev Admits and posts an orchestrator with a single USD total within q1's posting window.
     function _admitAndPost(uint256 usd) internal returns (address orch) {
         orch = makeAddr(string.concat("orch-", vm.toString(_salt++)));
         _admit(orch, orch);
-        vm.roll(_quarterStart(0) + 1);
-        _postAs(orch, 0, _fpv(usd));
+        vm.roll(_quarterStart(1) + 1);
+        _postAs(orch, 1, _fpv(usd));
     }
 
     function _sumShares(Share[] memory shares) internal pure returns (uint256 sum) {
