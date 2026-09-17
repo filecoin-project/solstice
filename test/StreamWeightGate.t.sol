@@ -592,6 +592,37 @@ contract StreamWeightGateTest is SWATestBase {
         assertEq(lastChecked, 2);
     }
 
+    /// @dev setWeightRecords lands (both owners) while setGateParams has only one approval.
+    function test_QuarterlyGateCheck_PendingWeightWrite_NeededWhenGateParamsNotYetUnanimous() public {
+        _registerAndActivate(SERVICE_ID);
+
+        WeightRecord memory fifty = WeightRecord({
+            vStart: 0.5e18, slope: 0, tStart: Epoch.wrap(uint64(vm.getBlockNumber())), floor: 0.5e18, cap: 0.5e18
+        });
+        WeightRecordUpdate[] memory updates = _singleWeightRecord(SERVICE_ID, fifty);
+        vm.prank(owner1);
+        actor.setWeightRecords(updates);
+        vm.prank(owner2);
+        actor.setWeightRecords(updates);
+
+        GateParams memory terminal = _gateParams(3500 ether, 2.7 ether, 8);
+        vm.prank(owner1);
+        actor.setGateParams(terminal); // only one approval: NOT unanimous, guard 2 would not fire
+
+        IServiceRewardsActor sra = _sraMock();
+        _mockFpv(sra, 2, 3500 ether);
+        _mockQuarterStart(sra, 2, 1000);
+
+        // Still well inside f02's hold window for the 50% write.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                GateParamsLibrary.PendingWeightWrite.selector,
+                Epoch.wrap(uint64(vm.getBlockNumber()) + Epoch.unwrap(MAINNET_TIMELOCK))
+            )
+        );
+        actor.quarterlyGateCheck();
+    }
+
     /// @dev Once the pending setGateParams completes, quarterlyGateCheck reads the fresh steps.
     function test_QuarterlyGateCheck_UnblocksAfterSetGateParamsCompletes() public {
         GateParams memory params = _gateParams(4000 ether, 2.7 ether, 1);

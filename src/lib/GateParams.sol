@@ -33,7 +33,7 @@ library GateParamsLibrary {
     }
 
     // keccak256(abi.encode(uint256(keccak256("Solstice.GateCheck")) - 1)) & ~bytes32(uint256(0xff));
-    bytes32 private constant GATE_CHECK_SLOT = 0x0000000000000000000000000000000000000000000000000000000000000000;
+    bytes32 private constant GATE_CHECK_SLOT = 0xf841decd8ddcb41f8d697f3767c4cb55c655b2888a4f9b80db06444434da1700;
 
     function getGateCheckSlot() internal pure returns (GateCheckBlockers storage slot) {
         assembly ("memory-safe") {
