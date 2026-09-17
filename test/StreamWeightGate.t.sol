@@ -552,7 +552,12 @@ contract StreamWeightGateTest is SWATestBase {
         actor.quarterlyGateCheck();
 
         vm.roll(vm.getBlockNumber() + 1);
-        vm.expectRevert(abi.encodeWithSelector(GateParamsLibrary.PendingGateParams.selector, keccak256(abi.encodePacked(StreamWeightActor.setGateParams.selector, abi.encode(terminal)))));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                GateParamsLibrary.PendingGateParams.selector,
+                keccak256(abi.encodePacked(StreamWeightActor.setGateParams.selector, abi.encode(terminal)))
+            )
+        );
         actor.quarterlyGateCheck();
 
         actor.setGateParams(terminal);
