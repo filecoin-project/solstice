@@ -53,9 +53,11 @@ library GateParamsLibrary {
         require(currentEpoch() >= pendingUntil, PendingWeightWrite(pendingUntil));
 
         bytes32 gpTaskId = blockers.pendingGateParamsTaskId;
-        OwnerSet gpApprovals = PendingTaskLibrary.getTasksSlot()[gpTaskId].task.approvals;
-        OwnerSet allOwners = OwnersLibrary.getAllOwners();
-        require(gpApprovals & allOwners != allOwners, PendingGateParams(gpTaskId));
+        if (gpTaskId != bytes32(0)) {
+            OwnerSet gpApprovals = PendingTaskLibrary.getTasksSlot()[gpTaskId].task.approvals;
+            OwnerSet allOwners = OwnersLibrary.getAllOwners();
+            require(gpApprovals & allOwners != allOwners, PendingGateParams(gpTaskId));
+        }
     }
 
     function setPendingGateParams() internal returns (bytes32 taskId) {
