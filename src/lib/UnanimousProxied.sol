@@ -56,7 +56,7 @@ contract UnanimousProxied is Initializable, UnanimousGovernance, UUPSUpgradeable
 
     /// @notice An owner cancels a pending unanimous task before it executes.
     /// @param taskId The pending task's identifier, usually keccak256(msg.data) of its submission.
-    function veto(bytes32 taskId) external {
+    function veto(bytes32 taskId) public virtual {
         _veto(taskId);
     }
 }

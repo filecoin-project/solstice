@@ -2,7 +2,7 @@
 pragma solidity ^0.8.36;
 
 import {IServiceRewardsActor} from "./interfaces/IServiceRewardsActor.sol";
-import {Epoch} from "./lib/Epoch.sol";
+import {Epoch, currentEpoch} from "./lib/Epoch.sol";
 import {FixedU18} from "./lib/FixedU18.sol";
 import {GateParams, GateParamsLibrary} from "./lib/GateParams.sol";
 import {FVMRewards} from "./lib/FVMRewards.sol";
@@ -75,6 +75,7 @@ contract StreamWeightActor is UnanimousProxied {
     function setWeightRecords(WeightRecordUpdate[] calldata updates) external unanimousNoHold(keccak256(msg.data)) {
         // hold enforced in f02
         FVMRewards.setWeightRecords(updates);
+        GateParamsLibrary.getGateCheckSlot().pendingWeightUntil = currentEpoch() + HOLD;
     }
 
     /// @notice Queues a writer change for an explicit stream.
@@ -100,6 +101,7 @@ contract StreamWeightActor is UnanimousProxied {
     function cancelPendingWeight(PendingOp op) external anyOwner {
         // any owner can immediately cancel any pending operation
         FVMRewards.cancelPendingWeight(op);
+        GateParamsLibrary.getGateCheckSlot().pendingWeightUntil = Epoch.wrap(0);
     }
 
     /// @notice All 8 gate steps have already been taken.
@@ -116,6 +118,7 @@ contract StreamWeightActor is UnanimousProxied {
     /// if the elapsed quarter's aggregated FilecoinPayVolume cleared the next volume threshold.
     /// @dev Permissionless; reverts via the SRA if the quarter's FilecoinPayVolume is not yet bound.
     function quarterlyGateCheck() external {
+        GateParamsLibrary.gateCheck();
         GateParamsLibrary.GateParamsInfo storage gateParamsInfo = GateParamsLibrary.getGateParamsSlot();
         GateParams memory loaded = gateParamsInfo.params;
         require(loaded.steps < GateParamsLibrary.GATE_STEPS, StepsComplete());
@@ -144,8 +147,23 @@ contract StreamWeightActor is UnanimousProxied {
 
     /// @notice Overwrites the quarterly gate's parameters; has a HOLD-epoch timelock after unanimity.
     /// @param params New volume target and step state.
-    function setGateParams(GateParams calldata params) external unanimous(keccak256(msg.data), HOLD) {
+    function setGateParams(GateParams calldata params) external {
+        bytes32 taskId = GateParamsLibrary.setPendingGateParams();
+        _setGateParams(params, taskId);
+    }
+
+    function _setGateParams(GateParams calldata params, bytes32 taskId) private unanimous(taskId, HOLD) {
         require(params.steps <= GateParamsLibrary.GATE_STEPS, StepsOutOfRange());
-        GateParamsLibrary.getGateParamsSlot().params = params;
+        GateParamsLibrary.GateParamsInfo storage gateParamsInfo = GateParamsLibrary.getGateParamsSlot();
+        gateParamsInfo.params = params;
+        delete GateParamsLibrary.getGateCheckSlot().pendingGateParamsTaskId;
+    }
+
+    function veto(bytes32 taskId) public override {
+        super.veto(taskId);
+        GateParamsLibrary.GateCheckBlockers storage gateCheck = GateParamsLibrary.getGateCheckSlot();
+        if (gateCheck.pendingGateParamsTaskId == taskId) {
+            delete gateCheck.pendingGateParamsTaskId;
+        }
     }
 }
