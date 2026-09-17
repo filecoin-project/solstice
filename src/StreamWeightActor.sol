@@ -7,6 +7,9 @@ import {FixedU18} from "./lib/FixedU18.sol";
 import {GateParams, GateParamsLibrary} from "./lib/GateParams.sol";
 import {FVMRewards} from "./lib/FVMRewards.sol";
 import {PendingOp, SERVICE_ID, Share, WeightRecord, WeightRecordUpdate} from "./lib/FVMRewardTypes.sol";
+import {PendingTaskLibrary} from "./lib/PendingTask.sol";
+import {EMPTY_SET, OwnerSet} from "./lib/OwnerSet.sol";
+import {OwnersLibrary} from "./lib/Owners.sol";
 import {UnanimousProxied} from "./lib/UnanimousProxied.sol";
 
 int256 constant STEP = 5e16; // 5%
@@ -113,6 +116,9 @@ contract StreamWeightActor is UnanimousProxied {
     /// @notice A SetWeightRecords write is still unsettled in f02.
     error PendingWeightWrite(Epoch until);
 
+    /// @notice A SetGateParams task is still outstanding.
+    error PendingGateParams(bytes32 taskId);
+
     /// @notice Reports the result of a successful quarterlyGateCheck
     /// @param passed Whether the volume threshold was met
     event QuarterlyGateCheckResult(uint64 indexed quarter, bool passed, uint64 steps);
@@ -124,6 +130,10 @@ contract StreamWeightActor is UnanimousProxied {
         GateParamsLibrary.GateParamsInfo storage gateParamsInfo = GateParamsLibrary.getGateParamsSlot();
         Epoch pendingUntil = gateParamsInfo.pendingWeightUntil;
         require(currentEpoch() > pendingUntil, PendingWeightWrite(pendingUntil));
+        bytes32 gpTaskId = gateParamsInfo.pendingGateParamsTaskId;
+        OwnerSet gpApprovals = PendingTaskLibrary.getTasksSlot()[gpTaskId].task.approvals;
+        OwnerSet allOwners = OwnersLibrary.getAllOwners();
+        require(gpApprovals & allOwners != allOwners, PendingGateParams(gpTaskId));
         GateParams memory loaded = gateParamsInfo.params;
         require(loaded.steps < GateParamsLibrary.GATE_STEPS, StepsComplete());
 
@@ -151,8 +161,32 @@ contract StreamWeightActor is UnanimousProxied {
 
     /// @notice Overwrites the quarterly gate's parameters; has a HOLD-epoch timelock after unanimity.
     /// @param params New volume target and step state.
-    function setGateParams(GateParams calldata params) external unanimous(keccak256(msg.data), HOLD) {
+    function setGateParams(GateParams calldata params) external {
+        bytes32 taskId = keccak256(msg.data);
+        GateParamsLibrary.GateParamsInfo storage gateParamsInfo = GateParamsLibrary.getGateParamsSlot();
+        bytes32 existingTaskId = gateParamsInfo.pendingGateParamsTaskId;
+        if (existingTaskId != taskId) {
+            require(
+                PendingTaskLibrary.getTasksSlot()[existingTaskId].task.approvals == EMPTY_SET,
+                PendingGateParams(existingTaskId)
+            );
+        }
+        gateParamsInfo.pendingGateParamsTaskId = taskId;
+        _setGateParams(params, taskId);
+    }
+
+    function _setGateParams(GateParams calldata params, bytes32 taskId) private unanimous(taskId, HOLD) {
         require(params.steps <= GateParamsLibrary.GATE_STEPS, StepsOutOfRange());
-        GateParamsLibrary.getGateParamsSlot().params = params;
+        GateParamsLibrary.GateParamsInfo storage gateParamsInfo = GateParamsLibrary.getGateParamsSlot();
+        gateParamsInfo.params = params;
+        delete gateParamsInfo.pendingGateParamsTaskId;
+    }
+
+    function veto(bytes32 taskId) public override {
+        super.veto(taskId);
+        GateParamsLibrary.GateParamsInfo storage gateParamsInfo = GateParamsLibrary.getGateParamsSlot();
+        if (gateParamsInfo.pendingGateParamsTaskId == taskId) {
+            delete gateParamsInfo.pendingGateParamsTaskId;
+        }
     }
 }

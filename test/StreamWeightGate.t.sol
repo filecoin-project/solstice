@@ -195,6 +195,40 @@ contract StreamWeightGateTest is SWATestBase {
         assertEq(steps, 8);
     }
 
+    /// @dev A second, distinct proposal cannot start while an earlier one is still outstanding.
+    function test_SetGateParams_SecondDistinctProposal_Reverts() public {
+        GateParams memory a = _gateParams(4000 ether, 2.7 ether, 1);
+        GateParams memory b = _gateParams(4500 ether, 2.7 ether, 2);
+        vm.prank(owner1);
+        actor.setGateParams(a);
+
+        bytes32 taskIdA = keccak256(abi.encodePacked(StreamWeightActor.setGateParams.selector, abi.encode(a)));
+
+        vm.prank(owner1);
+        vm.expectRevert(abi.encodeWithSelector(StreamWeightActor.PendingGateParams.selector, taskIdA));
+        actor.setGateParams(b);
+    }
+
+    /// @dev Vetoing the tracked task clears it, so a distinct proposal can then start and complete.
+    function test_SetGateParams_SecondDistinctProposal_AllowedAfterVeto() public {
+        GateParams memory a = _gateParams(4000 ether, 2.7 ether, 1);
+        GateParams memory b = _gateParams(4500 ether, 2.7 ether, 2);
+        vm.prank(owner1);
+        actor.setGateParams(a);
+
+        bytes32 taskIdA = keccak256(abi.encodePacked(StreamWeightActor.setGateParams.selector, abi.encode(a)));
+        vm.prank(owner1);
+        actor.veto(taskIdA);
+
+        _submitGateParams(b);
+        vm.roll(vm.getBlockNumber() + Epoch.unwrap(MAINNET_TIMELOCK));
+        actor.setGateParams(b);
+
+        (uint256 base,, uint64 steps,) = _storedGateParams();
+        assertEq(base, 4500 ether);
+        assertEq(steps, 2);
+    }
+
     // -------------------------------------------------------------------------
     // veto -- a held gate update is cancellable by either multisig before its hold elapses.
     // -------------------------------------------------------------------------
@@ -528,5 +562,49 @@ contract StreamWeightGateTest is SWATestBase {
         rewardActor().mockSettle();
         MockState memory state = rewardActor().mockState();
         assertEq(state.streams[0].weightRecord.vStart, 0.5e18, "interleaved gate did not overwrite the paired retune");
+    }
+
+    /// @dev A unanimous, still-held setGateParams blocks quarterlyGateCheck.
+    function test_QuarterlyGateCheck_UnanimousSetGateParams_Reverts() public {
+        GateParams memory params = _gateParams(4000 ether, 2.7 ether, 1);
+        _submitGateParams(params);
+        bytes32 taskId = keccak256(abi.encodePacked(StreamWeightActor.setGateParams.selector, abi.encode(params)));
+
+        IServiceRewardsActor sra = _sraMock();
+        _mockFpv(sra, 2, 3499 ether);
+
+        vm.expectRevert(abi.encodeWithSelector(StreamWeightActor.PendingGateParams.selector, taskId));
+        actor.quarterlyGateCheck();
+    }
+
+    /// @dev A single-owner (non-unanimous) setGateParams proposal does not block quarterlyGateCheck.
+    function test_QuarterlyGateCheck_SingleOwnerSetGateParams_NotBlocked() public {
+        GateParams memory params = _gateParams(4000 ether, 2.7 ether, 1);
+        vm.prank(owner1);
+        actor.setGateParams(params);
+
+        IServiceRewardsActor sra = _sraMock();
+        _mockFpv(sra, 2, 3499 ether);
+        actor.quarterlyGateCheck();
+
+        (,, uint64 steps, uint64 lastChecked) = _storedGateParams();
+        assertEq(steps, 0);
+        assertEq(lastChecked, 2);
+    }
+
+    /// @dev Once the pending setGateParams completes, quarterlyGateCheck reads the fresh steps.
+    function test_QuarterlyGateCheck_UnblocksAfterSetGateParamsCompletes() public {
+        GateParams memory params = _gateParams(4000 ether, 2.7 ether, 1);
+        _submitGateParams(params);
+        vm.roll(vm.getBlockNumber() + Epoch.unwrap(MAINNET_TIMELOCK));
+        actor.setGateParams(params);
+
+        IServiceRewardsActor sra = _sraMock();
+        _mockFpv(sra, 2, 3499 ether);
+        actor.quarterlyGateCheck();
+
+        (,, uint64 steps, uint64 lastChecked) = _storedGateParams();
+        assertEq(steps, 1);
+        assertEq(lastChecked, 2);
     }
 }
