@@ -50,7 +50,7 @@ library GateParamsLibrary {
     function gateCheck() internal view {
         GateCheckBlockers storage blockers = getGateCheckSlot();
         Epoch pendingUntil = blockers.pendingWeightUntil;
-        require(currentEpoch() > pendingUntil, PendingWeightWrite(pendingUntil));
+        require(currentEpoch() >= pendingUntil, PendingWeightWrite(pendingUntil));
 
         bytes32 gpTaskId = blockers.pendingGateParamsTaskId;
         OwnerSet gpApprovals = PendingTaskLibrary.getTasksSlot()[gpTaskId].task.approvals;

@@ -542,13 +542,17 @@ contract StreamWeightGateTest is SWATestBase {
         _submitGateParams(terminal);
 
         Epoch until = Epoch.wrap(uint64(vm.getBlockNumber()) + Epoch.unwrap(MAINNET_TIMELOCK));
-        vm.roll(vm.getBlockNumber() + Epoch.unwrap(MAINNET_TIMELOCK));
+        vm.roll(vm.getBlockNumber() + Epoch.unwrap(MAINNET_TIMELOCK) - 1);
 
         IServiceRewardsActor sra = _sraMock();
         _mockFpv(sra, 2, 3500 ether);
         _mockQuarterStart(sra, 2, 1000);
 
         vm.expectRevert(abi.encodeWithSelector(GateParamsLibrary.PendingWeightWrite.selector, until));
+        actor.quarterlyGateCheck();
+
+        vm.roll(vm.getBlockNumber() + 1);
+        vm.expectRevert(abi.encodeWithSelector(GateParamsLibrary.PendingGateParams.selector, keccak256(abi.encodePacked(StreamWeightActor.setGateParams.selector, abi.encode(terminal)))));
         actor.quarterlyGateCheck();
 
         actor.setGateParams(terminal);
