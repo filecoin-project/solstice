@@ -632,6 +632,47 @@ contract StreamWeightGateTest is SWATestBase {
         actor.quarterlyGateCheck();
     }
 
+    /// @dev Reproducer: if the matching setGateParams receives its second approval only after the
+    ///      SetWeightRecords hold elapses, the time-based weight blocker has expired while the
+    ///      non-unanimous params task does not block. A gate check can then queue an old-counter
+    ///      step that later overwrites the retune, leaving f02's weight inconsistent with `steps`.
+    function test_QuarterlyGateCheck_DelayedSecondGateParamsApproval_DoesNotOverwriteRetune() public {
+        _registerAndActivate(SERVICE_ID);
+
+        WeightRecord memory fifty = WeightRecord({
+            vStart: 0.5e18, slope: 0, tStart: Epoch.wrap(uint64(vm.getBlockNumber())), floor: 0.5e18, cap: 0.5e18
+        });
+        WeightRecordUpdate[] memory updates = _singleWeightRecord(SERVICE_ID, fifty);
+        vm.prank(owner1);
+        actor.setWeightRecords(updates);
+        vm.prank(owner2);
+        actor.setWeightRecords(updates);
+
+        GateParams memory terminal = _gateParams(3500 ether, 2.7 ether, 8);
+        vm.prank(owner1);
+        actor.setGateParams(terminal);
+
+        // The weight retune reaches its effective epoch before setGateParams becomes unanimous.
+        // The current guards allow this check, which settles 50% and queues an old-counter 15%.
+        vm.roll(vm.getBlockNumber() + Epoch.unwrap(MAINNET_TIMELOCK));
+        IServiceRewardsActor sra = _sraMock();
+        _mockFpv(sra, 2, 3500 ether);
+        _mockQuarterStart(sra, 2, 1000);
+        actor.quarterlyGateCheck();
+
+        // The delayed second approval starts the params hold at the same epoch as the 15% write.
+        vm.prank(owner2);
+        actor.setGateParams(terminal);
+        vm.roll(vm.getBlockNumber() + Epoch.unwrap(MAINNET_TIMELOCK));
+        actor.setGateParams(terminal);
+        rewardActor().mockSettle();
+
+        (,, uint64 steps,) = _storedGateParams();
+        MockState memory state = rewardActor().mockState();
+        assertEq(steps, 8, "matching gate params landed");
+        assertEq(state.streams[0].weightRecord.vStart, 0.5e18, "interleaved gate overwrote the 50% retune");
+    }
+
     /// @dev Once the pending setGateParams completes, quarterlyGateCheck reads the fresh steps.
     function test_QuarterlyGateCheck_UnblocksAfterSetGateParamsCompletes() public {
         GateParams memory params = _gateParams(4000 ether, 2.7 ether, 1);
