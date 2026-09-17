@@ -11,7 +11,7 @@ import {SERVICE_ID, WeightRecord, WeightRecordUpdate} from "../src/lib/FVMReward
 import {Epoch} from "../src/lib/Epoch.sol";
 import {FixedU18} from "../src/lib/FixedU18.sol";
 import {FVMRewards} from "../src/lib/FVMRewards.sol";
-import {GateParams, VolumeTarget} from "../src/lib/GateParams.sol";
+import {GateParamsLibrary, GateParams, VolumeTarget} from "../src/lib/GateParams.sol";
 import {UnanimousGovernance} from "../src/lib/UnanimousGovernance.sol";
 import {OwnersLibrary} from "../src/lib/Owners.sol";
 import {MAINNET_TIMELOCK, MockState} from "./mocks/FVMRewardActor.sol";
@@ -205,7 +205,7 @@ contract StreamWeightGateTest is SWATestBase {
         bytes32 taskIdA = keccak256(abi.encodePacked(StreamWeightActor.setGateParams.selector, abi.encode(a)));
 
         vm.prank(owner1);
-        vm.expectRevert(abi.encodeWithSelector(StreamWeightActor.PendingGateParams.selector, taskIdA));
+        vm.expectRevert(abi.encodeWithSelector(GateParamsLibrary.PendingGateParams.selector, taskIdA));
         actor.setGateParams(b);
     }
 
@@ -548,7 +548,7 @@ contract StreamWeightGateTest is SWATestBase {
         _mockFpv(sra, 2, 3500 ether);
         _mockQuarterStart(sra, 2, 1000);
 
-        vm.expectRevert(abi.encodeWithSelector(StreamWeightActor.PendingWeightWrite.selector, until));
+        vm.expectRevert(abi.encodeWithSelector(GateParamsLibrary.PendingWeightWrite.selector, until));
         actor.quarterlyGateCheck();
 
         actor.setGateParams(terminal);
@@ -573,7 +573,7 @@ contract StreamWeightGateTest is SWATestBase {
         IServiceRewardsActor sra = _sraMock();
         _mockFpv(sra, 2, 3499 ether);
 
-        vm.expectRevert(abi.encodeWithSelector(StreamWeightActor.PendingGateParams.selector, taskId));
+        vm.expectRevert(abi.encodeWithSelector(GateParamsLibrary.PendingGateParams.selector, taskId));
         actor.quarterlyGateCheck();
     }
 

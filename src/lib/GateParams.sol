@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 pragma solidity ^0.8.36;
 
-import {Epoch} from "./Epoch.sol";
+import {Epoch, currentEpoch} from "./Epoch.sol";
 import {FixedU18} from "./FixedU18.sol";
+import {EMPTY_SET, OwnerSet} from "./OwnerSet.sol";
+import {OwnersLibrary} from "./Owners.sol";
+import {PendingTaskLibrary} from "./PendingTask.sol";
 
 FixedU18 constant VOL_TARGET_ENTRY = FixedU18.wrap(3500 ether);
 FixedU18 constant VOL_TARGET_RATIO = FixedU18.wrap(2.7 ether);
@@ -23,12 +26,55 @@ library GateParamsLibrary {
     /// @dev W2_CAP is reached after (0.50 - 0.10) / 0.05 = 8 gate steps.
     uint64 internal constant GATE_STEPS = 8;
 
+    /// @custom:storage-location erc7201:Solstice.GateCheck
+    struct GateCheckBlockers {
+        bytes32 pendingGateParamsTaskId;
+        Epoch pendingWeightUntil;
+    }
+
+    // keccak256(abi.encode(uint256(keccak256("Solstice.GateCheck")) - 1)) & ~bytes32(uint256(0xff));
+    bytes32 private constant GATE_CHECK_SLOT = 0x0000000000000000000000000000000000000000000000000000000000000000;
+
+    function getGateCheckSlot() internal pure returns (GateCheckBlockers storage slot) {
+        assembly ("memory-safe") {
+            slot.slot := GATE_CHECK_SLOT
+        }
+    }
+
+    /// @notice A SetWeightRecords write is still unsettled in f02.
+    error PendingWeightWrite(Epoch until);
+
+    /// @notice A SetGateParams task is still outstanding.
+    error PendingGateParams(bytes32 taskId);
+
+    function gateCheck() internal view {
+        GateCheckBlockers storage blockers = getGateCheckSlot();
+        Epoch pendingUntil = blockers.pendingWeightUntil;
+        require(currentEpoch() > pendingUntil, PendingWeightWrite(pendingUntil));
+
+        bytes32 gpTaskId = blockers.pendingGateParamsTaskId;
+        OwnerSet gpApprovals = PendingTaskLibrary.getTasksSlot()[gpTaskId].task.approvals;
+        OwnerSet allOwners = OwnersLibrary.getAllOwners();
+        require(gpApprovals & allOwners != allOwners, PendingGateParams(gpTaskId));
+    }
+
+    function setPendingGateParams() internal returns (bytes32 taskId) {
+        taskId = keccak256(msg.data);
+        GateCheckBlockers storage gateParamsInfo = getGateCheckSlot();
+        bytes32 existingTaskId = gateParamsInfo.pendingGateParamsTaskId;
+        if (existingTaskId != taskId) {
+            require(
+                PendingTaskLibrary.getTasksSlot()[existingTaskId].task.approvals == EMPTY_SET,
+                PendingGateParams(existingTaskId)
+            );
+        }
+        gateParamsInfo.pendingGateParamsTaskId = taskId;
+    }
+
     /// @custom:storage-location erc7201:Solstice.GateParams
     struct GateParamsInfo {
         uint64 lastCheckedQuarter;
         GateParams params;
-        Epoch pendingWeightUntil;
-        bytes32 pendingGateParamsTaskId;
     }
 
     // keccak256(abi.encode(uint256(keccak256("Solstice.GateParams")) - 1)) & ~bytes32(uint256(0xff));

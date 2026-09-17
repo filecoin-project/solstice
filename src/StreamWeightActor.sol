@@ -7,9 +7,6 @@ import {FixedU18} from "./lib/FixedU18.sol";
 import {GateParams, GateParamsLibrary} from "./lib/GateParams.sol";
 import {FVMRewards} from "./lib/FVMRewards.sol";
 import {PendingOp, SERVICE_ID, Share, WeightRecord, WeightRecordUpdate} from "./lib/FVMRewardTypes.sol";
-import {PendingTaskLibrary} from "./lib/PendingTask.sol";
-import {EMPTY_SET, OwnerSet} from "./lib/OwnerSet.sol";
-import {OwnersLibrary} from "./lib/Owners.sol";
 import {UnanimousProxied} from "./lib/UnanimousProxied.sol";
 
 int256 constant STEP = 5e16; // 5%
@@ -78,7 +75,7 @@ contract StreamWeightActor is UnanimousProxied {
     function setWeightRecords(WeightRecordUpdate[] calldata updates) external unanimousNoHold(keccak256(msg.data)) {
         // hold enforced in f02
         FVMRewards.setWeightRecords(updates);
-        GateParamsLibrary.getGateParamsSlot().pendingWeightUntil = currentEpoch() + HOLD;
+        GateParamsLibrary.getGateCheckSlot().pendingWeightUntil = currentEpoch() + HOLD;
     }
 
     /// @notice Queues a writer change for an explicit stream.
@@ -104,7 +101,7 @@ contract StreamWeightActor is UnanimousProxied {
     function cancelPendingWeight(PendingOp op) external anyOwner {
         // any owner can immediately cancel any pending operation
         FVMRewards.cancelPendingWeight(op);
-        GateParamsLibrary.getGateParamsSlot().pendingWeightUntil = Epoch.wrap(0);
+        GateParamsLibrary.getGateCheckSlot().pendingWeightUntil = Epoch.wrap(0);
     }
 
     /// @notice All 8 gate steps have already been taken.
@@ -112,12 +109,6 @@ contract StreamWeightActor is UnanimousProxied {
 
     /// @notice Gate params exceed GATE_STEPS.
     error StepsOutOfRange();
-
-    /// @notice A SetWeightRecords write is still unsettled in f02.
-    error PendingWeightWrite(Epoch until);
-
-    /// @notice A SetGateParams task is still outstanding.
-    error PendingGateParams(bytes32 taskId);
 
     /// @notice Reports the result of a successful quarterlyGateCheck
     /// @param passed Whether the volume threshold was met
@@ -127,13 +118,8 @@ contract StreamWeightActor is UnanimousProxied {
     /// if the elapsed quarter's aggregated FilecoinPayVolume cleared the next volume threshold.
     /// @dev Permissionless; reverts via the SRA if the quarter's FilecoinPayVolume is not yet bound.
     function quarterlyGateCheck() external {
+        GateParamsLibrary.gateCheck();
         GateParamsLibrary.GateParamsInfo storage gateParamsInfo = GateParamsLibrary.getGateParamsSlot();
-        Epoch pendingUntil = gateParamsInfo.pendingWeightUntil;
-        require(currentEpoch() > pendingUntil, PendingWeightWrite(pendingUntil));
-        bytes32 gpTaskId = gateParamsInfo.pendingGateParamsTaskId;
-        OwnerSet gpApprovals = PendingTaskLibrary.getTasksSlot()[gpTaskId].task.approvals;
-        OwnerSet allOwners = OwnersLibrary.getAllOwners();
-        require(gpApprovals & allOwners != allOwners, PendingGateParams(gpTaskId));
         GateParams memory loaded = gateParamsInfo.params;
         require(loaded.steps < GateParamsLibrary.GATE_STEPS, StepsComplete());
 
@@ -162,16 +148,7 @@ contract StreamWeightActor is UnanimousProxied {
     /// @notice Overwrites the quarterly gate's parameters; has a HOLD-epoch timelock after unanimity.
     /// @param params New volume target and step state.
     function setGateParams(GateParams calldata params) external {
-        bytes32 taskId = keccak256(msg.data);
-        GateParamsLibrary.GateParamsInfo storage gateParamsInfo = GateParamsLibrary.getGateParamsSlot();
-        bytes32 existingTaskId = gateParamsInfo.pendingGateParamsTaskId;
-        if (existingTaskId != taskId) {
-            require(
-                PendingTaskLibrary.getTasksSlot()[existingTaskId].task.approvals == EMPTY_SET,
-                PendingGateParams(existingTaskId)
-            );
-        }
-        gateParamsInfo.pendingGateParamsTaskId = taskId;
+        bytes32 taskId = GateParamsLibrary.setPendingGateParams();
         _setGateParams(params, taskId);
     }
 
@@ -179,14 +156,14 @@ contract StreamWeightActor is UnanimousProxied {
         require(params.steps <= GateParamsLibrary.GATE_STEPS, StepsOutOfRange());
         GateParamsLibrary.GateParamsInfo storage gateParamsInfo = GateParamsLibrary.getGateParamsSlot();
         gateParamsInfo.params = params;
-        delete gateParamsInfo.pendingGateParamsTaskId;
+        delete GateParamsLibrary.getGateCheckSlot().pendingGateParamsTaskId;
     }
 
     function veto(bytes32 taskId) public override {
         super.veto(taskId);
-        GateParamsLibrary.GateParamsInfo storage gateParamsInfo = GateParamsLibrary.getGateParamsSlot();
-        if (gateParamsInfo.pendingGateParamsTaskId == taskId) {
-            delete gateParamsInfo.pendingGateParamsTaskId;
+        GateParamsLibrary.GateCheckBlockers storage gateCheck = GateParamsLibrary.getGateCheckSlot();
+        if (gateCheck.pendingGateParamsTaskId == taskId) {
+            delete gateCheck.pendingGateParamsTaskId;
         }
     }
 }
