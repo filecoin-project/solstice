@@ -34,6 +34,8 @@
     "sraOwner2": "0x831246Ec4A91eF36acA821068b95A9EF1765C514",
     "swaOwner1": "0x48C7DC38e74C9fA9eA6484Ad6Ad0520349dC9B40",
     "swaOwner2": "0x831246Ec4A91eF36acA821068b95A9EF1765C514",
+    "initialOrchestrator": "0x48C7DC38e74C9fA9eA6484Ad6Ad0520349dC9B40",
+    "initialOrchestratorWallet": "0x48C7DC38e74C9fA9eA6484Ad6Ad0520349dC9B40",
     "epochsPerQuarter": 240,
     "postPeriod": 120,
     "verificationWindow": 40,
