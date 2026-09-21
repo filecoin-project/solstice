@@ -11,6 +11,12 @@ pragma solidity ^0.8.36;
 import {ServiceRewardsActor} from "../src/ServiceRewardsActor.sol";
 import {FVMActor} from "fvm-solidity/FVMActor.sol";
 import {BURN_ADDRESS} from "fvm-solidity/FVMActors.sol";
+import {FVMAddress} from "fvm-solidity/FVMAddress.sol";
+import {EMPTY_CODEC} from "fvm-solidity/FVMCodec.sol";
+import {NOT_FOUND} from "fvm-solidity/FVMErrors.sol";
+import {NO_FLAGS} from "fvm-solidity/FVMFlags.sol";
+import {SEND} from "fvm-solidity/FVMMethod.sol";
+import {CALL_ACTOR_BY_ID} from "fvm-solidity/FVMPrecompiles.sol";
 import {SRATestBase} from "./SRATestBase.sol";
 
 contract SRAWalletResolveTest is SRATestBase {
@@ -36,7 +42,8 @@ contract SRAWalletResolveTest is SRATestBase {
     /// require fires before the resolve would pass — the admission is locally rejected, never
     /// admitted with a fund-locking row.
     function test_AddOrchestrator_ZeroWallet_RegisteredZero_StillReverts() public {
-        _registerResolve(address(0), 424_242); // simulate mainnet: f410(0x0) has a resident actor
+        // mainnet: f410(0x0) is actor 2064474 (calibnet: 4946)
+        ACTOR_PRECOMPILE.mockResolveAddress(FVMAddress.f410(address(0)), 2_064_474);
         address orch = _wallet("a1b-orch");
         vm.prank(owner1);
         sra.addOrchestrator(orch, address(0));
@@ -112,6 +119,45 @@ contract SRAWalletResolveTest is SRATestBase {
         address maskedW = _maskedWallet(5000); // non-system id, explicitly registered
         _admit(orch, maskedW);
         assertTrue(sra.isAdmitted(orch));
+    }
+
+    /// @dev make CALL_ACTOR_BY_ID answer FVMPay.pay(actorId, 0) with NOT_FOUND (-6) although the id resolves
+    function _mockCallActorByIdNotFound(uint64 actorId) internal {
+        vm.mockCall(
+            CALL_ACTOR_BY_ID,
+            abi.encode(
+                uint256(SEND), uint256(0), uint256(NO_FLAGS), uint256(EMPTY_CODEC), uint256(0), uint256(actorId)
+            ),
+            abi.encode(NOT_FOUND, uint64(0), bytes(""))
+        );
+    }
+
+    /// [B] a wallet whose id resolves but for which CALL_ACTOR_BY_ID returns NOT_FOUND (-6) is rejected.
+    function test_AddOrchestrator_CallActorByIdNotFound_Reverts() public {
+        address orch = _wallet("b8a-orch");
+        address wallet = _wallet("b8a-wallet");
+        uint64 id = FVMActor.getActorId(wallet);
+        _mockCallActorByIdNotFound(id);
+        vm.prank(owner1);
+        sra.addOrchestrator(orch, wallet);
+        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.InvalidActorId.selector, id));
+        vm.prank(owner2);
+        sra.addOrchestrator(orch, wallet); // vote 2 executes the body -> InvalidActorId
+        assertFalse(sra.isAdmitted(orch));
+    }
+
+    /// [B] same for replaceWallet.
+    function test_ReplaceWallet_CallActorByIdNotFound_Reverts() public {
+        address oldOrch = _wallet("b8b-orch");
+        _admit(oldOrch, _wallet("b8b-old-wallet"));
+        address wallet = _wallet("b8b-wallet");
+        uint64 id = FVMActor.getActorId(wallet);
+        _mockCallActorByIdNotFound(id);
+        vm.prank(owner1);
+        sra.replaceWallet(oldOrch, wallet);
+        vm.expectRevert(abi.encodeWithSelector(ServiceRewardsActor.InvalidActorId.selector, id));
+        vm.prank(owner2);
+        sra.replaceWallet(oldOrch, wallet); // vote 2 executes the body -> InvalidActorId
     }
 
     // ------------------------------------------------------------------------

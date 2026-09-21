@@ -8,7 +8,7 @@
   "lib/fvm-solidity": {
     "branch": {
       "name": "main",
-      "rev": "ea1fe65367d7539236be111916a6e2781bcf7a1b"
+      "rev": "4a7acb06c9a7cc73fbc74cd7d7ccd64b0303bdba"
     }
   },
   "lib/openzeppelin-contracts": {
