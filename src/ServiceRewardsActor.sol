@@ -22,6 +22,7 @@ pragma solidity ^0.8.36;
 
 import {BURN_ADDRESS} from "fvm-solidity/FVMActors.sol";
 import {FVMActor} from "fvm-solidity/FVMActor.sol";
+import {FVMPay} from "fvm-solidity/FVMPay.sol";
 
 import {IServiceRewardsActor} from "./interfaces/IServiceRewardsActor.sol";
 import {Epoch, currentEpoch} from "./lib/Epoch.sol";
@@ -95,6 +96,7 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
     error ZeroWallet(); // the zero address is never a valid payout wallet
     error DuplicateWallet(address wallet); // another admitted row resolves to the same actor id (byte-equal or cross-spelling)
     error InvalidParameter();
+    error InvalidActorId(uint64 actorId);
 
     /// @param owner1,owner2 the two governance owners
     /// @param initialOrchestrator identity seated by the activation migration
@@ -737,9 +739,10 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
     /// @dev the wallet must uniquely resolve to an existing actor (FIP §2.4.4).
     /// The dedup key is the actor id.
     /// Known issue: masked addresses can pass the getActorId check even if their actorId is invalid.
-    function _assertWalletAdmissible(address wallet, uint64 selfId) internal view {
+    function _assertWalletAdmissible(address wallet, uint64 selfId) internal {
         require(wallet != address(0), ZeroWallet());
         uint64 wid = FVMActor.getActorId(wallet);
+        require(FVMPay.pay(wid, 0), InvalidActorId(wid));
         SraStorage.SraStorageRegistry storage r = SraStorage.registry();
         for (uint256 i = 0; i < r.admittedIds.length; i++) {
             uint64 otherId = r.admittedIds[i];
