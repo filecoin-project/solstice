@@ -12,7 +12,7 @@ import {Epoch} from "../src/lib/Epoch.sol";
 import {UnanimousProxied} from "../src/lib/UnanimousProxied.sol";
 
 /// @dev Config loading and deployment helpers shared by every deploy script.
-abstract contract DeploymentScript is Script {
+contract DeploymentScript is Script {
     using stdJson for string;
 
     string internal constant CONFIG_PATH = "deployments.json";
