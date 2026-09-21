@@ -22,7 +22,6 @@ pragma solidity ^0.8.36;
 
 import {BURN_ADDRESS} from "fvm-solidity/FVMActors.sol";
 import {FVMActor} from "fvm-solidity/FVMActor.sol";
-import {FVMPay} from "fvm-solidity/FVMPay.sol";
 
 import {IServiceRewardsActor} from "./interfaces/IServiceRewardsActor.sol";
 import {Epoch, currentEpoch} from "./lib/Epoch.sol";
@@ -740,7 +739,7 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
     function _assertWalletAdmissible(address wallet, uint64 selfId) internal {
         require(wallet != address(0), ZeroWallet());
         uint64 wid = FVMActor.getActorId(wallet);
-        require(FVMPay.pay(wid, 0), InvalidActorId(wid));
+        require(FVMActor.exists(wid), InvalidActorId(wid));
         SraStorage.SraStorageRegistry storage r = SraStorage.registry();
         for (uint256 i = 0; i < r.admittedIds.length; i++) {
             uint64 otherId = r.admittedIds[i];

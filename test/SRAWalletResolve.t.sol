@@ -121,7 +121,7 @@ contract SRAWalletResolveTest is SRATestBase {
         assertTrue(sra.isAdmitted(orch));
     }
 
-    /// @dev make CALL_ACTOR_BY_ID answer FVMPay.pay(actorId, 0) with NOT_FOUND (-6) although the id resolves
+    /// @dev make CALL_ACTOR_BY_ID answer FVMActor.exists(actorId) with NOT_FOUND (-6) although the id resolves
     function _mockCallActorByIdNotFound(uint64 actorId) internal {
         vm.mockCall(
             CALL_ACTOR_BY_ID,
