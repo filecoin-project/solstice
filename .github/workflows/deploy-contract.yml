@@ -104,6 +104,8 @@ jobs:
         if: ${{ !inputs.dry_run }}
         run: |
           set -o pipefail
+          # --skip-simulation: forge's anvil-backed re-simulation is unreliable on FEVM.
+          # Skipping falls back to sequential broadcast using `eth_estimateGas`.
           forge script "$DEPLOY_SCRIPT" --rpc-url "$ETH_RPC_URL" --broadcast --verify --skip-simulation --password "" 2>&1 \
             | tee "$RUNNER_TEMP/deploy-output.txt"
 
