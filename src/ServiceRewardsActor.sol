@@ -392,7 +392,7 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
         // removal binds — its slice burns, survivors' rows stay untouched until the next SubmitShares.
         // o.wallet is unchanged, so it still names the row's address. A no-op when the id has no f02
         // row (never submitted, or floored to zero).
-        FVMRewards.tryReplaceAddress(SERVICE_ID, o.wallet, BURN_ADDRESS);
+        FVMRewards.replaceAddress(SERVICE_ID, o.wallet, BURN_ADDRESS);
         emit OrchestratorRemoved(orch);
     }
 
@@ -418,7 +418,7 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
         // Immediate f02 wallet repoint: the id's row share stays (prospective — identity and accrued
         // do not move), only the row's wallet changes. A no-op when the id has no row, or when
         // newWallet resolves to oldWallet (f02 rejects an unchanged/duplicate address).
-        FVMRewards.tryReplaceAddress(SERVICE_ID, oldWallet, newWallet);
+        FVMRewards.replaceAddress(SERVICE_ID, oldWallet, newWallet);
         emit OrchestratorWalletReplaced(oldOrch, newWallet);
     }
 
