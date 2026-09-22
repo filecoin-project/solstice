@@ -27,7 +27,7 @@ import {
 } from "./FVMRewardActor.sol";
 import {CLAIM, REPLACE_ADDRESS} from "../../src/lib/FVMRewardMethod.sol";
 import {FVMRewards} from "../../src/lib/FVMRewards.sol";
-import {WeightRecordUpdate} from "../../src/lib/FVMRewardTypes.sol";
+import {WeightRecordUpdate, ReplaceAddressReturn} from "../../src/lib/FVMRewardTypes.sol";
 import {Epoch} from "../../src/lib/Epoch.sol";
 import {FixedU18} from "../../src/lib/FixedU18.sol";
 
@@ -90,7 +90,17 @@ contract RewardCaller {
     }
 
     function replaceAddress(uint64 id, address oldAddress, address newAddress) external returns (uint32 exitCode) {
-        exitCode = uint32(uint256(FVMRewards.tryReplaceAddress(id, oldAddress, newAddress)));
+        (int256 rawExitCode,) = FVMRewards.tryReplaceAddress(id, oldAddress, newAddress);
+        exitCode = uint32(uint256(rawExitCode));
+    }
+
+    function replaceAddressOutcome(uint64 id, address oldAddress, address newAddress)
+        external
+        returns (uint32 exitCode, ReplaceAddressReturn outcome)
+    {
+        int256 rawExitCode;
+        (rawExitCode, outcome) = FVMRewards.tryReplaceAddress(id, oldAddress, newAddress);
+        exitCode = uint32(uint256(rawExitCode));
     }
 
     function claim(uint64 id, address[] memory wallets) external returns (uint32 exitCode, uint256[] memory amounts) {
@@ -764,9 +774,25 @@ contract FVMRewardActorTest is MockRewardTest {
         assertEq(randomCaller.replaceAddress(CONSENSUS_ID, RECIPIENT_A, RECIPIENT_B), USR_ILLEGAL_ARGUMENT);
     }
 
-    function test_ReplaceAddress_UnknownOld_IllegalArgument() public {
+    function test_ReplaceAddress_UnknownOld_NoOpSuccess() public {
         _registerExplicit(SERVICE_ID, address(writerCaller)); // RECIPIENT_A is the sole payee
-        assertEq(writerCaller.replaceAddress(SERVICE_ID, RECIPIENT_B, address(0xF00D)), USR_ILLEGAL_ARGUMENT);
+        (uint32 exitCode, ReplaceAddressReturn outcome) =
+            writerCaller.replaceAddressOutcome(SERVICE_ID, RECIPIENT_B, address(0xF00D));
+        assertEq(exitCode, 0);
+        assertEq(uint8(outcome), uint8(ReplaceAddressReturn.OldAddressNotInLedger));
+        Share[] memory got = rewardActor().getShares(SERVICE_ID);
+        assertEq(got.length, 1);
+        assertEq(got[0].wallet, RECIPIENT_A, "no share moved");
+    }
+
+    function test_ReplaceAddress_UnknownOld_IgnoresUnresolvableNew() public {
+        _registerExplicit(SERVICE_ID, address(writerCaller)); // RECIPIENT_A is the sole payee
+        (uint32 exitCode, bytes memory data) = writerCaller.call(
+            REPLACE_ADDRESS,
+            hex"830156040a000000000000000000000000000000000000cafe" hex"55011111111111111111111111111111111111111111"
+        );
+        assertEq(exitCode, 0);
+        assertEq(data, hex"01", "CBOR-encoded ReplaceAddressReturn.OldAddressNotInLedger");
     }
 
     function test_ReplaceAddress_NewAlreadyPayee_IllegalArgument() public {
@@ -840,11 +866,12 @@ contract FVMRewardActorTest is MockRewardTest {
         assertEq(writerCaller.replaceAddress(SERVICE_ID, RECIPIENT_A, RECIPIENT_A), USR_ILLEGAL_ARGUMENT);
     }
 
-    // The burn sentinel is stripped at admission, so it is never a stored recipient and the
-    // old-address check refuses it.
-    function test_ReplaceAddress_BurnSentinelAsOld_IllegalArgument() public {
+    function test_ReplaceAddress_BurnSentinelAsOld_NoOpSuccess() public {
         _registerExplicit(SERVICE_ID, address(writerCaller));
-        assertEq(writerCaller.replaceAddress(SERVICE_ID, BURN_ADDRESS, RECIPIENT_B), USR_ILLEGAL_ARGUMENT);
+        (uint32 exitCode, ReplaceAddressReturn outcome) =
+            writerCaller.replaceAddressOutcome(SERVICE_ID, BURN_ADDRESS, RECIPIENT_B);
+        assertEq(exitCode, 0);
+        assertEq(uint8(outcome), uint8(ReplaceAddressReturn.OldAddressNotInLedger));
     }
 
     /// @dev FVMRewards emits only the two address forms a contract can hold, so the unresolvable

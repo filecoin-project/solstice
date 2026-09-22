@@ -19,7 +19,14 @@ import {
     CANCEL_PENDING,
     CLAIM
 } from "../../src/lib/FVMRewardMethod.sol";
-import {WeightRecord, DistributionKind, Share, PendingOp, WeightRecordUpdate} from "../../src/lib/FVMRewardTypes.sol";
+import {
+    WeightRecord,
+    DistributionKind,
+    Share,
+    PendingOp,
+    WeightRecordUpdate,
+    ReplaceAddressReturn
+} from "../../src/lib/FVMRewardTypes.sol";
 import {Epoch, currentEpoch} from "../../src/lib/Epoch.sol";
 import {FixedU18} from "../../src/lib/FixedU18.sol";
 
@@ -422,11 +429,17 @@ contract FVMRewardActor {
         // Resolution sits behind the writer gate, so an unauthorized call is forbidden rather
         // than not-found. An address in a form no contract can name decodes to zero here, which
         // stands for f02's resolution failure.
-        if (oldAddr == address(0) || newAddr == address(0)) return (USR_NOT_FOUND, 0, "");
+        if (oldAddr == address(0)) return (USR_NOT_FOUND, 0, "");
 
+        // f099 is never stored, so this check refuses it as the old address too. f02 checks
+        // ledger membership before it ever resolves newAddress, so a missing old address is a
+        // successful no-op even when newAddress cannot be resolved.
+        if (_shareIndex(s, oldAddr) == type(uint256).max) {
+            return (0, CBOR_CODEC, _encodeReplaceAddressReturn(ReplaceAddressReturn.OldAddressNotInLedger));
+        }
+
+        if (newAddr == address(0)) return (USR_NOT_FOUND, 0, "");
         bool burning = newAddr == BURN_ADDRESS;
-        // f099 is never stored, so this check refuses it as the old address too.
-        if (_shareIndex(s, oldAddr) == type(uint256).max) return (USR_ILLEGAL_ARGUMENT, 0, "");
         // The burn sentinel may repeat; every other address must be free, which is also what
         // rejects naming the old address as the new one.
         if (!burning && _shareIndex(s, newAddr) != type(uint256).max) return (USR_ILLEGAL_ARGUMENT, 0, "");
@@ -439,7 +452,14 @@ contract FVMRewardActor {
         uint256 carriedBurn = s.strippedBurn;
         if (!_installShares(s, _sharesWithRowReplaced(s, oldAddr, newAddr))) return (USR_ILLEGAL_ARGUMENT, 0, "");
         s.strippedBurn = carriedBurn + burnShare;
-        return (0, 0, "");
+        return (0, CBOR_CODEC, _encodeReplaceAddressReturn(ReplaceAddressReturn.AddressReplaced));
+    }
+
+    /// @dev CBOR-encodes f02's ReplaceAddressReturn: an unsigned integer, small enough to fit the
+    /// single-byte immediate form (major type 0).
+    function _encodeReplaceAddressReturn(ReplaceAddressReturn outcome) private pure returns (bytes memory out) {
+        out = new bytes(1);
+        out[0] = bytes1(uint8(outcome));
     }
 
     /// @dev The stored map with `oldAddr`'s row renamed to `newAddr`, or dropped when that is the

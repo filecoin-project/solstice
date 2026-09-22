@@ -20,7 +20,7 @@ import {
     SET_SHARES,
     STEP_WEIGHT_RECORDS
 } from "./FVMRewardMethod.sol";
-import {WeightRecord, WeightRecordUpdate, Share, PendingOp} from "./FVMRewardTypes.sol";
+import {WeightRecord, WeightRecordUpdate, Share, PendingOp, ReplaceAddressReturn} from "./FVMRewardTypes.sol";
 
 /// @notice Calls the f02 (Reward actor) methods specified by FIP-0118, for the Stream Weight
 /// Actor (solstice#3) and Service Rewards Actor (solstice#4).
@@ -470,20 +470,43 @@ library FVMRewards {
     /// SetShares.
     /// @dev Params CBOR: `[id, oldAddress, newAddress]`. Only the future share moves: the old
     /// address keeps the payable balance it earned and the new address starts from zero.
-    function tryReplaceAddress(uint64 id, address oldAddress, address newAddress) internal returns (int256 exitCode) {
+    /// @dev Return CBOR: a bare unsigned integer, decoded into `ReplaceAddressReturn`.
+    function tryReplaceAddress(uint64 id, address oldAddress, address newAddress)
+        internal
+        returns (int256 exitCode, ReplaceAddressReturn outcome)
+    {
         // [id, oldAddress, newAddress]
         (uint256 base, uint256 p) = _begin(REPLACE_ADDRESS);
         p = _writeArrayHeader(p, 3);
         p = _writeUint(p, id);
         p = _writeAddress(p, oldAddress);
         p = _writeAddress(p, newAddress);
-        return _invoke(base, p);
+        uint256 payload;
+        (exitCode, payload) = _invokeReplaceAddress(base, p);
+        if (exitCode == EXIT_SUCCESS) outcome = ReplaceAddressReturn(payload >> 248);
     }
 
     /// @notice Swaps one recipient address in an explicit stream's share map, reverting on error.
-    function replaceAddress(uint64 id, address oldAddress, address newAddress) internal {
-        int256 exitCode = tryReplaceAddress(id, oldAddress, newAddress);
+    function replaceAddress(uint64 id, address oldAddress, address newAddress)
+        internal
+        returns (ReplaceAddressReturn outcome)
+    {
+        int256 exitCode;
+        (exitCode, outcome) = tryReplaceAddress(id, oldAddress, newAddress);
         require(exitCode == EXIT_SUCCESS, ReplaceAddressFailed(exitCode));
+    }
+
+    /// @dev Completes the envelope and invokes the precompile, returning the exit code and the undecoded output
+    function _invokeReplaceAddress(uint256 base, uint256 p) private returns (int256 exitCode, uint256 payload) {
+        assembly ("memory-safe") {
+            mstore(add(base, 0xc0), sub(p, add(base, ENVELOPE_HEAD))) // params length
+            exitCode := EXIT_PRECOMPILE_FAILED
+            if and(gt(returndatasize(), 0x1f), delegatecall(gas(), CALL_ACTOR_BY_ID, base, sub(p, base), base, 0xa0)) {
+                exitCode := mload(base)
+                // An error exit code carries no payload, so returndata falls short of 0xa0 bytes.
+                if gt(returndatasize(), 0x9f) { payload := mload(add(base, 0x80)) }
+            }
+        }
     }
 
     // -------------------------------------------------------------------------
