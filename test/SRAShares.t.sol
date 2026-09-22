@@ -9,7 +9,7 @@ pragma solidity ^0.8.36;
 
 import {SERVICE_ID, Share} from "../src/lib/FVMRewardTypes.sol";
 import {FVMRewards} from "../src/lib/FVMRewards.sol";
-import {USR_FORBIDDEN} from "fvm-solidity/FVMErrors.sol";
+import {USR_FORBIDDEN, USR_ILLEGAL_ARGUMENT} from "fvm-solidity/FVMErrors.sol";
 import {ServiceRewardsActor} from "../src/ServiceRewardsActor.sol";
 import {SRATestBase} from "./SRATestBase.sol";
 import {FixedU18} from "../src/lib/FixedU18.sol";
@@ -592,5 +592,27 @@ contract SRASharesTest is SRATestBase {
         assertEq(_walletShare(afterMap, oldOrch), 0, "old wallet no longer receives");
         assertEq(_sumShares(afterMap), 1e18, "sum unchanged by the wallet swap");
         assertEq(rewardActor().strippedBurnOf(SERVICE_ID), 0, "wallet swap strips nothing");
+    }
+
+    /// f02 rejects renaming a recipient to its own current address; replaceWallet must surface that.
+    function test_ReplaceWallet_NewEqualsOldWallet_Reverts() public {
+        address orch = makeAddr("self-swap");
+        _admit(orch, orch);
+        vm.roll(_quarterStart(1) + 1);
+        _postAs(orch, 1, _fpv(100e18));
+        _rollTo(_bindingStart(1) + 1);
+        sra.submitShares(1);
+
+        vm.prank(owner1);
+        sra.replaceWallet(orch, orch);
+        vm.prank(owner2);
+        vm.expectRevert(
+            abi.encodeWithSelector(FVMRewards.ReplaceAddressFailed.selector, int256(uint256(USR_ILLEGAL_ARGUMENT)))
+        );
+        sra.replaceWallet(orch, orch);
+
+        Share[] memory shares = rewardActor().getShares(SERVICE_ID);
+        assertEq(shares.length, 1, "the reverted attempt leaves the share map untouched");
+        assertEq(shares[0].wallet, orch);
     }
 }
