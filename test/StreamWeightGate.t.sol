@@ -142,6 +142,8 @@ contract StreamWeightGateTest is SWATestBase {
 
         // == HOLD (exact boundary): execution becomes permissionless and the new params land.
         vm.roll(modified + Epoch.unwrap(MAINNET_TIMELOCK));
+        vm.expectEmit(address(actor));
+        emit StreamWeightActor.GateParamsSet(params);
         vm.prank(makeAddr("stranger"));
         actor.setGateParams(params);
 
@@ -187,6 +189,8 @@ contract StreamWeightGateTest is SWATestBase {
         GateParams memory params = _gateParams(4000 ether, 2.7 ether, 8);
         _submitGateParams(params);
         vm.roll(vm.getBlockNumber() + Epoch.unwrap(MAINNET_TIMELOCK));
+        vm.expectEmit(address(actor));
+        emit StreamWeightActor.GateParamsSet(params);
         vm.prank(makeAddr("stranger"));
         actor.setGateParams(params);
 
@@ -222,6 +226,8 @@ contract StreamWeightGateTest is SWATestBase {
 
         _submitGateParams(b);
         vm.roll(vm.getBlockNumber() + Epoch.unwrap(MAINNET_TIMELOCK));
+        vm.expectEmit(address(actor));
+        emit StreamWeightActor.GateParamsSet(b);
         actor.setGateParams(b);
 
         (uint256 base,, uint64 steps,) = _storedGateParams();
@@ -291,6 +297,8 @@ contract StreamWeightGateTest is SWATestBase {
         vm.prank(owner2);
         actor.setGateParams(params); // fresh second approval
         vm.roll(vm.getBlockNumber() + Epoch.unwrap(MAINNET_TIMELOCK));
+        vm.expectEmit(address(actor));
+        emit StreamWeightActor.GateParamsSet(params);
         vm.prank(makeAddr("stranger"));
         actor.setGateParams(params); // permissionless completion
 
@@ -332,6 +340,8 @@ contract StreamWeightGateTest is SWATestBase {
         GateParams memory good = _gateParams(4000 ether, 2.7 ether, 1);
         _submitGateParams(good);
         vm.roll(vm.getBlockNumber() + Epoch.unwrap(MAINNET_TIMELOCK));
+        vm.expectEmit(address(actor));
+        emit StreamWeightActor.GateParamsSet(good);
         vm.prank(makeAddr("stranger"));
         actor.setGateParams(good);
 
@@ -405,6 +415,8 @@ contract StreamWeightGateTest is SWATestBase {
         GateParams memory done = _gateParams(3500 ether, 2.7 ether, 8);
         _submitGateParams(done);
         vm.roll(vm.getBlockNumber() + Epoch.unwrap(MAINNET_TIMELOCK));
+        vm.expectEmit(address(actor));
+        emit StreamWeightActor.GateParamsSet(done);
         actor.setGateParams(done);
 
         (,, uint64 steps,) = _storedGateParams();
@@ -535,6 +547,8 @@ contract StreamWeightGateTest is SWATestBase {
         WeightRecordUpdate[] memory updates = _singleWeightRecord(SERVICE_ID, fifty);
         vm.prank(owner1);
         actor.setWeightRecords(updates);
+        vm.expectEmit(address(actor));
+        emit StreamWeightActor.WeightRecordsQueued(updates);
         vm.prank(owner2);
         actor.setWeightRecords(updates);
 
@@ -560,6 +574,8 @@ contract StreamWeightGateTest is SWATestBase {
         );
         actor.quarterlyGateCheck();
 
+        vm.expectEmit(address(actor));
+        emit StreamWeightActor.GateParamsSet(terminal);
         actor.setGateParams(terminal);
         (,, uint64 steps,) = _storedGateParams();
         assertEq(steps, 8, "paired steps land, not an interleaved step");
@@ -611,6 +627,8 @@ contract StreamWeightGateTest is SWATestBase {
         WeightRecordUpdate[] memory updates = _singleWeightRecord(SERVICE_ID, fifty);
         vm.prank(owner1);
         actor.setWeightRecords(updates);
+        vm.expectEmit(address(actor));
+        emit StreamWeightActor.WeightRecordsQueued(updates);
         vm.prank(owner2);
         actor.setWeightRecords(updates);
 
@@ -637,6 +655,8 @@ contract StreamWeightGateTest is SWATestBase {
         GateParams memory params = _gateParams(4000 ether, 2.7 ether, 1);
         _submitGateParams(params);
         vm.roll(vm.getBlockNumber() + Epoch.unwrap(MAINNET_TIMELOCK));
+        vm.expectEmit(address(actor));
+        emit StreamWeightActor.GateParamsSet(params);
         actor.setGateParams(params);
 
         IServiceRewardsActor sra = _sraMock();

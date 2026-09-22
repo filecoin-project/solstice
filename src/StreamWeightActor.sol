@@ -70,7 +70,7 @@ contract StreamWeightActor is UnanimousProxied {
         FVMRewards.removeStream(id);
     }
 
-    event WeightRecordsSet(WeightRecordUpdate[] updates);
+    event WeightRecordsQueued(WeightRecordUpdate[] updates);
 
     /// @notice Queues a discretionary weight-schedule write for one or more streams.
     /// @param updates Id/record pairs to write.
@@ -78,7 +78,7 @@ contract StreamWeightActor is UnanimousProxied {
         // hold enforced in f02
         FVMRewards.setWeightRecords(updates);
         GateParamsLibrary.getGateCheckSlot().pendingWeightUntil = currentEpoch() + HOLD;
-        emit WeightRecordsSet(updates);
+        emit WeightRecordsQueued(updates);
     }
 
     /// @notice Queues a writer change for an explicit stream.
