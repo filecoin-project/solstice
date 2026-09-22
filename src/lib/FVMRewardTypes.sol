@@ -49,3 +49,10 @@ enum PendingOp {
     REMOVE,
     SET_DISTRIBUTION
 }
+
+/// @notice Outcome of a ReplaceAddress call, returned as a CBOR unsigned integer.
+/// @dev OldAddressNotInLedger is a no-op: due writes still settle, but no share moves.
+enum ReplaceAddressReturn {
+    AddressReplaced,
+    OldAddressNotInLedger
+}
