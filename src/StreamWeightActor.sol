@@ -70,12 +70,15 @@ contract StreamWeightActor is UnanimousProxied {
         FVMRewards.removeStream(id);
     }
 
+    event SetWeightRecords(WeightRecordUpdate[] updates);
+
     /// @notice Queues a discretionary weight-schedule write for one or more streams.
     /// @param updates Id/record pairs to write.
     function setWeightRecords(WeightRecordUpdate[] calldata updates) external unanimousNoHold(keccak256(msg.data)) {
         // hold enforced in f02
         FVMRewards.setWeightRecords(updates);
         GateParamsLibrary.getGateCheckSlot().pendingWeightUntil = currentEpoch() + HOLD;
+        emit SetWeightRecords(updates);
     }
 
     /// @notice Queues a writer change for an explicit stream.
@@ -152,11 +155,14 @@ contract StreamWeightActor is UnanimousProxied {
         _setGateParams(params, taskId);
     }
 
+    event SetGateParams(GateParams params);
+
     function _setGateParams(GateParams calldata params, bytes32 taskId) private unanimous(taskId, HOLD) {
         require(params.steps <= GateParamsLibrary.GATE_STEPS, StepsOutOfRange());
         GateParamsLibrary.GateParamsInfo storage gateParamsInfo = GateParamsLibrary.getGateParamsSlot();
         gateParamsInfo.params = params;
         delete GateParamsLibrary.getGateCheckSlot().pendingGateParamsTaskId;
+        emit SetGateParams(params);
     }
 
     function veto(bytes32 taskId) public override {
