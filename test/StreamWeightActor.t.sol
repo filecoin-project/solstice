@@ -4,6 +4,7 @@ pragma solidity ^0.8.36;
 import {USR_FORBIDDEN, USR_ILLEGAL_ARGUMENT, USR_NOT_FOUND} from "fvm-solidity/FVMErrors.sol";
 
 import {SWATestBase} from "./SWATestBase.sol";
+import {StreamWeightActor} from "../src/StreamWeightActor.sol";
 import {FVMRewardActor, MockState, MAINNET_TIMELOCK} from "./mocks/FVMRewardActor.sol";
 import {DistributionKind, PendingOp, WeightRecordUpdate} from "../src/lib/FVMRewardTypes.sol";
 import {Epoch} from "../src/lib/Epoch.sol";
@@ -158,6 +159,8 @@ contract StreamWeightActorTest is SWATestBase {
 
         vm.prank(owner1);
         actor.setWeightRecords(updates);
+        vm.expectEmit(address(actor));
+        emit StreamWeightActor.WeightRecordsQueued(updates);
         vm.prank(owner2);
         actor.setWeightRecords(updates);
     }
