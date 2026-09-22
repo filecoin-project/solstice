@@ -24,7 +24,7 @@
     "epochsPerQuarter": 2880,
     "postPeriod": 240,
     "verificationWindow": 480,
-    "activationEpoch": 4097614,
+    "activationEpoch": 4109134,
     "hold": 720,
     "sra": "0xeDfCd0947F7E9d58E0035f032520d75ce8eCA451",
     "swa": "0xDE4fBd083F18f96C241DdE0A83C3EDC422Be9BA6"
