@@ -1,6 +1,5 @@
 name: Deploy Contract
 
-# Manual only: run from the Actions tab ("Run workflow") or `gh workflow run deploy-contract.yml`.
 on:
   workflow_dispatch:
     inputs:
