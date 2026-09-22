@@ -735,7 +735,7 @@ contract ServiceRewardsActor is IServiceRewardsActor, UnanimousProxied {
     /// @notice Wallet-admission gate
     /// @dev the wallet must uniquely resolve to an existing actor (FIP §2.4.4).
     /// The dedup key is the actor id.
-    /// Known issue: masked addresses can pass the getActorId check even if their actorId is invalid.
+    /// Known issue: payment channels can pass this check but fail in SetShares/ReplaceAddress.
     function _assertWalletAdmissible(address wallet, uint64 selfId) internal {
         require(wallet != address(0), ZeroWallet());
         uint64 wid = FVMActor.getActorId(wallet);
