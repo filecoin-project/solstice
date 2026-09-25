@@ -1,0 +1,59 @@
+name: Releaser
+
+# When version.json changes on main, tag that commit with the version and create a GitHub pre-release whose notes
+# are the matching section of CHANGELOG.md. The Upgrade workflow's `verify` action later appends the live
+# implementation addresses and, on mainnet, promotes the pre-release to a release. See docs/UPGRADE.md.
+on:
+  push:
+    branches: ["main"]
+    paths: ["version.json"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: releaser-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # workflow_dispatch can be run from any ref; only main may mint releases.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Create tag and pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=$(jq -r .version version.json)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG already exists; nothing to do"
+            exit 0
+          fi
+          awk -v tag="$TAG" '
+            $0 ~ "^## " { printing = ($2 == tag) ; next }
+            printing { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "CHANGELOG.md has no section for $TAG" >&2
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            # A pre-existing tag is accepted only if its commit is on this branch's history, so a tag someone
+            # pushed at an unrelated commit cannot become the official release.
+            git fetch --quiet origin "refs/tags/$TAG:refs/tags/$TAG"
+            if ! git merge-base --is-ancestor "$TAG^{commit}" "$GITHUB_SHA"; then
+              echo "tag $TAG exists but its commit is not an ancestor of $GITHUB_SHA; refusing" >&2
+              exit 1
+            fi
+            echo "tag $TAG exists on this history; creating the release on it"
+            gh release create "$TAG" --prerelease --title "$TAG" --notes-file notes.md
+          else
+            gh release create "$TAG" --target "$GITHUB_SHA" --prerelease --title "$TAG" --notes-file notes.md
+          fi

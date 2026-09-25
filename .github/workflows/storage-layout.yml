@@ -1,0 +1,34 @@
+name: Storage Layout
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+# Every SRA/SWA state struct lives behind an ERC-7201 namespace, so `forge inspect storageLayout` is empty
+# for the real contracts. tools/storage_layout.py asks the compiler for the layout of test/layout/StorageLayoutProbe.sol
+# (one variable per namespace) and keeps it in storage-layout/layout.json; on pull requests it also proves the
+# change is upgrade-safe against the base branch (append-only). Slot constants are pinned by test/StorageSlots.t.sol.
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.7.1
+          cache: true
+
+      - name: Snapshot is up to date
+        run: tools/storage_layout.py --check
+
+      - name: Layout is upgrade-safe against base branch
+        if: github.event_name == 'pull_request'
+        run: tools/storage_layout.py --compat "origin/${{ github.base_ref }}"
