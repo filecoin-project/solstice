@@ -322,7 +322,7 @@ def check_setup(chain, account, api, candidates):
     implementation address or None; for each given one, also whether the proxy already points at it."""
     print(f"== Operations key on chain {chain.chain_id} ==")
     print(f"DEPLOYER_PRIVATE_KEY address: {account.address}")
-    print(f"balance: {chain.w3.eth.get_balance(account.address) / 10**18} FIL")
+    print(f"balance: {chain.w3.eth.get_balance(account.address) / 10**18:.4f} FIL")
     not_owners, not_proposers, ahead_of = [], [], []
     for target in TARGETS:
         current = chain.current_impl(target)

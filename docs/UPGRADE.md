@@ -8,7 +8,7 @@ How a merged code change becomes the live implementation behind the ServiceRewar
 |---|---|---|
 | Proxies | Two OpenZeppelin [`ERC1967Proxy`](../lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol) contracts; addresses `sra` and `swa` in [`deployments.json`](../deployments.json) | Hold all state and delegate every call to their implementation. No admin; only the implementation's own logic can change which implementation a proxy points at. |
 | Implementations | [`ServiceRewardsActor`](../src/ServiceRewardsActor.sol) and [`StreamWeightActor`](../src/StreamWeightActor.sol), one deployment each per version; the live one is whatever each proxy's ERC-1967 slot points at, recorded in the [release](https://github.com/filecoin-project/solstice/releases) for the version | Inherit [`UnanimousProxied`](../src/lib/UnanimousProxied.sol), whose `_authorizeUpgrade` is gated by the `unanimous` modifier in [`UnanimousGovernance`](../src/lib/UnanimousGovernance.sol). SRA and SWA are always upgraded together. |
-| Version | [`version.json`](../version.json) and [`CHANGELOG.md`](../CHANGELOG.md) | One version covers both contracts. Bumping it on `main` makes the [Releaser workflow](https://github.com/filecoin-project/solstice/actions/workflows/releaser.yml) ([source](../.github/workflows/releaser.yml)) tag the commit and open a pre-release with the changelog section. |
+| Version | [`version.json`](../version.json) and [`CHANGELOG.md`](../CHANGELOG.md) | One version covers both contracts. Bumping it on `main` makes the [Releaser workflow](https://github.com/filecoin-project/solstice/actions/workflows/releaser.yml) tag the commit and open a pre-release with the changelog section. |
 | Owners | Two [Safe](https://safe.filecoin.io) multisigs per contract: `sraOwner1`, `sraOwner2`, `swaOwner1`, `swaOwner2` in [`deployments.json`](../deployments.json) | The only parties that can approve an upgrade. |
 | Hold | `hold` in [`deployments.json`](../deployments.json), fixed at deployment as an immutable and the same for every task | Epochs that must pass after the second owner's approval before a task can execute. |
 | Operations key (`DEPLOYER_PRIVATE_KEY`) | Secret on the [`calibnet`](https://github.com/filecoin-project/solstice/settings/environments/22478295461/edit) and [`mainnet`](https://github.com/filecoin-project/solstice/settings/environments/22478417501/edit) [environments](https://github.com/filecoin-project/solstice/settings/environments) | Deploys implementations, queues proposals on the owner Safes, executes, pays gas. One-time setup: an owner of each of the four Safes registers its address as a [proposer](https://help.safe.global/articles/1671337645-proposers) in the Safe app. It's a plain key with no power over the contracts; it's not an owner key. |
@@ -79,7 +79,7 @@ Repeat steps 2 to 7 on mainnet.
 
 ### What if GitHub is down during an upgrade?
 
-The [Upgrade workflow](https://github.com/filecoin-project/solstice/actions/workflows/upgrade.yml) is a thin wrapper around [`tools/upgrade.py`](../tools/upgrade.py), so every operation can be run from a checkout of the version tag instead. It needs [Foundry](https://getfoundry.sh) v1.7.1, [uv](https://docs.astral.sh/uv/), the submodules, and an RPC for the network:
+The [Upgrade workflow](https://github.com/filecoin-project/solstice/actions/workflows/upgrade.yml) is a thin wrapper around [`tools/upgrade.py`](../tools/upgrade.py), so every operation can be run from a checkout of the version tag instead. It needs [Foundry](https://getfoundry.sh) and [uv](https://docs.astral.sh/uv/) (the versions CI uses are in [`.github/actions/setup/action.yml`](../.github/actions/setup/action.yml)), the submodules, and an RPC for the network:
 
 ```sh
 TAG=v1.2.3
@@ -107,6 +107,10 @@ These operations are affected by not having the GitHub secret:
 2. Replace the `DEPLOYER_PRIVATE_KEY` secret on the [`calibnet`](https://github.com/filecoin-project/solstice/settings/environments/22478295461/edit) and [`mainnet`](https://github.com/filecoin-project/solstice/settings/environments/22478417501/edit) environments.
 3. Have an owner of each of the four owner Safes, on each network, add the new address as a [proposer](https://help.safe.global/articles/1671337645-proposers) in the Safe app and remove the old one.
 4. Dispatch the [Upgrade](https://github.com/filecoin-project/solstice/actions/workflows/upgrade.yml) workflow with operation `check-setup` on each network, from `main` or a `v*` tag (the environments accept no other ref). It sends nothing. It prints the secret's address and balance, which is the only way to confirm the secret holds the intended key, since GitHub never shows a secret. For each owner Safe it also prints whether that Safe is an owner on the proxy, whether the key is its proposer, and what is queued at or above its nonce. It fails if an owner in [`deployments.json`](../deployments.json) is not an owner on its proxy.
+
+### Why doesn't this live in the governance repo?
+
+Upgrades are expected to be driven by engineers at the request of the community, through the FIP process and the [governance repo](https://github.com/filecoin-project/solstice-governance). The governance repo says what should change and why, and this runbook says how an engineer carries it out. Keeping the runbook next to the contracts, the scripts and the workflows it names means a change to any of them is reviewed together with the runbook that depends on it, so the two cannot drift apart.
 
 ## Related
 

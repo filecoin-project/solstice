@@ -56,7 +56,7 @@ contract VerifyScript is UpgradeBase {
     function _verifySra(Config memory config, address proxy, address candidate) internal {
         address implementation = _subject("SRA", proxy, candidate);
         address expected = _buildImplementation(true, config, proxy);
-        _checkCode("SRA implementation", implementation, expected);
+        _checkCode("SRA implementation", implementation, expected, config.sraOwner1, config.sraOwner2);
         _checkProxy("SRA", proxy, expected);
         _checkOwners("SRA", proxy, config.sraOwner1, config.sraOwner2);
 
@@ -69,7 +69,7 @@ contract VerifyScript is UpgradeBase {
         address implementation = _subject("SWA", proxy, candidate);
         // The SRA pointer is an immutable, so a matching code hash proves SWA points at the live SRA proxy.
         address expected = _buildImplementation(false, config, sraProxy);
-        _checkCode("SWA implementation", implementation, expected);
+        _checkCode("SWA implementation", implementation, expected, config.swaOwner1, config.swaOwner2);
         _checkProxy("SWA", proxy, expected);
         _checkOwners("SWA", proxy, config.swaOwner1, config.swaOwner2);
 
@@ -110,8 +110,8 @@ contract VerifyScript is UpgradeBase {
     /// @dev Owners struct: word 0 is the ownerInfo mapping base, word 1 packs nextBitCursor (uint8, byte 0)
     ///      and allOwners (uint160, bytes 1..20). Owner bits are only ever set by `initialize()` or `replaceOwner`,
     ///      so a correct owner set also proves the proxy was initialized. Compares against the owners in
-    ///      deployments.json, so an owner replacement (`replaceOwner`) must update that file; the rebuilt-code
-    ///      check then passes again only once an implementation built from the updated config is live.
+    ///      deployments.json, so an owner replacement (`replaceOwner`) must update that file (the code check
+    ///      masks the initial-owner immutables, so it keeps passing across replacements).
     function _checkOwners(string memory label, address proxy, address owner1, address owner2) internal view {
         require(owner1 != owner2, string.concat(label, ": owner1 == owner2"));
         require(_ownerBit(proxy, owner1) != 0, string.concat(label, ": owner1 not an owner"));
