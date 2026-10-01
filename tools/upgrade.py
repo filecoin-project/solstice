@@ -13,7 +13,7 @@ Environment:
   ETH_RPC_URL           required; selects the network (chain id 314 or 314159)
   DEPLOYER_PRIVATE_KEY  the operations key: registered once by an owner of each Safe as a proposer
                         (https://help.safe.global/articles/1671337645-proposers) for `propose`; any funded key
-                        for `execute`
+                        for `execute`; for `check-key`, the key whose address must be `operationsKey`
   DRY_RUN=1             for propose: build and sign the Safe transactions but do not post them
   NETWORK_NAME          for `verify --record-release`: the label written into the release ("Calibnet" or "Mainnet")
 
@@ -29,6 +29,7 @@ import re
 import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 from eth_abi import encode
@@ -297,6 +298,29 @@ def cmd_status(args):
         task.summary()
 
 
+def cmd_check_key(args):
+    """Check that DEPLOYER_PRIVATE_KEY is the operations key recorded for this network, without sending anything.
+    Run it in the environment after setting or rotating the secret; GitHub cannot show a secret's value."""
+    chain = Chain()
+    _, account = key_account("check-key")
+    expected = chain.cfg.get("operationsKey") or die(f"deployments.json has no operationsKey for chain {chain.chain_id}")
+    expected = to_checksum_address(expected)
+    print(f"== Operations key on chain {chain.chain_id} ==")
+    print(f"DEPLOYER_PRIVATE_KEY address: {account.address}")
+    print(f"operationsKey in deployments.json: {expected}")
+    print(f"balance: {chain.w3.eth.get_balance(account.address) / 10**18} FIL")
+    base_url = SAFE_SERVICES.get(chain.chain_id) or die(f"no Safe Transaction Service known for chain {chain.chain_id}")
+    print(f"== Proposer registration via {base_url} ==")
+    for target in TARGETS:
+        for owner in chain.owners(target):
+            with urllib.request.urlopen(f"{base_url}/api/v2/delegates/?safe={owner}&delegate={account.address}", timeout=30) as r:
+                registered = json.load(r)["count"] > 0
+            print(f"Safe {owner}: {'registered' if registered else 'NOT registered'}")
+    if account.address != expected:
+        die(f"DEPLOYER_PRIVATE_KEY is {account.address}, not the operations key {expected}; set the secret again")
+    print("operations key matches")
+
+
 def cmd_execute(args):
     chain = Chain()
     key, account = key_account("execute")
@@ -415,11 +439,13 @@ def main(argv):
     impls(sub.add_parser("propose", help="check both implementations and queue the upgrades on the owner Safes"))
     impls(sub.add_parser("status", help="approvals and hold end for both tasks (pass previous addresses to see a prepared rollback)"))
     impls(sub.add_parser("execute", help="send both upgrades once both holds have elapsed"))
+    sub.add_parser("check-key", help="check DEPLOYER_PRIVATE_KEY is operationsKey in deployments.json and show its proposer registration (sends nothing)")
     v = sub.add_parser("verify", help="run script/Verify.s.sol against the live chain")
     v.add_argument("--record-release", metavar="TAG", help="append the result to the GitHub release for TAG, which must point at HEAD; promote on mainnet")
 
     args = p.parse_args(argv)
-    {"rehearse": cmd_rehearse, "propose": cmd_propose, "status": cmd_status, "execute": cmd_execute, "verify": cmd_verify}[args.operation](args)
+    {"rehearse": cmd_rehearse, "propose": cmd_propose, "status": cmd_status, "execute": cmd_execute, "verify": cmd_verify,
+     "check-key": cmd_check_key}[args.operation](args)
     return 0
 
 
