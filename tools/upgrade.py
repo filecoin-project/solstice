@@ -13,7 +13,7 @@ Environment:
   ETH_RPC_URL           required; selects the network (chain id 314 or 314159)
   DEPLOYER_PRIVATE_KEY  the operations key: registered once by an owner of each Safe as a proposer
                         (https://help.safe.global/articles/1671337645-proposers) for `propose`; any funded key
-                        for `execute`
+                        for `execute`; its address is shown by `check-setup`
   DRY_RUN=1             for propose: build and sign the Safe transactions but do not post them
   NETWORK_NAME          for `verify --record-release`: the label written into the release ("Calibnet" or "Mainnet")
 
@@ -29,7 +29,6 @@ import re
 import subprocess
 import sys
 import time
-import urllib.request
 from pathlib import Path
 
 from eth_abi import encode
@@ -298,21 +297,46 @@ def cmd_status(args):
         task.summary()
 
 
-def cmd_check_key(args):
-    """Show the address of DEPLOYER_PRIVATE_KEY and which owner Safes have it registered as a proposer, without
-    sending anything. Run it in the environment after setting or rotating the secret; GitHub cannot show a secret."""
+def cmd_check_setup(args):
+    """Report what `propose` and `execute` depend on, without sending anything: the address and balance of
+    DEPLOYER_PRIVATE_KEY (GitHub cannot show a secret), and for each owner Safe in deployments.json whether it is an
+    owner on the live proxy, whether the key is registered as its proposer, and what is queued at or above its
+    on-chain nonce (a proposal lines up behind those). With --sra/--swa, also whether each proxy already points at
+    the candidate and the candidate's task status. Fails if a deployments.json owner is not an owner on its proxy,
+    since proposals would then go to a Safe that cannot approve."""
     chain = Chain()
-    _, account = key_account("check-key")
+    _, account = key_account("check-setup")
+    base_url = SAFE_SERVICES.get(chain.chain_id) or die(f"no Safe Transaction Service known for chain {chain.chain_id}")
+    api = TransactionServiceApi(EthereumNetwork(chain.chain_id), ethereum_client=chain.client, base_url=base_url)
     print(f"== Operations key on chain {chain.chain_id} ==")
     print(f"DEPLOYER_PRIVATE_KEY address: {account.address}")
     print(f"balance: {chain.w3.eth.get_balance(account.address) / 10**18} FIL")
-    base_url = SAFE_SERVICES.get(chain.chain_id) or die(f"no Safe Transaction Service known for chain {chain.chain_id}")
-    print(f"== Proposer registration via {base_url} ==")
+    not_owners = []
     for target in TARGETS:
+        current = chain.current_impl(target)
+        print()
+        print(f"== {target.upper()} proxy {chain.proxy(target)}, implementation {current} ==")
         for n, owner in enumerate(chain.owners(target), 1):
-            with urllib.request.urlopen(f"{base_url}/api/v2/delegates/?safe={owner}&delegate={account.address}", timeout=30) as r:
-                registered = json.load(r)["count"] > 0
-            print(f"{target}Owner{n} {owner}: {'proposer' if registered else 'NOT a proposer'}")
+            is_owner = chain.owner_bit(target, owner) != 0
+            if not is_owner:
+                not_owners.append(f"{target}Owner{n} {owner}")
+            proposer = any(d["delegate"].lower() == account.address.lower() for d in api.get_delegates(owner))
+            on_chain = Safe(owner, chain.client).retrieve_nonce()
+            ahead = sorted(int(t["nonce"]) for t in api.get_transactions(owner, executed="false", limit=100)
+                           if int(t["nonce"]) >= on_chain)
+            print(f"{target}Owner{n} {owner}: "
+                  + ("owner on the proxy" if is_owner else "NOT an owner on the proxy") + "; "
+                  + ("key is a proposer" if proposer else "key is NOT a proposer") + "; "
+                  + f"nonce {on_chain}, " + (f"queued at nonces {ahead}" if ahead else "nothing queued"))
+        candidate = getattr(args, target)
+        if candidate:
+            if candidate == current:
+                print(f"candidate {candidate}: the proxy already points at it")
+            else:
+                print(f"candidate {candidate}: the proxy points elsewhere (upgrade not yet executed)")
+                Task(chain, target, candidate).status()
+    if not_owners:
+        die("\nnot owners on their proxy (deployments.json is out of date, or an owner was replaced): " + "; ".join(not_owners))
 
 
 def cmd_execute(args):
@@ -421,6 +445,11 @@ def address(value):
         raise argparse.ArgumentTypeError(f"not an address: {value}")
 
 
+def optional_address(value):
+    """An address, or None for the empty string the workflow passes when the input is left blank."""
+    return address(value) if value else None
+
+
 def main(argv):
     p = argparse.ArgumentParser(prog="tools/upgrade.py", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="operation", required=True, metavar="operation")
@@ -433,13 +462,15 @@ def main(argv):
     impls(sub.add_parser("propose", help="check both implementations and queue the upgrades on the owner Safes"))
     impls(sub.add_parser("status", help="approvals and hold end for both tasks (pass previous addresses to see a prepared rollback)"))
     impls(sub.add_parser("execute", help="send both upgrades once both holds have elapsed"))
-    sub.add_parser("check-key", help="show the DEPLOYER_PRIVATE_KEY address and which owner Safes have it as a proposer (sends nothing)")
+    c = sub.add_parser("check-setup", help="report the operations key, owners, proposer registration and Safe queues (sends nothing)")
+    c.add_argument("--sra", type=optional_address, help="also show this SRA candidate's task status")
+    c.add_argument("--swa", type=optional_address, help="also show this SWA candidate's task status")
     v = sub.add_parser("verify", help="run script/Verify.s.sol against the live chain")
     v.add_argument("--record-release", metavar="TAG", help="append the result to the GitHub release for TAG, which must point at HEAD; promote on mainnet")
 
     args = p.parse_args(argv)
     {"rehearse": cmd_rehearse, "propose": cmd_propose, "status": cmd_status, "execute": cmd_execute, "verify": cmd_verify,
-     "check-key": cmd_check_key}[args.operation](args)
+     "check-setup": cmd_check_setup}[args.operation](args)
     return 0
 
 
