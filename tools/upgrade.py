@@ -17,9 +17,10 @@ Environment:
   DRY_RUN=1             for propose: build and sign the Safe transactions but do not post them
   NETWORK_NAME          for `verify --record-release`: the label written into the release ("Calibnet" or "Mainnet")
 
-`propose` runs script/Verify.s.sol with the new addresses as candidates, which rebuilds both implementations from
-the checked-out source and refuses unless the on-chain runtime code matches, so the queued transactions always
-refer to code built from this commit. See docs/UPGRADE.md step 4 for what happens after the proposals are queued.
+`propose` first makes the `check-setup` checks and posts nothing unless every owner Safe is an owner on its proxy
+and has the key as a proposer. It then runs script/Verify.s.sol with the new addresses as candidates, which rebuilds
+both implementations from the checked-out source and refuses unless the on-chain runtime code matches, so the queued
+transactions always refer to code built from this commit. See docs/UPGRADE.md step 4 for what happens after the proposals are queued.
 """
 
 import argparse
@@ -250,9 +251,20 @@ def cmd_rehearse(args):
 def cmd_propose(args):
     chain = Chain()
     key, account = key_account("propose")
-    base_url = SAFE_SERVICES.get(chain.chain_id) or die(f"no Safe Transaction Service known for chain {chain.chain_id}")
-    api = TransactionServiceApi(EthereumNetwork(chain.chain_id), ethereum_client=chain.client, base_url=base_url)
+    base_url, api = safe_service(chain)
     todo = tasks(chain, args)
+    # The same checks as `check-setup`, before anything is posted, so a missing proposer registration cannot leave
+    # the upgrade queued on some Safes and not others.
+    not_owners, not_proposers, ahead_of = check_setup(chain, account, api, {t.target: t.impl for t in todo})
+    if not_owners:
+        die(NOT_OWNERS + "; ".join(not_owners))
+    if not_proposers and os.environ.get("DRY_RUN") != "1":
+        die(f"{account.address} is not a proposer on: " + "; ".join(not_proposers) + ". An owner of each registers it "
+            "once in the Safe app; see the Operations key row in docs/UPGRADE.md. Nothing was posted.")
+    if ahead_of:
+        print("NOTE: the upgrade will queue behind other transactions on " + "; ".join(ahead_of) + ". Those owners "
+              "must execute or reject them before they can execute the upgrade.")
+        print()
     print("== Checking both candidates against a local build of the checked-out source (script/Verify.s.sol) ==")
     forge_script("script/Verify.s.sol", {f"NEW_IMPLEMENTATION_{t.name}": t.impl for t in todo})
     for task in todo:
@@ -297,46 +309,65 @@ def cmd_status(args):
         task.summary()
 
 
-def cmd_check_setup(args):
-    """Report what `propose` and `execute` depend on, without sending anything: the address and balance of
-    DEPLOYER_PRIVATE_KEY (GitHub cannot show a secret), and for each owner Safe in deployments.json whether it is an
-    owner on the live proxy, whether the key is registered as its proposer, and what is queued at or above its
-    on-chain nonce (a proposal lines up behind those). With --sra/--swa, also whether each proxy already points at
-    the candidate and the candidate's task status. Fails if a deployments.json owner is not an owner on its proxy,
-    since proposals would then go to a Safe that cannot approve."""
-    chain = Chain()
-    _, account = key_account("check-setup")
+def safe_service(chain):
     base_url = SAFE_SERVICES.get(chain.chain_id) or die(f"no Safe Transaction Service known for chain {chain.chain_id}")
-    api = TransactionServiceApi(EthereumNetwork(chain.chain_id), ethereum_client=chain.client, base_url=base_url)
+    return base_url, TransactionServiceApi(EthereumNetwork(chain.chain_id), ethereum_client=chain.client, base_url=base_url)
+
+
+def check_setup(chain, account, api, candidates):
+    """Print what `propose` and `execute` depend on and return the problems as (not owners, not proposers, queued
+    ahead), each a list of "<name> <Safe>" strings: for each owner Safe in deployments.json, whether it is an owner on
+    the live proxy, whether the key is registered as its proposer, and what is queued at or above its on-chain nonce
+    other than the candidate's own upgrade (an upgrade lines up behind those). `candidates` maps a target to an
+    implementation address or None; for each given one, also whether the proxy already points at it."""
     print(f"== Operations key on chain {chain.chain_id} ==")
     print(f"DEPLOYER_PRIVATE_KEY address: {account.address}")
     print(f"balance: {chain.w3.eth.get_balance(account.address) / 10**18} FIL")
-    not_owners = []
+    not_owners, not_proposers, ahead_of = [], [], []
     for target in TARGETS:
         current = chain.current_impl(target)
+        candidate = candidates.get(target)
+        task = Task(chain, target, candidate) if candidate else None
         print()
         print(f"== {target.upper()} proxy {chain.proxy(target)}, implementation {current} ==")
         for n, owner in enumerate(chain.owners(target), 1):
+            name = f"{target}Owner{n} {owner}"
             is_owner = chain.owner_bit(target, owner) != 0
-            if not is_owner:
-                not_owners.append(f"{target}Owner{n} {owner}")
             proposer = any(d["delegate"].lower() == account.address.lower() for d in api.get_delegates(owner))
             on_chain = Safe(owner, chain.client).retrieve_nonce()
             ahead = sorted(int(t["nonce"]) for t in api.get_transactions(owner, executed="false", limit=100)
-                           if int(t["nonce"]) >= on_chain)
-            print(f"{target}Owner{n} {owner}: "
+                           if int(t["nonce"]) >= on_chain
+                           and not (task and already_queued([t], on_chain, task.proxy, task.calldata)))
+            not_owners += [] if is_owner else [name]
+            not_proposers += [] if proposer else [name]
+            ahead_of += [f"{name} (nonces {ahead})"] if ahead else []
+            print(f"{name}: "
                   + ("owner on the proxy" if is_owner else "NOT an owner on the proxy") + "; "
                   + ("key is a proposer" if proposer else "key is NOT a proposer") + "; "
-                  + f"nonce {on_chain}, " + (f"queued at nonces {ahead}" if ahead else "nothing queued"))
-        candidate = getattr(args, target)
-        if candidate:
+                  + f"nonce {on_chain}, " + (f"other transactions queued at nonces {ahead}" if ahead else "nothing else queued"))
+        if task:
             if candidate == current:
                 print(f"candidate {candidate}: the proxy already points at it")
             else:
                 print(f"candidate {candidate}: the proxy points elsewhere (upgrade not yet executed)")
-                Task(chain, target, candidate).status()
+                task.status()
+    print()
+    return not_owners, not_proposers, ahead_of
+
+
+NOT_OWNERS = "not owners on their proxy (deployments.json is out of date, or an owner was replaced): "
+
+
+def cmd_check_setup(args):
+    """Report what `propose` and `execute` depend on, without sending anything (see check_setup). The printed
+    address is the only way to confirm which key a GitHub secret holds. Fails if a deployments.json owner is not an
+    owner on its proxy, since proposals would then go to a Safe that cannot approve."""
+    chain = Chain()
+    _, account = key_account("check-setup")
+    _, api = safe_service(chain)
+    not_owners, _, _ = check_setup(chain, account, api, {t: getattr(args, t) for t in TARGETS})
     if not_owners:
-        die("\nnot owners on their proxy (deployments.json is out of date, or an owner was replaced): " + "; ".join(not_owners))
+        die(NOT_OWNERS + "; ".join(not_owners))
 
 
 def cmd_execute(args):

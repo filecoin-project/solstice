@@ -11,7 +11,7 @@ How a merged code change becomes the live implementation behind the ServiceRewar
 | Version | [`version.json`](../version.json) and [`CHANGELOG.md`](../CHANGELOG.md) | One version covers both contracts. Bumping it on `main` makes the [Releaser workflow](https://github.com/filecoin-project/solstice/actions/workflows/releaser.yml) ([source](../.github/workflows/releaser.yml)) tag the commit and open a pre-release with the changelog section. |
 | Owners | Two [Safe](https://safe.filecoin.io) multisigs per contract: `sraOwner1`, `sraOwner2`, `swaOwner1`, `swaOwner2` in [`deployments.json`](../deployments.json) | The only parties that can approve an upgrade. |
 | Hold | `hold` in [`deployments.json`](../deployments.json), fixed at deployment as an immutable and the same for every task | Epochs that must pass after the second owner's approval before a task can execute. |
-| Operations key (`DEPLOYER_PRIVATE_KEY`) | Secret on the [`calibnet`](https://github.com/filecoin-project/solstice/settings/environments/22478295461/edit) and [`mainnet`](https://github.com/filecoin-project/solstice/settings/environments/22478417501/edit) [environments](https://github.com/filecoin-project/solstice/settings/environments) | Deploys implementations, queues proposals on the owner Safes, executes, pays gas. One-time setup: an owner of each of the four Safes registers its address as a [proposer](https://help.safe.global/articles/1671337645-proposers) in the Safe app. After setting or rotating the secret, and before `propose`, dispatch the Upgrade workflow with operation `check-setup` on that network: it prints the secret's address and balance, and for each owner Safe whether it is an owner on the proxy, whether the key is its proposer, and what is queued ahead on it; given implementation addresses, it also says whether each proxy already points at them. It fails if an owner in `deployments.json` is not an owner on its proxy. It sends nothing. A plain key with no power over the contracts; not an owner key. |
+| Operations key (`DEPLOYER_PRIVATE_KEY`) | Secret on the [`calibnet`](https://github.com/filecoin-project/solstice/settings/environments/22478295461/edit) and [`mainnet`](https://github.com/filecoin-project/solstice/settings/environments/22478417501/edit) [environments](https://github.com/filecoin-project/solstice/settings/environments) | Deploys implementations, queues proposals on the owner Safes, executes, pays gas. One-time setup: an owner of each of the four Safes registers its address as a [proposer](https://help.safe.global/articles/1671337645-proposers) in the Safe app. It's a plain key with no power over the contracts; it's not an owner key. |
 
 The upgrade call is [`upgradeToAndCall(newImplementation, data)`](../lib/openzeppelin-contracts/contracts/proxy/utils/UUPSUpgradeable.sol) on the proxy. Its task id is `keccak256(calldata)`, so both owners must send byte-identical calldata with zero value.
 
@@ -46,7 +46,7 @@ Dispatch [Deploy Contract](https://github.com/filecoin-project/solstice/actions/
 
 ### 4. Propose to the owners
 
-Dispatch [Upgrade](https://github.com/filecoin-project/solstice/actions/workflows/upgrade.yml) with operation `propose`, the network, and both implementation addresses. This runs in the network's [environment](https://github.com/filecoin-project/solstice/settings/environments), so it waits for a required reviewer other than the dispatcher: two humans sign off on every proposal. The reviewer's job is to confirm the run's ref is a `v*` tag whose commit is on `main` before approving. The run then runs the full verifier ([`script/Verify.s.sol`](../script/Verify.s.sol)) with the new addresses as candidates: it rebuilds both implementations from the tag and compares the runtime code against the candidates instead of the live implementations, refuses a candidate equal to the current implementation, and still checks the live proxies' code, owners and seeded state. Only then does it queue the upgrade transaction on all four owner Safes through the [Filecoin Safe Transaction Service](https://transaction.safe.filecoin.io/). Rerunning `propose` is safe; it skips Safes where the transaction is already queued and Safes that have already executed it.
+Dispatch [Upgrade](https://github.com/filecoin-project/solstice/actions/workflows/upgrade.yml) with operation `propose`, the network, and both implementation addresses. This runs in the network's [environment](https://github.com/filecoin-project/solstice/settings/environments), so it waits for a required reviewer other than the dispatcher: two humans sign off on every proposal. The reviewer's job is to confirm the run's ref is a `v*` tag whose commit is on `main` before approving. The run first makes the same checks as `check-setup` (see [rotating the operations key](#how-do-i-rotate-the-operations-key)) and stops before posting anything if an owner Safe in [`deployments.json`](../deployments.json) is not an owner on its proxy or does not have the operations key as a proposer; if other transactions are queued ahead on a Safe, it says so, since that Safe's owners must execute or reject them before the upgrade. It then runs the full verifier ([`script/Verify.s.sol`](../script/Verify.s.sol)) with the new addresses as candidates: it rebuilds both implementations from the tag and compares the runtime code against the candidates instead of the live implementations, refuses a candidate equal to the current implementation, and still checks the live proxies' code, owners and seeded state. Only then does it queue the upgrade transaction on all four owner Safes through the [Filecoin Safe Transaction Service](https://transaction.safe.filecoin.io/). Rerunning `propose` is safe; it skips Safes where the transaction is already queued and Safes that have already executed it.
 
 The proposer then tells each owner group that their Safe has a transaction queued, and each owner group confirms and executes it in the [Safe app](https://safe.filecoin.io); the Submit/Approve table under "How an upgrade works" says what the first and second executions do.
 
@@ -74,6 +74,39 @@ Repeat steps 2 to 7 on mainnet.
 - Before execution, rollback is a veto: either owner sends the veto calldata printed by `status`, and the task is gone. Nothing has changed on chain, so this is always safe.
 - After execution, rollback is a new upgrade back to the previous implementations, subject to the full hold. It is safe when the new version only appended storage (which is all the [layout gate](#1-merge) in [`tools/storage_layout.py`](../tools/storage_layout.py) allows), because the previous code simply ignores the new fields. It is not safe if the new version ran a reinitializer or migration that reinterpreted existing storage; that case needs its own design before it is attempted. The [tracking issue](#0-open-a-tracking-issue) template asks for the previous implementation addresses up front so the rollback proposal can be built from them.
 - Optional, for a change risky enough to want a fast rollback: once the upgrade has executed (step 6), dispatch `propose` with the previous implementation addresses and ref the previous version's tag. This only works after execution: the code check rebuilds from the checked-out ref, and the verifier refuses a candidate equal to the implementation a proxy already points at, since such a proposal would be a no-op that still consumes a hold and, in practice, means someone pasted the live address instead of the new one. Have the first owner execute it at once and the second owner execute it at the start of the monitoring window you want; the rollback becomes executable one hold after that second execution. From then until an owner vetoes it, anyone can execute it, so the final step is that veto; the [issue template](../.github/ISSUE_TEMPLATE/upgrade.md) has a checkbox for it, and `status` with the previous addresses shows the rollback task.
+
+## FAQ
+
+### What if GitHub is down during an upgrade?
+
+The [Upgrade workflow](https://github.com/filecoin-project/solstice/actions/workflows/upgrade.yml) is a thin wrapper around [`tools/upgrade.py`](../tools/upgrade.py), so every operation can be run from a checkout of the version tag instead. It needs [Foundry](https://getfoundry.sh) v1.7.1, [uv](https://docs.astral.sh/uv/), the submodules, and an RPC for the network:
+
+```sh
+TAG=v1.2.3
+git checkout "$TAG" && git submodule update --init --recursive
+export ETH_RPC_URL=https://api.calibration.node.glif.io/rpc/v1   # mainnet: https://api.node.glif.io/rpc/v1
+uv run --locked tools/upgrade.py status --sra 0x... --swa 0x...
+```
+
+- `rehearse`, `status` and `verify` need no key.
+- `verify --record-release "$TAG"` also needs the `gh` CLI, so leave it off and record the result by hand.
+- `propose`, `execute` and `check-setup` need `DEPLOYER_PRIVATE_KEY` set.
+- `propose`, `execute` and deploying the implementations change on-chain state. In GitHub, the [environment](https://github.com/filecoin-project/solstice/settings/environments) makes a second person approve them; a local run has no such gate, so have a second person check each invocation.
+
+### Working around not having the GitHub secret for `DEPLOYER_PRIVATE_KEY`
+
+These operations are affected by not having the GitHub secret:
+
+- [Deploying the implementations](#3-deploy-the-implementations) is not part of `upgrade.py`, and any funded key works. Run what the [Deploy Contract workflow](https://github.com/filecoin-project/solstice/actions/workflows/deploy-contract.yml) runs: `forge script script/DeployImplementation.s.sol --rpc-url "$ETH_RPC_URL" --broadcast --verify --skip-simulation --private-key "$DEPLOYER_PRIVATE_KEY"`.
+- `propose` only works with a key registered as a proposer on all four owner Safes, and refuses before posting anything otherwise. Without one, run `status` with both implementation addresses instead (it needs no key): it prints each proxy address and the calldata, which the owners enter in the Safe app's transaction builder (see the note under [step 4](#4-propose-to-the-owners)).
+- `execute`: anyone may execute once the holds have passed, so `DEPLOYER_PRIVATE_KEY=0x<any funded key> uv run --locked tools/upgrade.py execute --sra 0x... --swa 0x...` works.
+
+### How do I rotate the operations key?
+
+1. Fund the new key on both networks.
+2. Replace the `DEPLOYER_PRIVATE_KEY` secret on the [`calibnet`](https://github.com/filecoin-project/solstice/settings/environments/22478295461/edit) and [`mainnet`](https://github.com/filecoin-project/solstice/settings/environments/22478417501/edit) environments.
+3. Have an owner of each of the four owner Safes, on each network, add the new address as a [proposer](https://help.safe.global/articles/1671337645-proposers) in the Safe app and remove the old one.
+4. Dispatch the [Upgrade](https://github.com/filecoin-project/solstice/actions/workflows/upgrade.yml) workflow with operation `check-setup` on each network, from `main` or a `v*` tag (the environments accept no other ref). It sends nothing. It prints the secret's address and balance, which is the only way to confirm the secret holds the intended key, since GitHub never shows a secret. For each owner Safe it also prints whether that Safe is an owner on the proxy, whether the key is its proposer, and what is queued at or above its nonce. It fails if an owner in [`deployments.json`](../deployments.json) is not an owner on its proxy.
 
 ## Related
 
