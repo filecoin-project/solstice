@@ -24,7 +24,7 @@ The upgrade call is [`upgradeToAndCall(newImplementation, data)`](../lib/openzep
 
 ## Steps
 
-Calibration first, then mainnet, from the same tag. Steps 2 to 7 are dispatches of the [Upgrade workflow](https://github.com/filecoin-project/solstice/actions/workflows/upgrade.yml) or the [Deploy Contract workflow](https://github.com/filecoin-project/solstice/actions/workflows/deploy-contract.yml), always with the version tag as the ref. Each workflow run is a thin wrapper around [`tools/upgrade.py`](../tools/upgrade.py), which can also be run locally with the same arguments. Each GitHub Action run's summary is the record; link it from the [tracking issue](#0-open-a-tracking-issue).
+Calibration first, then mainnet, from the same tag. Steps 2 to 7 are dispatches of the [Upgrade workflow](https://github.com/filecoin-project/solstice/actions/workflows/upgrade.yml) or the [Deploy Contract workflow](https://github.com/filecoin-project/solstice/actions/workflows/deploy-contract.yml), always with the version tag as the ref. The ref matters for the steps that build or verify code (rehearse, deploy, propose, verify); `status` and `execute` only read and send calldata, so they can be dispatched from the newest tag, which matters for a rollback whose own tag carries older tooling. Each workflow run is a thin wrapper around [`tools/upgrade.py`](../tools/upgrade.py), which can also be run locally with the same arguments. Each GitHub Action run's summary is the record; link it from the [tracking issue](#0-open-a-tracking-issue).
 
 ### 0. Open a tracking issue
 
