@@ -96,7 +96,7 @@ Repeat steps 2 to 7 on mainnet.
 Dispatch the [Upgrade](https://github.com/filecoin-project/solstice/actions/workflows/upgrade.yml) workflow with operation `check-setup` on each network from `main` or a `v*` tag since the environments accept no other ref. It sends nothing. It prints the key's public address and balance, which is the only way to confirm the secret holds the intended key, since GitHub never shows a secret. For each owner Safe in [`deployments.json`](../deployments.json), it also prints whether that Safe is an owner on the proxy, whether the operations key is its proposer, and what is queued at or above its nonce. It fails if an owner in [`deployments.json`](../deployments.json) is not an owner on its proxy.
 
 > [!NOTE]
-> This check [requires approval](#what-are-the-responsibilities-of-a-deployment-reviewer) since it accesses the operations key. (Given this is a read-only operation, it would be ideal if a reviewer wasn't required, but given we don't expect this workflow to be called much, additional environments with different approval settings were not configured.)
+> This check [requires approval](#what-are-the-responsibilities-of-a-deployment-reviewer) even though it is "read only" because it reads the "operations key" secret.
 
 ### What are the responsibilities of a deployment reviewer?
 
