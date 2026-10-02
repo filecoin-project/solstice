@@ -107,8 +107,9 @@ These workflows access the "operations key" (stored as `DEPLOYER_PRIVATE_KEY` se
 They require a second person approval. By default, GitHub shows dispatch inputs nowhere on a run, so our workflow run's title carries them, and we have a `pregate` job that finishes before the approval request which puts them in the run summary with its checks. This includes whether:
 1. the ref is `main` or a `v*` tag
 2. its commit is on `main`
-3. any implementation addresses given have code on chain
-4. for deploy and `propose`, [`check-setup`](#how-do-i-check-that-everything-is-set-up-correctly) passes: every owner Safe in [`deployments.json`](../deployments.json) is an owner on its proxy and has `DEPLOYER_ADDRESS` as a proposer. Its output, including any transactions queued ahead, is in the summary.
+3. `DEPLOYER_ADDRESS` is set, so the approved job can compare the key against it
+4. any implementation addresses given have code on chain
+5. for deploy and `propose`, [`check-setup`](#how-do-i-check-that-everything-is-set-up-correctly) passes: every owner Safe in [`deployments.json`](../deployments.json) is an owner on its proxy and has `DEPLOYER_ADDRESS` as a proposer. Its output, including any transactions queued ahead, is in the summary.
 
 If a check fails, that job fails and no approval is requested. One check cannot run before approval: whether the secret is the key for `DEPLOYER_ADDRESS`, since the pre-gate job runs outside the environment precisely so it never sees the secret. So it is the first thing the approved job does, and the job stops there, before sending anything, if they differ. The approver's job is not those checks but what a machine cannot know: open the run summary and confirm that the network, operation and tag are the ones in the [tracking issue](#0-open-a-tracking-issue), and that the implementation addresses are the ones in the [deploy step](#3-deploy-the-implementations)'s run summary.
 

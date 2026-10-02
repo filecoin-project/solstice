@@ -413,7 +413,8 @@ def pregate_report(title, actor, ref_name, ref_type, sha, rows, checks):
 
 def cmd_pregate(args):
     """Before a job that waits for environment approval: summarize what is being approved (GitHub shows dispatch
-    inputs nowhere on a run) and check the ref and addresses, failing before the approval request if one is wrong.
+    inputs nowhere on a run) and check the ref, DEPLOYER_ADDRESS and the addresses, failing before the approval
+    request if one is wrong.
     Reads the dispatch from GitHub's GITHUB_* variables; appends to GITHUB_STEP_SUMMARY when set."""
     env = os.environ
     actor, ref_name, ref_type = env.get("GITHUB_ACTOR", ""), env.get("GITHUB_REF_NAME", ""), env.get("GITHUB_REF_TYPE", "")
@@ -425,6 +426,11 @@ def cmd_pregate(args):
         checks.append((False, f"ref `{ref_name}` ({ref_type}) is neither `main` nor a `v*` tag"))
     on_main = subprocess.run(["git", "merge-base", "--is-ancestor", sha, "origin/main"], cwd=ROOT).returncode == 0
     checks.append((on_main, f"commit `{sha[:12]}` is {'' if on_main else 'not '}on `main`"))
+    # Every gated job uses the key and checks it against DEPLOYER_ADDRESS, which is skipped when the variable is
+    # empty; so an unset variable must stop the run here, before approval.
+    address = deployer_address()
+    checks.append((bool(address), f"DEPLOYER_ADDRESS is `{address}`" if address
+                   else "DEPLOYER_ADDRESS is not set (a GitHub Actions variable; see the key rotation FAQ in docs/UPGRADE.md)"))
     rows, chain = [], None
     for label, value in (("SRA", args.sra), ("SWA", args.swa)):
         if not value and not args.require_addresses:
