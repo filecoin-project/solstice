@@ -1,8 +1,23 @@
+# Why this exists: GitHub does not show workflow_dispatch inputs anywhere on a run, including:
+# 1. run page
+# 2. "Review deployments" dialog an environment approver uses
+# 3. the REST API
+# These are key inputs for a reviewer to see.
+# This shortcoming was confirmed in:
+# - Feature request open since 2023-03, unanswered by GitHub, 230+ upvotes:
+#   https://github.com/orgs/community/discussions/49648 (its workarounds: inputs in run-name, or in the job summary)
+# - The approver's steps list only choosing the environments and an optional comment:
+#   https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/review-deployments
+# - The same workaround for environment approvals, a job summary written before the gated job:
+#   https://nakamasato.medium.com/how-to-review-github-actions-dispatch-workflows-inputs-with-environment-protection-f981428e3514
+# - The REST record of a check-setup dispatch on Calibnet has no input values, only `"display_title": "Upgrade"`:
+#   [example run](https://github.com/filecoin-project/solstice/actions/runs/37023481678)
 name: Pre-gate summary
 description: >-
   Run in a job without an environment that the gated job `needs`, so the reviewer sees this summary on the run page
-  before approving (GitHub shows dispatch inputs nowhere else). Checks the ref and any addresses, and fails before
-  the approval request if one is wrong. Needs a checkout with full history and the setup action for the network.
+  before approving (GitHub shows dispatch inputs nowhere else; see the comment above). Checks the ref and any
+  addresses, and fails before the approval request if one is wrong. Needs a checkout with full history and the
+  setup action for the network.
 inputs:
   title:
     description: What is being approved, e.g. "propose on Calibnet"
