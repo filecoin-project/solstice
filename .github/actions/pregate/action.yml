@@ -34,6 +34,10 @@ inputs:
     description: Whether a missing address fails; if not, it is left out
     required: false
     default: "false"
+  check_setup:
+    description: Whether to also run the check-setup checks (owners on the proxies, DEPLOYER_ADDRESS as proposer, queues)
+    required: false
+    default: "false"
 runs:
   using: composite
   steps:
@@ -43,7 +47,9 @@ runs:
         SRA: ${{ inputs.sra }}
         SWA: ${{ inputs.swa }}
         REQUIRE: ${{ inputs.require_addresses }}
+        CHECK_SETUP: ${{ inputs.check_setup }}
       run: |
         args=(pregate --title "$TITLE" --sra "$SRA" --swa "$SWA")
         if [ "$REQUIRE" = true ]; then args+=(--require-addresses); fi
+        if [ "$CHECK_SETUP" = true ]; then args+=(--check-setup); fi
         uv run --quiet --locked tools/upgrade.py "${args[@]}"

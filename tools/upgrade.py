@@ -13,7 +13,10 @@ Environment:
   ETH_RPC_URL           required; selects the network (chain id 314 or 314159)
   DEPLOYER_PRIVATE_KEY  the operations key: registered once by an owner of each Safe as a proposer
                         (https://help.safe.global/articles/1671337645-proposers) for `propose`; any funded key
-                        for `execute`; its address is shown by `check-setup`
+                        for `execute`
+  DEPLOYER_ADDRESS      the operations key's public address (a GitHub repo variable): `check-setup` and
+                        `pregate --check-setup` report on it without needing the key; when set, every command that
+                        uses DEPLOYER_PRIVATE_KEY first stops if the key's address differs
   DRY_RUN=1             for propose: build and sign the Safe transactions but do not post them
   NETWORK_NAME          for `verify --record-release`: the label written into the release ("Calibnet" or "Mainnet")
 
@@ -24,6 +27,8 @@ transactions always refer to code built from this commit. See docs/UPGRADE.md st
 """
 
 import argparse
+import contextlib
+import io
 import json
 import os
 import re
@@ -94,9 +99,27 @@ def script_logs(stdout):
     return lines
 
 
+def deployer_address():
+    """DEPLOYER_ADDRESS, checksummed, or None when unset."""
+    value = os.environ.get("DEPLOYER_ADDRESS")
+    return to_checksum_address(value) if value else None
+
+
 def key_account(purpose):
+    """The operations key and its account. Stops if DEPLOYER_ADDRESS is set and differs: GitHub never shows a
+    secret, so this is how a run confirms the secret holds the intended key before it signs or sends anything."""
     key = os.environ.get("DEPLOYER_PRIVATE_KEY") or die(f"DEPLOYER_PRIVATE_KEY is required for {purpose}")
-    return key, Account.from_key(key)
+    account = Account.from_key(key)
+    expected = deployer_address()
+    if expected and account.address != expected:
+        die(f"DEPLOYER_PRIVATE_KEY is the key for {account.address}, but DEPLOYER_ADDRESS is {expected}; nothing was "
+            "sent. Set both to the same key (see the key rotation FAQ in docs/UPGRADE.md).")
+    return key, account
+
+
+def operations_address(purpose):
+    """The operations key's address: DEPLOYER_ADDRESS, or else derived from DEPLOYER_PRIVATE_KEY."""
+    return deployer_address() or key_account(purpose)[1].address
 
 
 class Chain:
@@ -255,7 +278,7 @@ def cmd_propose(args):
     todo = tasks(chain, args)
     # The same checks as `check-setup`, before anything is posted, so a missing proposer registration cannot leave
     # the upgrade queued on some Safes and not others.
-    not_owners, not_proposers, ahead_of = check_setup(chain, account, api, {t.target: t.impl for t in todo})
+    not_owners, not_proposers, ahead_of = check_setup(chain, account.address, api, {t.target: t.impl for t in todo})
     if not_owners:
         die(NOT_OWNERS + "; ".join(not_owners))
     if not_proposers and os.environ.get("DRY_RUN") != "1":
@@ -314,15 +337,15 @@ def safe_service(chain):
     return base_url, TransactionServiceApi(EthereumNetwork(chain.chain_id), ethereum_client=chain.client, base_url=base_url)
 
 
-def check_setup(chain, account, api, candidates):
+def check_setup(chain, address, api, candidates):
     """Print what `propose` and `execute` depend on and return the problems as (not owners, not proposers, queued
     ahead), each a list of "<name> <Safe>" strings: for each owner Safe in deployments.json, whether it is an owner on
-    the live proxy, whether the key is registered as its proposer, and what is queued at or above its on-chain nonce
+    the live proxy, whether the operations key's `address` is registered as its proposer, and what is queued at or above its on-chain nonce
     other than the candidate's own upgrade (an upgrade lines up behind those). `candidates` maps a target to an
     implementation address or None; for each given one, also whether the proxy already points at it."""
     print(f"== Operations key on chain {chain.chain_id} ==")
-    print(f"DEPLOYER_PRIVATE_KEY address: {account.address}")
-    print(f"balance: {chain.w3.eth.get_balance(account.address) / 10**18:.4f} FIL")
+    print(f"address: {address}")
+    print(f"balance: {chain.w3.eth.get_balance(address) / 10**18:.4f} FIL")
     not_owners, not_proposers, ahead_of = [], [], []
     for target in TARGETS:
         current = chain.current_impl(target)
@@ -333,7 +356,7 @@ def check_setup(chain, account, api, candidates):
         for n, owner in enumerate(chain.owners(target), 1):
             name = f"{target}Owner{n} {owner}"
             is_owner = chain.owner_bit(target, owner) != 0
-            proposer = any(d["delegate"].lower() == account.address.lower() for d in api.get_delegates(owner))
+            proposer = any(d["delegate"].lower() == address.lower() for d in api.get_delegates(owner))
             on_chain = Safe(owner, chain.client).retrieve_nonce()
             ahead = sorted(int(t["nonce"]) for t in api.get_transactions(owner, executed="false", limit=100)
                            if int(t["nonce"]) >= on_chain
@@ -359,13 +382,12 @@ NOT_OWNERS = "not owners on their proxy (deployments.json is out of date, or an 
 
 
 def cmd_check_setup(args):
-    """Report what `propose` and `execute` depend on, without sending anything (see check_setup). The printed
-    address is the only way to confirm which key a GitHub secret holds. Fails if a deployments.json owner is not an
+    """Report what `propose` and `execute` depend on, without sending anything (see check_setup). Needs only the
+    operations key's address, so it runs without the gated environment. Fails if a deployments.json owner is not an
     owner on its proxy, since proposals would then go to a Safe that cannot approve."""
     chain = Chain()
-    _, account = key_account("check-setup")
     _, api = safe_service(chain)
-    not_owners, _, _ = check_setup(chain, account, api, {t: getattr(args, t) for t in TARGETS})
+    not_owners, _, _ = check_setup(chain, operations_address("check-setup"), api, {t: getattr(args, t) for t in TARGETS})
     if not_owners:
         die(NOT_OWNERS + "; ".join(not_owners))
 
@@ -375,13 +397,18 @@ def release_ref(ref_type, ref_name):
     return (ref_type == "branch" and ref_name == "main") or (ref_type == "tag" and ref_name.startswith("v"))
 
 
-def pregate_report(title, actor, ref_name, ref_type, sha, rows, checks):
+ICONS = {True: "✅", False: "❌", None: "ℹ️"}
+
+
+def pregate_report(title, actor, ref_name, ref_type, sha, rows, checks, details=""):
     """The run-summary section a reviewer reads before approving: what was dispatched, then each check as
-    (passed, text)."""
+    (passed, text), where passed is None for a note that does not fail the run, then `details` (the check-setup output, if any) as a code block."""
     lines = [f"## Approving: {title}", "", "| | |", "|---|---|",
              f"| Dispatched by | `{actor}` |", f"| Ref | `{ref_name}` ({ref_type}) |", f"| Commit | `{sha}` |"]
     lines += [f"| {label} | `{value or '(none)'}` |" for label, value in rows]
-    lines += [""] + [f"- {'✅' if ok else '❌'} {text}" for ok, text in checks]
+    lines += [""] + [f"- {ICONS[ok]} {text}" for ok, text in checks]
+    if details:
+        lines += ["", "```", details.rstrip(), "```"]
     return "\n".join(lines) + "\n"
 
 
@@ -399,7 +426,7 @@ def cmd_pregate(args):
         checks.append((False, f"ref `{ref_name}` ({ref_type}) is neither `main` nor a `v*` tag"))
     on_main = subprocess.run(["git", "merge-base", "--is-ancestor", sha, "origin/main"], cwd=ROOT).returncode == 0
     checks.append((on_main, f"commit `{sha[:12]}` is {'' if on_main else 'not '}on `main`"))
-    rows, chain = [], None
+    rows, chain, candidates = [], None, {}
     for label, value in (("SRA", args.sra), ("SWA", args.swa)):
         if not value and not args.require_addresses:
             continue
@@ -414,13 +441,34 @@ def cmd_pregate(args):
             continue
         chain = chain or Chain()
         has_code = len(chain.w3.eth.get_code(addr)) > 0
+        candidates[label.lower()] = addr
         checks.append((has_code, f"{label} `{addr}` {'has' if has_code else 'has no'} code on chain"))
-    report = pregate_report(args.title, actor, ref_name, ref_type, sha, rows, checks)
+    details = ""
+    if args.check_setup:
+        address = deployer_address()
+        if not address:
+            checks.append((False, "DEPLOYER_ADDRESS is not set (a repo variable; see the key rotation FAQ in docs/UPGRADE.md)"))
+        else:
+            chain = chain or Chain()
+            _, api = safe_service(chain)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                # With the candidates, a rerun does not count the upgrade's own queued proposal as another transaction.
+                not_owners, not_proposers, ahead_of = check_setup(chain, address, api, candidates)
+            details = out.getvalue()
+            checks.append((not not_owners, "every owner Safe in deployments.json is an owner on its proxy"
+                           + (f" (not: {'; '.join(not_owners)})" if not_owners else "")))
+            checks.append((not not_proposers, f"`{address}` is a proposer on every owner Safe"
+                           + (f" (not: {'; '.join(not_proposers)})" if not_proposers else "")))
+            if ahead_of:
+                checks.append((None, "other transactions are queued on " + "; ".join(ahead_of)
+                               + "; their owners must execute or reject them before the upgrade"))
+    report = pregate_report(args.title, actor, ref_name, ref_type, sha, rows, checks, details)
     print(report)
     if env.get("GITHUB_STEP_SUMMARY"):
         with open(env["GITHUB_STEP_SUMMARY"], "a") as f:
             f.write(report)
-    if not all(ok for ok, _ in checks):
+    if any(ok is False for ok, _ in checks):
         die("a pre-gate check failed; not requesting approval")
 
 
@@ -556,6 +604,7 @@ def main(argv):
     g.add_argument("--sra", default="", help="SRA implementation address, checked to have code")
     g.add_argument("--swa", default="", help="SWA implementation address, checked to have code")
     g.add_argument("--require-addresses", action="store_true", help="fail if --sra or --swa is missing")
+    g.add_argument("--check-setup", action="store_true", help="also run the check-setup checks for DEPLOYER_ADDRESS")
     v = sub.add_parser("verify", help="run script/Verify.s.sol against the live chain")
     v.add_argument("--record-release", metavar="TAG", help="append the result to the GitHub release for TAG, which must point at HEAD; promote on mainnet")
 
