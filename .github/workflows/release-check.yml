@@ -21,7 +21,8 @@ jobs:
         run: |
           set -euo pipefail
           TAG=$(jq -r .version version.json)
-          BASE_TAG=$(git show "origin/${GITHUB_BASE_REF}:version.json" | jq -r .version)
+          # No version.json on the base branch means this PR introduces it, so any version is a bump.
+          BASE_TAG=$(git show "origin/${GITHUB_BASE_REF}:version.json" 2>/dev/null | jq -r .version || true)
           if [ "$TAG" = "$BASE_TAG" ]; then
             echo "version.json unchanged ($TAG); nothing will be released"; exit 0
           fi
