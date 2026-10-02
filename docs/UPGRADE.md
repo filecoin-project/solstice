@@ -42,13 +42,24 @@ Dispatch [Upgrade](https://github.com/filecoin-project/solstice/actions/workflow
 
 ### 3. Deploy the implementations
 
+> [!NOTE]
+> This step [requires approval](#what-are-the-responsibilities-of-a-deployment-reviewer).
+
 Dispatch [Deploy Contract](https://github.com/filecoin-project/solstice/actions/workflows/deploy-contract.yml) with target "Implementations only", dry run off, ref the tag. It deploys both implementations from the tag and verifies their source on Sourcify. Both contracts are upgraded every time, even if only one changed: shared code (governance, epoch and gate libraries) means either bytecode can change when the other does, and the verifier rebuilds both from the tag. Take the SRA and SWA implementation addresses from the run summary; every later step needs both.
 
 ### 4. Propose to the owners
 
-Dispatch [Upgrade](https://github.com/filecoin-project/solstice/actions/workflows/upgrade.yml) with operation `propose`, the network, and both implementation addresses. This runs in the network's [environment](https://github.com/filecoin-project/solstice/settings/environments), so it waits for a required reviewer other than the dispatcher: two humans sign off on every proposal. The reviewer's job is to confirm the run's ref is a `v*` tag whose commit is on `main` before approving. GitHub shows dispatch inputs nowhere on a run, so the run's title carries them, and a `pregate` job that finishes before the approval request puts them in the run summary with its checks: the ref is `main` or a `v*` tag, its commit is on `main`, and both addresses have code. If a check fails, that job fails and no approval is requested. The same applies to the Deploy Contract and `execute` runs. The run first makes the same checks as `check-setup` (see [rotating the operations key](#how-do-i-rotate-the-operations-key)) and stops before posting anything if an owner Safe in [`deployments.json`](../deployments.json) is not an owner on its proxy or does not have the operations key as a proposer; if other transactions are queued ahead on a Safe, it says so, since that Safe's owners must execute or reject them before the upgrade. It then runs the full verifier ([`script/Verify.s.sol`](../script/Verify.s.sol)) with the new addresses as candidates: it rebuilds both implementations from the tag and compares the runtime code against the candidates instead of the live implementations, refuses a candidate equal to the current implementation, and still checks the live proxies' code, owners and seeded state. Only then does it queue the upgrade transaction on all four owner Safes through the [Filecoin Safe Transaction Service](https://transaction.safe.filecoin.io/). Rerunning `propose` is safe; it skips Safes where the transaction is already queued and Safes that have already executed it.
+> [!NOTE]
+> This step [requires approval](#what-are-the-responsibilities-of-a-deployment-reviewer).
 
-The proposer then tells each owner group that their Safe has a transaction queued, and each owner group confirms and executes it in the [Safe app](https://safe.filecoin.io); the Submit/Approve table under "How an upgrade works" says what the first and second executions do.
+Dispatch [Upgrade](https://github.com/filecoin-project/solstice/actions/workflows/upgrade.yml) with operation `propose`, the network, and both implementation addresses. The run:
+1. makes the same checks as [`check-setup`](#how-do-i-check-that-everything-is-set-up-correctly) and stops before posting anything if an owner Safe in [`deployments.json`](../deployments.json) is not an owner on its proxy or does not have the operations key as a proposer; if other transactions are queued ahead on a Safe, it says so, since that Safe's owners must execute or reject them before the upgrade. 
+2. runs the full verifier ([`script/Verify.s.sol`](../script/Verify.s.sol)) with the new addresses as candidates: it rebuilds both implementations from the tag and compares the runtime code against the candidates instead of the live implementations, refuses a candidate equal to the current implementation, and still checks the live proxies' code, owners and seeded state. 
+3. queues the upgrade transaction on all four owner Safes through the [Filecoin Safe Transaction Service](https://transaction.safe.filecoin.io/). 
+
+Rerunning `propose` is idempotent; it skips Safes where the transaction is already queued and Safes that have already executed it.
+
+The proposer then needs to manually tell each owner group (e.g., over Slack) that their Safe has a transaction queued, and each owner group confirms and executes it in the [Safe app](https://safe.filecoin.io). (See the Submit and Approve rows in ["How an upgrade works"](#how-an-upgrade-works) for what the first and second executions do.)
 
 > [!NOTE]
 > If there is an issue with [Safe's proposer functionality](https://help.safe.global/articles/1671337645-proposers), the same run summary prints each proxy address and calldata; the owners can enter those in the Safe app's transaction builder instead. It is the same transaction.
@@ -58,6 +69,9 @@ The proposer then tells each owner group that their Safe has a transaction queue
 Dispatch [Upgrade](https://github.com/filecoin-project/solstice/actions/workflows/upgrade.yml) with operation `status` and both implementation addresses. The summary shows, for SRA and SWA, how many owners have approved and the epoch the hold ends. There is no need to poll: run it once after each owner group reports that it has executed, to confirm the approval landed and (after the second) to read the epoch the hold ends, and once more before step 6. If something is wrong, either owner cancels with the veto calldata printed in the same summary. `status` reports whatever task the given addresses name, so running it with the previous implementation addresses shows a prepared rollback.
 
 ### 6. Execute
+
+> [!NOTE]
+> This step [requires approval](#what-are-the-responsibilities-of-a-deployment-reviewer).
 
 After the holds, dispatch [Upgrade](https://github.com/filecoin-project/solstice/actions/workflows/upgrade.yml) with operation `execute` and both implementation addresses. Anyone may execute, but running it through the workflow keeps the record in one place. The two holds end at different epochs because each contract has its own owner Safes; the run sends nothing until both are executable, and fails if either transaction reverts or a proxy's implementation slot does not change. If it stops after the first contract for any reason, rerun it: a contract whose proxy already points at the new implementation is skipped, so only the remaining one is sent.
 
@@ -77,12 +91,34 @@ Repeat steps 2 to 7 on mainnet.
 
 ## FAQ
 
+### How do I check that everything is set up correctly?
+
+Dispatch the [Upgrade](https://github.com/filecoin-project/solstice/actions/workflows/upgrade.yml) workflow with operation `check-setup` on each network from `main` or a `v*` tag since the environments accept no other ref. It sends nothing. It prints the key's public address and balance, which is the only way to confirm the secret holds the intended key, since GitHub never shows a secret. For each owner Safe in [`deployments.json`](../deployments.json), it also prints whether that Safe is an owner on the proxy, whether the operations key is its proposer, and what is queued at or above its nonce. It fails if an owner in [`deployments.json`](../deployments.json) is not an owner on its proxy.
+
+> [!NOTE]
+> This check [requires approval](#what-are-the-responsibilities-of-a-deployment-reviewer) since it accesses the operations key. (Given this is a read-only operation, it would be ideal if a reviewer wasn't required, but given we don't expect this workflow to be called much, additional environments with different approval settings were not configured.)
+
+### What are the responsibilities of a deployment reviewer?
+
+These workflows access the "operations key" (stored as `DEPLOYER_PRIVATE_KEY` secret on GitHub) on Calibration and Mainnet through a [GitHub environment](https://github.com/filecoin-project/solstice/settings/environments):
+* [Deploy the implementations](#3-deploy-the-implementations)
+* [Propose](#4-propose-to-the-owners)
+* [Execute](#6-execute)
+* [Check setup](#how-do-i-check-that-everything-is-set-up-correctly)
+
+They require a second person approval. By default, GitHub shows dispatch inputs nowhere on a run, so our workflow run's title carries them, and we have a `pregate` job that finishes before the approval request which puts them in the run summary with its checks. This includes whether:
+1. the ref is `main` or a `v*` tag
+2. its commit is on `main`
+3. any implementation addresses given have code on chain.
+
+If a check fails, that job fails and no approval is requested. So the approver's job is not those checks but what a machine cannot know: open the run summary and confirm that the network, operation and tag are the ones in the [tracking issue](#0-open-a-tracking-issue), and that the implementation addresses are the ones in the [deploy step](#3-deploy-the-implementations)'s run summary.
+
 ### What if GitHub is down during an upgrade?
 
 The [Upgrade workflow](https://github.com/filecoin-project/solstice/actions/workflows/upgrade.yml) is a thin wrapper around [`tools/upgrade.py`](../tools/upgrade.py), so every operation can be run from a checkout of the version tag instead. It needs [Foundry](https://getfoundry.sh) and [uv](https://docs.astral.sh/uv/) (the versions CI uses are in [`.github/actions/setup/action.yml`](../.github/actions/setup/action.yml)), the submodules, and an RPC for the network:
 
 ```sh
-TAG=v1.2.3
+TAG=v1.2.3 # <-- set to proper version
 git checkout "$TAG" && git submodule update --init --recursive
 export ETH_RPC_URL=https://api.calibration.node.glif.io/rpc/v1   # mainnet: https://api.node.glif.io/rpc/v1
 uv run --locked tools/upgrade.py status --sra 0x... --swa 0x...
@@ -101,14 +137,14 @@ These operations are affected by not having the GitHub secret:
 - `propose` only works with a key registered as a proposer on all four owner Safes, and refuses before posting anything otherwise. Without one, run `status` with both implementation addresses instead (it needs no key): it prints each proxy address and the calldata, which the owners enter in the Safe app's transaction builder (see the note under [step 4](#4-propose-to-the-owners)).
 - `execute`: anyone may execute once the holds have passed, so `DEPLOYER_PRIVATE_KEY=0x<any funded key> uv run --locked tools/upgrade.py execute --sra 0x... --swa 0x...` works.
 
-### How do I rotate the operations key?
+### How do I rotate the operations key stored in `DEPLOYER_PRIVATE_KEY`?
 
 1. Fund the new key on both networks.
 2. Replace the `DEPLOYER_PRIVATE_KEY` secret on the [`calibnet`](https://github.com/filecoin-project/solstice/settings/environments/22478295461/edit) and [`mainnet`](https://github.com/filecoin-project/solstice/settings/environments/22478417501/edit) environments.
 3. Have an owner of each of the four owner Safes, on each network, add the new address as a [proposer](https://help.safe.global/articles/1671337645-proposers) in the Safe app and remove the old one.
-4. Dispatch the [Upgrade](https://github.com/filecoin-project/solstice/actions/workflows/upgrade.yml) workflow with operation `check-setup` on each network, from `main` or a `v*` tag (the environments accept no other ref). It sends nothing. It prints the secret's address and balance, which is the only way to confirm the secret holds the intended key, since GitHub never shows a secret. For each owner Safe it also prints whether that Safe is an owner on the proxy, whether the key is its proposer, and what is queued at or above its nonce. It fails if an owner in [`deployments.json`](../deployments.json) is not an owner on its proxy.
+4. [Check the setup](#how-do-i-check-that-everything-is-set-up-correctly) on each network: it should print the new address.
 
-### Why doesn't this live in the governance repo?
+### Why doesn't this runbook live in the governance repo?
 
 Upgrades are expected to be driven by engineers at the request of the community, through the FIP process and the [governance repo](https://github.com/filecoin-project/solstice-governance). The governance repo says what should change and why, and this runbook says how an engineer carries it out. Keeping the runbook next to the contracts, the scripts and the workflows it names means a change to any of them is reviewed together with the runbook that depends on it, so the two cannot drift apart.
 
