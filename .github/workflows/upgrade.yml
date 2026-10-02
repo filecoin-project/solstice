@@ -1,4 +1,6 @@
 name: Upgrade
+# GitHub does not show dispatch inputs on a run, so reviewers approving the environment cannot see them; put them in the title.
+run-name: "${{ inputs.operation }} on ${{ inputs.network }} at ${{ github.ref_name }}${{ inputs.sra_implementation && format(' (SRA {0}, SWA {1})', inputs.sra_implementation, inputs.swa_implementation) || '' }} by ${{ github.actor }}"
 
 # One step of an SRA/SWA implementation upgrade, dispatched with the release tag as the ref so the record lives
 # in a run. Each job is a thin wrapper around tools/upgrade.py; docs/UPGRADE.md has the sequence.
@@ -100,8 +102,29 @@ jobs:
           title: "verify on ${{ inputs.network }} (${{ github.sha }})"
           log: ${{ runner.temp }}/out.txt
 
+  # Shows the reviewer what they are approving and checks it, before `signed` asks for approval.
+  pregate:
+    if: ${{ inputs.operation == 'propose' || inputs.operation == 'execute' || inputs.operation == 'check-setup' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+        with:
+          network: ${{ inputs.network }}
+      - uses: ./.github/actions/pregate
+        with:
+          title: ${{ inputs.operation }} on ${{ inputs.network }}
+          addresses: |
+            SRA ${{ inputs.sra_implementation }}
+            SWA ${{ inputs.swa_implementation }}
+          # check-setup takes the addresses optionally.
+          addresses_required: ${{ inputs.operation != 'check-setup' }}
+
   signed:
     if: ${{ inputs.operation == 'propose' || inputs.operation == 'execute' || inputs.operation == 'check-setup' }}
+    needs: pregate
     runs-on: ubuntu-latest
     environment: ${{ inputs.network == 'Mainnet' && 'mainnet' || 'calibnet' }}
     steps:

@@ -1,4 +1,6 @@
 name: Deploy Contract
+# GitHub does not show dispatch inputs on a run, so reviewers approving the environment cannot see them; put them in the title.
+run-name: "${{ inputs.target }} on ${{ inputs.network }} at ${{ github.ref_name }}${{ inputs.dry_run && ' (dry run)' || '' }} by ${{ github.actor }}"
 
 on:
   workflow_dispatch:
@@ -32,11 +34,28 @@ concurrency:
 
 # Live runs use the `calibnet` or `mainnet` environment, which must define the secret
 #   DEPLOYER_PRIVATE_KEY - raw private key of the deployer wallet for that network
-# Add required reviewers to the `mainnet` environment to gate mainnet deployments.
+# Both environments have required reviewers; the `pregate` job shows them what they are approving.
 # Dry runs use no environment and no secrets.
 
 jobs:
+  # Shows the reviewer what they are approving and checks it, before `deploy` asks for approval. Dry runs skip it.
+  pregate:
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+        with:
+          network: ${{ inputs.network }}
+      - uses: ./.github/actions/pregate
+        with:
+          title: ${{ inputs.target }} on ${{ inputs.network }}
+
   deploy:
+    needs: pregate
+    if: ${{ !cancelled() && (inputs.dry_run || needs.pregate.result == 'success') }}
     runs-on: ubuntu-latest
     environment: ${{ !inputs.dry_run && (inputs.network == 'Mainnet' && 'mainnet' || 'calibnet') || '' }}
 
@@ -115,7 +134,7 @@ jobs:
 
       - name: Upload broadcast records
         if: ${{ always() && !inputs.dry_run }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: broadcast-${{ inputs.network }}-${{ github.run_id }}
           path: broadcast/

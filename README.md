@@ -13,3 +13,6 @@ Supporting contracts and tools for https://github.com/filecoin-project/FIPs/disc
 * [`script/Rehearse.s.sol`](script/Rehearse.s.sol): full upgrade of both contracts in a local fork (impersonated owners, hold, execute).
 * [Deploy Contract workflow](.github/workflows/deploy-contract.yml) (see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)).
 * [`script/Verify.s.sol`](script/Verify.s.sol): read-only check that the live proxies and implementations match the checked-out source and [`deployments.json`](deployments.json); with candidate addresses given, checks those before they are proposed. [`script/UpgradeBase.sol`](script/UpgradeBase.sol) holds what the two scripts share.
+
+## Workflows
+[`tools/lint_workflows.py`](tools/lint_workflows.py), run with `uv run --locked tools/lint_workflows.py`: lints `.github/workflows` with [actionlint](https://github.com/rhysd/actionlint), which also runs shellcheck on every `run:` script. The [Linter workflow](.github/workflows/lint.yml) runs the same command on every PR.
