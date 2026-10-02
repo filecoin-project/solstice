@@ -45,7 +45,7 @@ Dispatch [Upgrade](https://github.com/filecoin-project/solstice/actions/workflow
 > [!NOTE]
 > This step [requires approval](#what-are-the-responsibilities-of-a-deployment-reviewer).
 
-Dispatch [Deploy Contract](https://github.com/filecoin-project/solstice/actions/workflows/deploy-contract.yml) with target "Implementations only", dry run off, ref the tag. It deploys both implementations from the tag and verifies their source on Sourcify. Both contracts are upgraded every time, even if only one changed: shared code (governance, epoch and gate libraries) means either bytecode can change when the other does, and the verifier rebuilds both from the tag. Take the SRA and SWA implementation addresses from the run summary; every later step needs both.
+Dispatch [Deploy Contract](https://github.com/filecoin-project/solstice/actions/workflows/deploy-contract.yml) with target "Implementations only", dry run off, ref the tag. It deploys both implementations from the tag and verifies their source on Sourcify. Take the SRA and SWA implementation addresses from the run summary; every later step needs both.
 
 ### 4. Propose to the owners
 
@@ -95,7 +95,7 @@ Repeat steps 2 to 7 on mainnet.
 
 Dispatch the [Upgrade](https://github.com/filecoin-project/solstice/actions/workflows/upgrade.yml) workflow with operation `check-setup` on the network. It sends nothing and needs no approval: it uses the operations key's public address from the [GitHub Actions variable `DEPLOYER_ADDRESS`](https://github.com/filecoin-project/solstice/settings/variables/actions/DEPLOYER_ADDRESS), not the secret. It prints that address and its balance, and for each owner Safe in [`deployments.json`](../deployments.json) whether that Safe is an owner on the proxy, whether the address is its proposer, and what is queued at or above its nonce. It fails if an owner in [`deployments.json`](../deployments.json) is not an owner on its proxy or does not have the address as a proposer, the two things `propose` refuses on.
 
-You rarely need to run it by hand: the pre-gate job runs the same checks before the deploy and `propose` approval requests (see [what a reviewer does](#what-are-the-responsibilities-of-a-deployment-reviewer)). Whether the secret holds the key for `DEPLOYER_ADDRESS` (GitHub never shows a secret) is checked by every run that uses the key, before it sends anything.
+You rarely need to run it by hand: the [pre-gate job](#what-are-the-responsibilities-of-a-deployment-reviewer) runs it before the deploy and `propose` approval requests. Whether the secret holds the key for `DEPLOYER_ADDRESS` (GitHub never shows a secret) is checked by every run that uses the key, before it sends anything.
 
 ### What are the responsibilities of a deployment reviewer?
 
@@ -125,8 +125,8 @@ uv run --locked tools/upgrade.py status --sra 0x... --swa 0x...
 
 - `rehearse`, `status` and `verify` need no key.
 - `verify --record-release "$TAG"` also needs the `gh` CLI, so leave it off and record the result by hand.
-- `propose` and `execute` need `DEPLOYER_PRIVATE_KEY` set. If `DEPLOYER_ADDRESS` is also set, they stop when the key's address differs, so leave it unset when running `execute` with some other funded key.
-- `check-setup` needs `DEPLOYER_ADDRESS` (or else `DEPLOYER_PRIVATE_KEY`, whose address it uses).
+- `propose` and `execute` need `DEPLOYER_PRIVATE_KEY` set. If you also export `DEPLOYER_ADDRESS`, they stop when the key's address differs.
+- `check-setup` needs `DEPLOYER_ADDRESS`, or else uses the address of `DEPLOYER_PRIVATE_KEY`.
 - `propose`, `execute` and deploying the implementations change on-chain state. In GitHub, the [environment](https://github.com/filecoin-project/solstice/settings/environments) makes a second person approve them; a local run has no such gate, so have a second person check each invocation.
 
 ### Working around not having the GitHub secret for `DEPLOYER_PRIVATE_KEY`
