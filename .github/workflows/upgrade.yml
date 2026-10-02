@@ -45,12 +45,14 @@ env:
   OPERATION: ${{ inputs.operation }}
   SRA: ${{ inputs.sra_implementation }}
   SWA: ${{ inputs.swa_implementation }}
-  NETWORK_NAME: ${{ inputs.network }}
+  # The operations key's public address, a GitHub Actions variable (repo level) so ungated jobs can read it: check-setup reports on it,
+  # and every job that uses DEPLOYER_PRIVATE_KEY stops if the key does not match it.
+  DEPLOYER_ADDRESS: ${{ vars.DEPLOYER_ADDRESS }}
   RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
 jobs:
   readonly:
-    if: ${{ inputs.operation == 'rehearse' || inputs.operation == 'status' }}
+    if: ${{ inputs.operation == 'rehearse' || inputs.operation == 'status' || inputs.operation == 'check-setup' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -104,7 +106,7 @@ jobs:
 
   # Shows the reviewer what they are approving and checks it, before `signed` asks for approval.
   pregate:
-    if: ${{ inputs.operation == 'propose' || inputs.operation == 'execute' || inputs.operation == 'check-setup' }}
+    if: ${{ inputs.operation == 'propose' || inputs.operation == 'execute' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -118,11 +120,12 @@ jobs:
           title: ${{ inputs.operation }} on ${{ inputs.network }}
           sra: ${{ inputs.sra_implementation }}
           swa: ${{ inputs.swa_implementation }}
-          # check-setup takes the addresses optionally.
-          require_addresses: ${{ inputs.operation != 'check-setup' }}
+          require_addresses: true
+          # Owners and proposer registration matter to propose, not to execute (the owners have already approved).
+          check_setup: ${{ inputs.operation == 'propose' }}
 
   signed:
-    if: ${{ inputs.operation == 'propose' || inputs.operation == 'execute' || inputs.operation == 'check-setup' }}
+    if: ${{ inputs.operation == 'propose' || inputs.operation == 'execute' }}
     needs: pregate
     runs-on: ubuntu-latest
     environment: ${{ inputs.network == 'Mainnet' && 'mainnet' || 'calibnet' }}

@@ -34,8 +34,12 @@ concurrency:
 
 # Live runs use the `calibnet` or `mainnet` environment, which must define the secret
 #   DEPLOYER_PRIVATE_KEY - raw private key of the deployer wallet for that network
+# and the GitHub Actions variable DEPLOYER_ADDRESS must hold that key's public address; a live run stops if they differ.
 # Both environments have required reviewers; the `pregate` job shows them what they are approving.
 # Dry runs use no environment and no secrets.
+
+env:
+  DEPLOYER_ADDRESS: ${{ vars.DEPLOYER_ADDRESS }}
 
 jobs:
   # Shows the reviewer what they are approving and checks it, before `deploy` asks for approval. Dry runs skip it.
@@ -52,6 +56,9 @@ jobs:
       - uses: ./.github/actions/pregate
         with:
           title: ${{ inputs.target }} on ${{ inputs.network }}
+          # The implementations have the deployments.json owners built in, so check them before deploying. Not for a
+          # full deployment, whose proxies do not exist yet.
+          check_setup: ${{ inputs.target == 'Implementations only' }}
 
   deploy:
     needs: pregate
@@ -105,6 +112,12 @@ jobs:
         env:
           DEPLOYER_PRIVATE_KEY: ${{ secrets.DEPLOYER_PRIVATE_KEY }}
         run: |
+          # GitHub never shows a secret, so confirm it holds the intended key before anything is sent.
+          actual=$(cast wallet address --private-key "$DEPLOYER_PRIVATE_KEY")
+          if [ "${actual,,}" != "${DEPLOYER_ADDRESS,,}" ]; then
+            echo "DEPLOYER_PRIVATE_KEY is the key for $actual, but DEPLOYER_ADDRESS is '$DEPLOYER_ADDRESS'; nothing was sent" >&2
+            exit 1
+          fi
           umask 077
           mkdir "$RUNNER_TEMP/keystore"
           cast wallet import deployer \

@@ -1,5 +1,5 @@
 """Unit tests for the pure parts of tools/upgrade.py (calldata, task id, Safe nonce and duplicate handling,
-forge log extraction, the pre-gate ref rule and summary).
+forge log extraction, the pre-gate ref rule and summary, the operations key's address check).
 
 They need the tool's dependencies, so run them through uv from the tools directory, against the tool's lock:
 
@@ -7,12 +7,16 @@ They need the tool's dependencies, so run them through uv from the tools directo
         && uv run --with-requirements /tmp/req.txt python -m unittest -q test_upgrade
 """
 
+import os
 import unittest
+from unittest import mock
 
 from eth_utils import keccak
 
-from upgrade import (VETO_SELECTOR, already_queued, approval_set, at_block, epochs_to_text, next_nonce, pregate_report,
-                     release_ref, script_logs, upgrade_calldata)
+from eth_account import Account
+
+from upgrade import (VETO_SELECTOR, already_queued, approval_set, at_block, epochs_to_text, key_account, next_nonce,
+                     operations_address, pregate_report, release_ref, script_logs, upgrade_calldata)
 
 
 class Calldata(unittest.TestCase):
@@ -159,6 +163,30 @@ class PregateReport(unittest.TestCase):
         self.assertIn("- ❌ SWA address is missing", report)
         # The checks follow the table after a blank line, or markdown renders them as table rows.
         self.assertIn("|\n\n- ✅", report)
+
+
+
+KEY = "0x" + "11" * 32
+KEY_ADDRESS = Account.from_key(KEY).address
+
+
+class DeployerAddress(unittest.TestCase):
+    def test_key_matches(self):
+        with mock.patch.dict(os.environ, {"DEPLOYER_PRIVATE_KEY": KEY, "DEPLOYER_ADDRESS": KEY_ADDRESS.lower()}):
+            self.assertEqual(key_account("test")[1].address, KEY_ADDRESS)
+
+    def test_key_differs(self):
+        with mock.patch.dict(os.environ, {"DEPLOYER_PRIVATE_KEY": KEY, "DEPLOYER_ADDRESS": "0x" + "22" * 20}):
+            with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
+                key_account("test")
+
+    def test_no_address_set(self):
+        with mock.patch.dict(os.environ, {"DEPLOYER_PRIVATE_KEY": KEY}, clear=True):
+            self.assertEqual(key_account("test")[1].address, KEY_ADDRESS)
+
+    def test_operations_address_needs_no_key(self):
+        with mock.patch.dict(os.environ, {"DEPLOYER_ADDRESS": KEY_ADDRESS.lower()}, clear=True):
+            self.assertEqual(operations_address("test"), KEY_ADDRESS)
 
 
 if __name__ == "__main__":

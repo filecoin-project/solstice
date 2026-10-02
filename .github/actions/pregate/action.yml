@@ -16,8 +16,8 @@ name: Pre-gate summary
 description: >-
   Run in a job without an environment that the gated job `needs`, so the reviewer sees this summary on the run page
   before approving (GitHub shows dispatch inputs nowhere else; see the comment above). A thin wrapper around
-  `tools/upgrade.py pregate`, which checks the ref and any addresses and fails before the approval request if one is
-  wrong. Needs a checkout with full history and the setup action for the network.
+  `tools/upgrade.py pregate`, which checks the ref and any addresses, and optionally `tools/upgrade.py check-setup`;
+  either fails the job before the approval request. Needs a checkout with full history and the setup action for the network.
 inputs:
   title:
     description: What is being approved, e.g. "propose on Calibnet"
@@ -34,6 +34,13 @@ inputs:
     description: Whether a missing address fails; if not, it is left out
     required: false
     default: "false"
+  check_setup:
+    description: >-
+      Whether to also run `tools/upgrade.py check-setup` (owners on the proxies, DEPLOYER_ADDRESS as proposer). Not for
+      execute, which needs neither (the owners have already approved) and should not be blocked by, say, an owner
+      replaced during the hold; not for a full deployment, whose proxies do not exist yet.
+    required: false
+    default: "false"
 runs:
   using: composite
   steps:
@@ -47,3 +54,15 @@ runs:
         args=(pregate --title "$TITLE" --sra "$SRA" --swa "$SWA")
         if [ "$REQUIRE" = true ]; then args+=(--require-addresses); fi
         uv run --quiet --locked tools/upgrade.py "${args[@]}"
+    # Runs even if a check above failed, to show the whole picture; its output goes in the summary.
+    - if: ${{ always() && inputs.check_setup == 'true' }}
+      shell: bash
+      env:
+        SRA: ${{ inputs.sra }}
+        SWA: ${{ inputs.swa }}
+      run: |
+        status=0
+        uv run --quiet --locked tools/upgrade.py check-setup --sra "$SRA" --swa "$SWA" > "$RUNNER_TEMP/check-setup.txt" 2>&1 || status=$?
+        cat "$RUNNER_TEMP/check-setup.txt"
+        { echo "## check-setup"; echo '```'; grep -v '^\s*$' "$RUNNER_TEMP/check-setup.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+        exit "$status"
