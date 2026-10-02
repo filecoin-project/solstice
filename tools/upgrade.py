@@ -370,6 +370,60 @@ def cmd_check_setup(args):
         die(NOT_OWNERS + "; ".join(not_owners))
 
 
+def release_ref(ref_type, ref_name):
+    """Whether a dispatch ref is one the gated environments accept: the `main` branch or a `v*` tag."""
+    return (ref_type == "branch" and ref_name == "main") or (ref_type == "tag" and ref_name.startswith("v"))
+
+
+def pregate_report(title, actor, ref_name, ref_type, sha, rows, checks):
+    """The run-summary section a reviewer reads before approving: what was dispatched, then each check as
+    (passed, text)."""
+    lines = [f"## Approving: {title}", "", "| | |", "|---|---|",
+             f"| Dispatched by | `{actor}` |", f"| Ref | `{ref_name}` ({ref_type}) |", f"| Commit | `{sha}` |"]
+    lines += [f"| {label} | `{value or '(none)'}` |" for label, value in rows]
+    lines += [""] + [f"- {'✅' if ok else '❌'} {text}" for ok, text in checks]
+    return "\n".join(lines) + "\n"
+
+
+def cmd_pregate(args):
+    """Before a job that waits for environment approval: summarize what is being approved (GitHub shows dispatch
+    inputs nowhere on a run) and check the ref and addresses, failing before the approval request if one is wrong.
+    Reads the dispatch from GitHub's GITHUB_* variables; appends to GITHUB_STEP_SUMMARY when set."""
+    env = os.environ
+    actor, ref_name, ref_type = env.get("GITHUB_ACTOR", ""), env.get("GITHUB_REF_NAME", ""), env.get("GITHUB_REF_TYPE", "")
+    sha = env.get("GITHUB_SHA") or sh("git", "rev-parse", "HEAD")
+    checks = []
+    if release_ref(ref_type, ref_name):
+        checks.append((True, f"ref `{ref_name}` is `main` or a `v*` tag"))
+    else:
+        checks.append((False, f"ref `{ref_name}` ({ref_type}) is neither `main` nor a `v*` tag"))
+    on_main = subprocess.run(["git", "merge-base", "--is-ancestor", sha, "origin/main"], cwd=ROOT).returncode == 0
+    checks.append((on_main, f"commit `{sha[:12]}` is {'' if on_main else 'not '}on `main`"))
+    rows, chain = [], None
+    for label, value in (("SRA", args.sra), ("SWA", args.swa)):
+        if not value and not args.require_addresses:
+            continue
+        rows.append((label, value))
+        if not value:
+            checks.append((False, f"{label} address is missing"))
+            continue
+        try:
+            addr = to_checksum_address(value)
+        except Exception:
+            checks.append((False, f"{label} `{value}` is not an address"))
+            continue
+        chain = chain or Chain()
+        has_code = len(chain.w3.eth.get_code(addr)) > 0
+        checks.append((has_code, f"{label} `{addr}` {'has' if has_code else 'has no'} code on chain"))
+    report = pregate_report(args.title, actor, ref_name, ref_type, sha, rows, checks)
+    print(report)
+    if env.get("GITHUB_STEP_SUMMARY"):
+        with open(env["GITHUB_STEP_SUMMARY"], "a") as f:
+            f.write(report)
+    if not all(ok for ok, _ in checks):
+        die("a pre-gate check failed; not requesting approval")
+
+
 def cmd_execute(args):
     chain = Chain()
     key, account = key_account("execute")
@@ -496,12 +550,18 @@ def main(argv):
     c = sub.add_parser("check-setup", help="report the operations key, owners, proposer registration and Safe queues (sends nothing)")
     c.add_argument("--sra", type=optional_address, help="also show this SRA candidate's task status")
     c.add_argument("--swa", type=optional_address, help="also show this SWA candidate's task status")
+    g = sub.add_parser("pregate", help="summarize and check a dispatch before its environment approval (sends nothing; see cmd_pregate)")
+    g.add_argument("--title", required=True, help='what is being approved, e.g. "propose on Calibnet"')
+    # Raw strings, not `address`, so a malformed address is reported in the summary rather than by argparse.
+    g.add_argument("--sra", default="", help="SRA implementation address, checked to have code")
+    g.add_argument("--swa", default="", help="SWA implementation address, checked to have code")
+    g.add_argument("--require-addresses", action="store_true", help="fail if --sra or --swa is missing")
     v = sub.add_parser("verify", help="run script/Verify.s.sol against the live chain")
     v.add_argument("--record-release", metavar="TAG", help="append the result to the GitHub release for TAG, which must point at HEAD; promote on mainnet")
 
     args = p.parse_args(argv)
     {"rehearse": cmd_rehearse, "propose": cmd_propose, "status": cmd_status, "execute": cmd_execute, "verify": cmd_verify,
-     "check-setup": cmd_check_setup}[args.operation](args)
+     "check-setup": cmd_check_setup, "pregate": cmd_pregate}[args.operation](args)
     return 0
 
 

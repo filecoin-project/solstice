@@ -15,76 +15,35 @@
 name: Pre-gate summary
 description: >-
   Run in a job without an environment that the gated job `needs`, so the reviewer sees this summary on the run page
-  before approving (GitHub shows dispatch inputs nowhere else; see the comment above). Checks the ref and any
-  addresses, and fails before the approval request if one is wrong. Needs a checkout with full history and the
-  setup action for the network.
+  before approving (GitHub shows dispatch inputs nowhere else; see the comment above). A thin wrapper around
+  `tools/upgrade.py pregate`, which checks the ref and any addresses and fails before the approval request if one is
+  wrong. Needs a checkout with full history and the setup action for the network.
 inputs:
   title:
     description: What is being approved, e.g. "propose on Calibnet"
     required: true
-  addresses:
-    description: One "LABEL 0xADDRESS" per line, each checked to have code on chain
+  sra:
+    description: SRA implementation address, checked to have code on chain
     required: false
     default: ""
-  addresses_required:
-    description: Whether a line with no address fails; if not, it is left out
+  swa:
+    description: SWA implementation address, checked to have code on chain
     required: false
-    default: "true"
+    default: ""
+  require_addresses:
+    description: Whether a missing address fails; if not, it is left out
+    required: false
+    default: "false"
 runs:
   using: composite
   steps:
     - shell: bash
       env:
         TITLE: ${{ inputs.title }}
-        ADDRESSES: ${{ inputs.addresses }}
-        ADDRESSES_REQUIRED: ${{ inputs.addresses_required }}
-        ACTOR: ${{ github.actor }}
-        REF_NAME: ${{ github.ref_name }}
-        REF_TYPE: ${{ github.ref_type }}
-        SHA: ${{ github.sha }}
+        SRA: ${{ inputs.sra }}
+        SWA: ${{ inputs.swa }}
+        REQUIRE: ${{ inputs.require_addresses }}
       run: |
-        set -uo pipefail
-        failed=0
-        checks=""
-        pass() { checks+="- ✅ $1"$'\n'; }
-        fail() { checks+="- ❌ $1"$'\n'; failed=1; }
-
-        if { [ "$REF_TYPE" = tag ] && [[ "$REF_NAME" == v* ]]; } || { [ "$REF_TYPE" = branch ] && [ "$REF_NAME" = main ]; }; then
-          pass "ref \`$REF_NAME\` is \`main\` or a \`v*\` tag"
-        else
-          fail "ref \`$REF_NAME\` ($REF_TYPE) is neither \`main\` nor a \`v*\` tag"
-        fi
-        if git merge-base --is-ancestor "$SHA" origin/main; then
-          pass "commit \`${SHA:0:12}\` is on \`main\`"
-        else
-          fail "commit \`${SHA:0:12}\` is not on \`main\`"
-        fi
-
-        rows=""
-        while read -r label addr; do
-          [ -n "$label" ] || continue
-          [ -n "$addr" ] || [ "$ADDRESSES_REQUIRED" = true ] || continue
-          rows+="| $label | \`${addr:-(none)}\` |"$'\n'
-          if [ -z "$addr" ]; then
-            fail "$label address is missing"
-          elif code=$(cast code "$addr" --rpc-url "$ETH_RPC_URL") && [ "$code" != 0x ]; then
-            pass "$label \`$addr\` has code on chain"
-          else
-            fail "$label \`$addr\` has no code on chain"
-          fi
-        done <<< "$ADDRESSES"
-
-        {
-          echo "## Approving: $TITLE"
-          echo
-          echo "| | |"
-          echo "|---|---|"
-          echo "| Dispatched by | \`$ACTOR\` |"
-          echo "| Ref | \`$REF_NAME\` ($REF_TYPE) |"
-          echo "| Commit | \`$SHA\` |"
-          printf '%s' "$rows"
-          echo
-          printf '%s' "$checks"
-        } >> "$GITHUB_STEP_SUMMARY"
-        printf '%s' "$checks"
-        exit "$failed"
+        args=(pregate --title "$TITLE" --sra "$SRA" --swa "$SWA")
+        if [ "$REQUIRE" = true ]; then args+=(--require-addresses); fi
+        uv run --quiet --locked tools/upgrade.py "${args[@]}"

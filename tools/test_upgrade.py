@@ -1,5 +1,5 @@
 """Unit tests for the pure parts of tools/upgrade.py (calldata, task id, Safe nonce and duplicate handling,
-forge log extraction).
+forge log extraction, the pre-gate ref rule and summary).
 
 They need the tool's dependencies, so run them through uv from the tools directory, against the tool's lock:
 
@@ -11,7 +11,8 @@ import unittest
 
 from eth_utils import keccak
 
-from upgrade import VETO_SELECTOR, already_queued, approval_set, at_block, epochs_to_text, next_nonce, script_logs, upgrade_calldata
+from upgrade import (VETO_SELECTOR, already_queued, approval_set, at_block, epochs_to_text, next_nonce, pregate_report,
+                     release_ref, script_logs, upgrade_calldata)
 
 
 class Calldata(unittest.TestCase):
@@ -130,6 +131,34 @@ class ScriptLogs(unittest.TestCase):
 
     def test_no_logs(self):
         self.assertEqual(script_logs("Script ran successfully.\n"), [])
+
+
+
+class ReleaseRef(unittest.TestCase):
+    def test_accepted(self):
+        self.assertTrue(release_ref("branch", "main"))
+        self.assertTrue(release_ref("tag", "v1.0.1"))
+
+    def test_rejected(self):
+        self.assertFalse(release_ref("branch", "some-feature-branch"))
+        self.assertFalse(release_ref("tag", "release-1"))
+        # The tag/branch distinction matters: a branch named like a version is not a release ref.
+        self.assertFalse(release_ref("branch", "v1.0.1"))
+        self.assertFalse(release_ref("tag", "main"))
+
+
+class PregateReport(unittest.TestCase):
+    def test_rows_and_checks(self):
+        report = pregate_report("propose on Calibnet", "octocat", "v1.0.1", "tag", "c6b5f3e6", [("SRA", "0xabc"), ("SWA", "")],
+                                [(True, "ref ok"), (False, "SWA address is missing")])
+        self.assertIn("## Approving: propose on Calibnet\n", report)
+        self.assertIn("| Ref | `v1.0.1` (tag) |", report)
+        self.assertIn("| SRA | `0xabc` |", report)
+        self.assertIn("| SWA | `(none)` |", report)
+        self.assertIn("- ✅ ref ok", report)
+        self.assertIn("- ❌ SWA address is missing", report)
+        # The checks follow the table after a blank line, or markdown renders them as table rows.
+        self.assertIn("|\n\n- ✅", report)
 
 
 if __name__ == "__main__":

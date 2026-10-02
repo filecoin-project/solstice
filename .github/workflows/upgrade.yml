@@ -116,11 +116,10 @@ jobs:
       - uses: ./.github/actions/pregate
         with:
           title: ${{ inputs.operation }} on ${{ inputs.network }}
-          addresses: |
-            SRA ${{ inputs.sra_implementation }}
-            SWA ${{ inputs.swa_implementation }}
+          sra: ${{ inputs.sra_implementation }}
+          swa: ${{ inputs.swa_implementation }}
           # check-setup takes the addresses optionally.
-          addresses_required: ${{ inputs.operation != 'check-setup' }}
+          require_addresses: ${{ inputs.operation != 'check-setup' }}
 
   signed:
     if: ${{ inputs.operation == 'propose' || inputs.operation == 'execute' || inputs.operation == 'check-setup' }}
