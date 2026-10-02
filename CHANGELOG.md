@@ -4,7 +4,7 @@ Each version is one tag and one GitHub release covering both SRA and SWA. The re
 
 ## v1.0.1
 
-- No behavior change. A process test of the upgrade runbook on calibration only ([#85](https://github.com/filecoin-project/solstice/issues/85)); mainnet stays on v1.0.0, so this release stays a pre-release. On calibration the new implementations differ from the live v1.0.0 ones only in the owner2 Safe addresses built into them, which were replaced on 2026-10-01 ([#88](https://github.com/filecoin-project/solstice/pull/88)).
+- No behavior change. A process test of the upgrade runbook on calibration only ([#85](https://github.com/filecoin-project/solstice/issues/85)); mainnet stays on v1.0.0, so this release stays a pre-release. On calibration the new implementations differ from the live v1.0.0 ones only in the owner Safe addresses built into them, all four of which were replaced on 2026-10-01 and 2026-10-02 ([#88](https://github.com/filecoin-project/solstice/pull/88), [#91](https://github.com/filecoin-project/solstice/pull/91)).
 
 ## v1.0.0
 
