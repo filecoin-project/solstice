@@ -1,0 +1,36 @@
+name: Solstice toolchain
+description: Install Foundry and uv; for a network, export ETH_RPC_URL after checking the RPC reports its chain id.
+inputs:
+  network:
+    description: Calibnet or Mainnet; omit for jobs that do not talk to a chain
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Install Foundry
+      uses: foundry-rs/foundry-toolchain@v1
+      with:
+        version: v1.7.1
+        cache: true
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v6
+
+    - name: Select network and check the RPC answers for it
+      if: inputs.network != ''
+      shell: bash
+      env:
+        NETWORK: ${{ inputs.network }}
+      run: |
+        case "$NETWORK" in
+          Calibnet) CHAIN_ID=314159; ETH_RPC_URL=https://api.calibration.node.glif.io/rpc/v1 ;;
+          Mainnet)  CHAIN_ID=314;    ETH_RPC_URL=https://api.node.glif.io/rpc/v1 ;;
+          *) echo "unknown network: $NETWORK" >&2; exit 1 ;;
+        esac
+        actual=$(cast chain-id --rpc-url "$ETH_RPC_URL")
+        if [ "$actual" != "$CHAIN_ID" ]; then
+          echo "RPC chain id mismatch: expected $CHAIN_ID for $NETWORK, got $actual" >&2
+          exit 1
+        fi
+        echo "ETH_RPC_URL=$ETH_RPC_URL" >> "$GITHUB_ENV"

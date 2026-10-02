@@ -1,47 +1,15 @@
 # solstice
 Supporting contracts and tools for https://github.com/filecoin-project/FIPs/discussions/1249
 
-## Deploy scripts
-Run with [`forge`](https://www.getfoundry.sh/).
-Both scripts extend `DeploymentScript`, which holds the shared config loading and deployment helpers.
-Per-chain parameters and deployed proxy addresses live in `deployments.json`.
+## Deployment
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): the live proxy addresses, the two deploy scripts (everything, or implementations only) and how to run them locally or through the [Deploy Contract workflow](.github/workflows/deploy-contract.yml), and bringing up a new network.
 
-### Setup
-```sh
-# List known keystore accounts
-cast wallet list
-# Specify your signing wallet
-export ETH_KEYSTORE_ACCOUNT=<account name>
+## Upgrades
+[docs/UPGRADE.md](docs/UPGRADE.md): the runbook for replacing the implementation behind the live proxies, step by step through the [Upgrade workflow](.github/workflows/upgrade.yml), built on these tools, in the order they are used:
 
-# Mainnet
-export ETH_RPC_URL=https://api.node.glif.io/rpc/v1
-# Calibration
-export ETH_RPC_URL=https://api.calibration.node.glif.io/rpc/v1
-```
-
-### Deploy all
-`script/DeployAll.s.sol` (`DeployAllScript`) deploys both actors, each behind a new proxy, and records the proxies in `deployments.json`.
-```sh
-forge script script/DeployAll.s.sol --broadcast --verify --rpc-url $ETH_RPC_URL --skip-simulation
-```
-
-### Deploy implementations only
-`script/DeployImplementation.s.sol` (`DeployImplementationScript`) deploys only new implementations, ready for an upgrade.
-The SWA implementation binds to the existing SRA proxy recorded in `deployments.json`.
-`deployments.json` is not modified; record the new addresses once the upgrade is live.
-```sh
-forge script script/DeployImplementation.s.sol --broadcast --verify --rpc-url $ETH_RPC_URL --skip-simulation
-```
-
-## Deploy Contract workflow
-`.github/workflows/deploy-contract.yml` runs either script from GitHub Actions.
-It never runs on push or pull request; trigger it manually from the Actions tab (Run workflow) or with the GitHub CLI:
-```sh
-# Dry run (the default): simulates against the network without sending transactions
-gh workflow run deploy-contract.yml -f network=Calibnet -f target="Implementations only"
-# Live deployment
-gh workflow run deploy-contract.yml -f network=Mainnet -f target="Implementations only" -f dry_run=false
-```
-Live runs use the `calibnet` or `mainnet` [environment](https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment), which must define the secret `DEPLOYER_PRIVATE_KEY`.
-Add required reviewers to the `mainnet` environment to gate mainnet deployments.
-Select the branch or tag to deploy with `--ref`; the commit is recorded in the run summary.
+* [`tools/storage_layout.py`](tools/storage_layout.py) with [`test/layout/StorageLayoutProbe.sol`](test/layout/StorageLayoutProbe.sol) and [`test/StorageSlots.t.sol`](test/StorageSlots.t.sol): CI gate for ERC-7201 namespaced storage; fails non-append-only changes and pins slot constants.
+* Version bumps in [`version.json`](version.json) with notes in [`CHANGELOG.md`](CHANGELOG.md); the [Releaser workflow](.github/workflows/releaser.yml) tags and pre-releases them.
+* [`tools/upgrade.py`](tools/upgrade.py), run with `uv run`: every upgrade operation as one command; drives the forge scripts below and uses [safe-eth-py](https://github.com/safe-global/safe-eth-py) for the [Safe](https://safe.filecoin.io) proposals.
+* [`script/Rehearse.s.sol`](script/Rehearse.s.sol): full upgrade of both contracts in a local fork (impersonated owners, hold, execute).
+* [Deploy Contract workflow](.github/workflows/deploy-contract.yml) (see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)).
+* [`script/Verify.s.sol`](script/Verify.s.sol): read-only check that the live proxies and implementations match the checked-out source and [`deployments.json`](deployments.json); with candidate addresses given, checks those before they are proposed. [`script/UpgradeBase.sol`](script/UpgradeBase.sol) holds what the two scripts share.
