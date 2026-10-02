@@ -11,7 +11,7 @@ How a merged code change becomes the live implementation behind the ServiceRewar
 | Version | [`version.json`](../version.json) and [`CHANGELOG.md`](../CHANGELOG.md) | One version covers both contracts. Bumping it on `main` makes the [Releaser workflow](https://github.com/filecoin-project/solstice/actions/workflows/releaser.yml) tag the commit and open a pre-release with the changelog section. |
 | Owners | Two [Safe](https://safe.filecoin.io) multisigs per contract: `sraOwner1`, `sraOwner2`, `swaOwner1`, `swaOwner2` in [`deployments.json`](../deployments.json) | The only parties that can approve an upgrade. |
 | Hold | `hold` in [`deployments.json`](../deployments.json), fixed at deployment as an immutable and the same for every task | Epochs that must pass after the second owner's approval before a task can execute. |
-| Operations key (`DEPLOYER_PRIVATE_KEY`, address in `DEPLOYER_ADDRESS`) | Secret on the [`calibnet`](https://github.com/filecoin-project/solstice/settings/environments/22478295461/edit) and [`mainnet`](https://github.com/filecoin-project/solstice/settings/environments/22478417501/edit) [environments](https://github.com/filecoin-project/solstice/settings/environments); its public address in the repo variable [`DEPLOYER_ADDRESS`](https://github.com/filecoin-project/solstice/settings/variables/actions), which jobs without the environment can read | Deploys implementations, queues proposals on the owner Safes, executes, pays gas. One-time setup: an owner of each of the four Safes registers its address as a [proposer](https://help.safe.global/articles/1671337645-proposers) in the Safe app. It's a plain key with no power over the contracts; it's not an owner key. |
+| Operations key (`DEPLOYER_PRIVATE_KEY`, address in `DEPLOYER_ADDRESS`) | Secret on the [`calibnet`](https://github.com/filecoin-project/solstice/settings/environments/22478295461/edit) and [`mainnet`](https://github.com/filecoin-project/solstice/settings/environments/22478417501/edit) [environments](https://github.com/filecoin-project/solstice/settings/environments); its public address in the [GitHub Actions variable `DEPLOYER_ADDRESS`](https://github.com/filecoin-project/solstice/settings/variables/actions/DEPLOYER_ADDRESS), which jobs without the environment can read | Deploys implementations, queues proposals on the owner Safes, executes, pays gas. One-time setup: an owner of each of the four Safes registers its address as a [proposer](https://help.safe.global/articles/1671337645-proposers) in the Safe app. It's a plain key with no power over the contracts; it's not an owner key. |
 
 The upgrade call is [`upgradeToAndCall(newImplementation, data)`](../lib/openzeppelin-contracts/contracts/proxy/utils/UUPSUpgradeable.sol) on the proxy. Its task id is `keccak256(calldata)`, so both owners must send byte-identical calldata with zero value.
 
@@ -93,7 +93,7 @@ Repeat steps 2 to 7 on mainnet.
 
 ### How do I check that everything is set up correctly?
 
-Dispatch the [Upgrade](https://github.com/filecoin-project/solstice/actions/workflows/upgrade.yml) workflow with operation `check-setup` on the network. It sends nothing and needs no approval: it uses the operations key's public address from the repo variable [`DEPLOYER_ADDRESS`](https://github.com/filecoin-project/solstice/settings/variables/actions), not the secret. It prints that address and its balance, and for each owner Safe in [`deployments.json`](../deployments.json) whether that Safe is an owner on the proxy, whether the address is its proposer, and what is queued at or above its nonce. It fails if an owner in [`deployments.json`](../deployments.json) is not an owner on its proxy.
+Dispatch the [Upgrade](https://github.com/filecoin-project/solstice/actions/workflows/upgrade.yml) workflow with operation `check-setup` on the network. It sends nothing and needs no approval: it uses the operations key's public address from the [GitHub Actions variable `DEPLOYER_ADDRESS`](https://github.com/filecoin-project/solstice/settings/variables/actions/DEPLOYER_ADDRESS), not the secret. It prints that address and its balance, and for each owner Safe in [`deployments.json`](../deployments.json) whether that Safe is an owner on the proxy, whether the address is its proposer, and what is queued at or above its nonce. It fails if an owner in [`deployments.json`](../deployments.json) is not an owner on its proxy or does not have the address as a proposer, the two things `propose` refuses on.
 
 You rarely need to run it by hand: the pre-gate job runs the same checks before the deploy and `propose` approval requests (see [what a reviewer does](#what-are-the-responsibilities-of-a-deployment-reviewer)). Whether the secret holds the key for `DEPLOYER_ADDRESS` (GitHub never shows a secret) is checked by every run that uses the key, before it sends anything.
 
@@ -108,9 +108,9 @@ They require a second person approval. By default, GitHub shows dispatch inputs 
 1. the ref is `main` or a `v*` tag
 2. its commit is on `main`
 3. any implementation addresses given have code on chain
-4. for deploy and `propose`, the [`check-setup`](#how-do-i-check-that-everything-is-set-up-correctly) checks: every owner Safe in [`deployments.json`](../deployments.json) is an owner on its proxy, and [`DEPLOYER_ADDRESS`](https://github.com/filecoin-project/solstice/settings/variables/actions) is a proposer on each (other queued transactions are noted, not failed).
+4. for deploy and `propose`, [`check-setup`](#how-do-i-check-that-everything-is-set-up-correctly) passes: every owner Safe in [`deployments.json`](../deployments.json) is an owner on its proxy and has `DEPLOYER_ADDRESS` as a proposer. Its output, including any transactions queued ahead, is in the summary.
 
-If a check fails, that job fails and no approval is requested. Once approved, the job stops before sending anything if the secret is not the key for `DEPLOYER_ADDRESS`. So the approver's job is not those checks but what a machine cannot know: open the run summary and confirm that the network, operation and tag are the ones in the [tracking issue](#0-open-a-tracking-issue), and that the implementation addresses are the ones in the [deploy step](#3-deploy-the-implementations)'s run summary.
+If a check fails, that job fails and no approval is requested. One check cannot run before approval: whether the secret is the key for `DEPLOYER_ADDRESS`, since the pre-gate job runs outside the environment precisely so it never sees the secret. So it is the first thing the approved job does, and the job stops there, before sending anything, if they differ. The approver's job is not those checks but what a machine cannot know: open the run summary and confirm that the network, operation and tag are the ones in the [tracking issue](#0-open-a-tracking-issue), and that the implementation addresses are the ones in the [deploy step](#3-deploy-the-implementations)'s run summary.
 
 ### What if GitHub is down during an upgrade?
 
@@ -125,7 +125,8 @@ uv run --locked tools/upgrade.py status --sra 0x... --swa 0x...
 
 - `rehearse`, `status` and `verify` need no key.
 - `verify --record-release "$TAG"` also needs the `gh` CLI, so leave it off and record the result by hand.
-- `propose` and `execute` need `DEPLOYER_PRIVATE_KEY` set; `check-setup` needs `DEPLOYER_ADDRESS` (or the key). With both set, a command that uses the key stops if they differ, so leave `DEPLOYER_ADDRESS` unset when running `execute` with some other funded key.
+- `propose` and `execute` need `DEPLOYER_PRIVATE_KEY` set. If `DEPLOYER_ADDRESS` is also set, they stop when the key's address differs, so leave it unset when running `execute` with some other funded key.
+- `check-setup` needs `DEPLOYER_ADDRESS` (or else `DEPLOYER_PRIVATE_KEY`, whose address it uses).
 - `propose`, `execute` and deploying the implementations change on-chain state. In GitHub, the [environment](https://github.com/filecoin-project/solstice/settings/environments) makes a second person approve them; a local run has no such gate, so have a second person check each invocation.
 
 ### Working around not having the GitHub secret for `DEPLOYER_PRIVATE_KEY`
@@ -139,9 +140,10 @@ These operations are affected by not having the GitHub secret:
 ### How do I rotate the operations key stored in `DEPLOYER_PRIVATE_KEY`?
 
 1. Fund the new key on both networks.
-2. Replace the `DEPLOYER_PRIVATE_KEY` secret on the [`calibnet`](https://github.com/filecoin-project/solstice/settings/environments/22478295461/edit) and [`mainnet`](https://github.com/filecoin-project/solstice/settings/environments/22478417501/edit) environments, and set the repo variable [`DEPLOYER_ADDRESS`](https://github.com/filecoin-project/solstice/settings/variables/actions) to the new key's address. Change them together: every run that uses the key stops if the two disagree.
-3. Have an owner of each of the four owner Safes, on each network, add the new address as a [proposer](https://help.safe.global/articles/1671337645-proposers) in the Safe app and remove the old one.
-4. [Check the setup](#how-do-i-check-that-everything-is-set-up-correctly) on each network: every Safe should show the new address as its proposer. The secret itself is confirmed by the next run that uses it, which stops before sending anything if it is not the key for `DEPLOYER_ADDRESS`.
+2. Replace the `DEPLOYER_PRIVATE_KEY` secret on the [`calibnet`](https://github.com/filecoin-project/solstice/settings/environments/22478295461/edit) and [`mainnet`](https://github.com/filecoin-project/solstice/settings/environments/22478417501/edit) environments.
+3. Set the [GitHub Actions variable `DEPLOYER_ADDRESS`](https://github.com/filecoin-project/solstice/settings/variables/actions/DEPLOYER_ADDRESS) to the new key's address. Do it together with step 2: every run that uses the key stops if the two disagree.
+4. Have an owner of each of the four owner Safes, on each network, add the new address as a [proposer](https://help.safe.global/articles/1671337645-proposers) in the Safe app and remove the old one.
+5. [Check the setup](#how-do-i-check-that-everything-is-set-up-correctly) on each network: every Safe should show the new address as its proposer. The secret itself is confirmed by the next run that uses it, which stops before sending anything if it is not the key for `DEPLOYER_ADDRESS`.
 
 ### Why doesn't this runbook live in the governance repo?
 

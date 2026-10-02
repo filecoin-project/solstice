@@ -16,8 +16,8 @@ name: Pre-gate summary
 description: >-
   Run in a job without an environment that the gated job `needs`, so the reviewer sees this summary on the run page
   before approving (GitHub shows dispatch inputs nowhere else; see the comment above). A thin wrapper around
-  `tools/upgrade.py pregate`, which checks the ref and any addresses and fails before the approval request if one is
-  wrong. Needs a checkout with full history and the setup action for the network.
+  `tools/upgrade.py pregate`, which checks the ref and any addresses, and optionally `tools/upgrade.py check-setup`;
+  either fails the job before the approval request. Needs a checkout with full history and the setup action for the network.
 inputs:
   title:
     description: What is being approved, e.g. "propose on Calibnet"
@@ -35,7 +35,7 @@ inputs:
     required: false
     default: "false"
   check_setup:
-    description: Whether to also run the check-setup checks (owners on the proxies, DEPLOYER_ADDRESS as proposer, queues)
+    description: Whether to also run `tools/upgrade.py check-setup` (owners on the proxies, DEPLOYER_ADDRESS as proposer)
     required: false
     default: "false"
 runs:
@@ -47,9 +47,21 @@ runs:
         SRA: ${{ inputs.sra }}
         SWA: ${{ inputs.swa }}
         REQUIRE: ${{ inputs.require_addresses }}
-        CHECK_SETUP: ${{ inputs.check_setup }}
       run: |
         args=(pregate --title "$TITLE" --sra "$SRA" --swa "$SWA")
         if [ "$REQUIRE" = true ]; then args+=(--require-addresses); fi
-        if [ "$CHECK_SETUP" = true ]; then args+=(--check-setup); fi
         uv run --quiet --locked tools/upgrade.py "${args[@]}"
+    # Its output goes in the summary under the pre-gate section; runs even if a check above failed, to show why.
+    - if: ${{ always() && inputs.check_setup == 'true' }}
+      shell: bash
+      env:
+        SRA: ${{ inputs.sra }}
+        SWA: ${{ inputs.swa }}
+      run: |
+        set -o pipefail
+        uv run --quiet --locked tools/upgrade.py check-setup --sra "$SRA" --swa "$SWA" 2>&1 | tee "$RUNNER_TEMP/check-setup.txt"
+    - if: ${{ always() && inputs.check_setup == 'true' }}
+      uses: ./.github/actions/summary
+      with:
+        title: check-setup
+        log: ${{ runner.temp }}/check-setup.txt

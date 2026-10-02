@@ -154,21 +154,16 @@ class ReleaseRef(unittest.TestCase):
 class PregateReport(unittest.TestCase):
     def test_rows_and_checks(self):
         report = pregate_report("propose on Calibnet", "octocat", "v1.0.1", "tag", "c6b5f3e6", [("SRA", "0xabc"), ("SWA", "")],
-                                [(True, "ref ok"), (False, "SWA address is missing"), (None, "a note")])
+                                [(True, "ref ok"), (False, "SWA address is missing")])
         self.assertIn("## Approving: propose on Calibnet\n", report)
         self.assertIn("| Ref | `v1.0.1` (tag) |", report)
         self.assertIn("| SRA | `0xabc` |", report)
         self.assertIn("| SWA | `(none)` |", report)
         self.assertIn("- ✅ ref ok", report)
         self.assertIn("- ❌ SWA address is missing", report)
-        self.assertIn("- ℹ️ a note", report)
         # The checks follow the table after a blank line, or markdown renders them as table rows.
         self.assertIn("|\n\n- ✅", report)
 
-
-    def test_details_block(self):
-        report = pregate_report("t", "octocat", "main", "branch", "c6b5f3e6", [], [(True, "ok")], "== Operations key ==\n")
-        self.assertTrue(report.endswith("- ✅ ok\n\n```\n== Operations key ==\n```\n"))
 
 
 KEY = "0x" + "11" * 32

@@ -45,8 +45,7 @@ env:
   OPERATION: ${{ inputs.operation }}
   SRA: ${{ inputs.sra_implementation }}
   SWA: ${{ inputs.swa_implementation }}
-  NETWORK_NAME: ${{ inputs.network }}
-  # The operations key's public address, a repo variable so ungated jobs can read it: check-setup reports on it,
+  # The operations key's public address, a GitHub Actions variable (repo level) so ungated jobs can read it: check-setup reports on it,
   # and every job that uses DEPLOYER_PRIVATE_KEY stops if the key does not match it.
   DEPLOYER_ADDRESS: ${{ vars.DEPLOYER_ADDRESS }}
   RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

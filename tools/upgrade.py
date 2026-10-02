@@ -9,16 +9,17 @@
 
 Both contracts are always upgraded together, so every operation acts on both.
 
+The environment says where the tool runs and with which key (in GitHub, from the workflow and its environment);
+arguments say what to do this time.
+
 Environment:
-  ETH_RPC_URL           required; selects the network (chain id 314 or 314159)
+  ETH_RPC_URL           required; selects the network (chain id 314 or 314159); forge and cast read it too
   DEPLOYER_PRIVATE_KEY  the operations key: registered once by an owner of each Safe as a proposer
                         (https://help.safe.global/articles/1671337645-proposers) for `propose`; any funded key
                         for `execute`
-  DEPLOYER_ADDRESS      the operations key's public address (a GitHub repo variable): `check-setup` and
-                        `pregate --check-setup` report on it without needing the key; when set, every command that
-                        uses DEPLOYER_PRIVATE_KEY first stops if the key's address differs
-  DRY_RUN=1             for propose: build and sign the Safe transactions but do not post them
-  NETWORK_NAME          for `verify --record-release`: the label written into the release ("Calibnet" or "Mainnet")
+  DEPLOYER_ADDRESS      the operations key's public address (a GitHub Actions variable): `check-setup` reports on it
+                        without needing the key; when set, every command that uses DEPLOYER_PRIVATE_KEY first stops
+                        if the key's address differs
 
 `propose` first makes the `check-setup` checks and posts nothing unless every owner Safe is an owner on its proxy
 and has the key as a proposer. It then runs script/Verify.s.sol with the new addresses as candidates, which rebuilds
@@ -27,8 +28,6 @@ transactions always refer to code built from this commit. See docs/UPGRADE.md st
 """
 
 import argparse
-import contextlib
-import io
 import json
 import os
 import re
@@ -58,6 +57,8 @@ PENDING_TASKS_SLOT = bytes.fromhex("635f64a8ec66823e68578973f5bc466fd4e0eadd655f
 OWNERS_SLOT = bytes.fromhex("7d2e7f914625694dd929b468ac404d7943373f4d24421c78ac93b57cc8efb500")
 UPGRADE_SELECTOR = keccak(text="upgradeToAndCall(address,bytes)")[:4]
 VETO_SELECTOR = keccak(text="veto(bytes32)")[:4]
+# The labels the Upgrade workflow's `network` input uses, written into the release by `verify --record-release`.
+NETWORK_NAMES = {314: "Mainnet", 314159: "Calibnet"}
 SAFE_SERVICES = {
     314: "https://transaction.safe.filecoin.io",
     314159: "https://transaction-testnet.safe.filecoin.io",
@@ -281,7 +282,7 @@ def cmd_propose(args):
     not_owners, not_proposers, ahead_of = check_setup(chain, account.address, api, {t.target: t.impl for t in todo})
     if not_owners:
         die(NOT_OWNERS + "; ".join(not_owners))
-    if not_proposers and os.environ.get("DRY_RUN") != "1":
+    if not_proposers and not args.dry_run:
         die(f"{account.address} is not a proposer on: " + "; ".join(not_proposers) + ". An owner of each registers it "
             "once in the Safe app; see the Operations key row in docs/UPGRADE.md. Nothing was posted.")
     if ahead_of:
@@ -309,7 +310,7 @@ def cmd_propose(args):
             safe_tx = safe.build_multisig_tx(to=task.proxy, value=0, data=task.calldata, safe_nonce=nonce)
             safe_tx.sign(key)
             print(f"Safe {owner}: nonce {nonce}, safeTxHash 0x{safe_tx.safe_tx_hash.hex()}")
-            if os.environ.get("DRY_RUN") == "1":
+            if args.dry_run:
                 print(f"  dry run: would post to {base_url}/api/v2/safes/{owner}/multisig-transactions/")
                 continue
             try:
@@ -382,14 +383,17 @@ NOT_OWNERS = "not owners on their proxy (deployments.json is out of date, or an 
 
 
 def cmd_check_setup(args):
-    """Report what `propose` and `execute` depend on, without sending anything (see check_setup). Needs only the
-    operations key's address, so it runs without the gated environment. Fails if a deployments.json owner is not an
-    owner on its proxy, since proposals would then go to a Safe that cannot approve."""
+    """Report what `propose` depends on, without sending anything (see check_setup). Needs only the operations key's
+    address, so it runs without the gated environment. Fails if a deployments.json owner is not an owner on its proxy
+    or does not have the address as a proposer, the two things `propose` refuses on; transactions queued ahead are
+    only reported."""
     chain = Chain()
     _, api = safe_service(chain)
-    not_owners, _, _ = check_setup(chain, operations_address("check-setup"), api, {t: getattr(args, t) for t in TARGETS})
-    if not_owners:
-        die(NOT_OWNERS + "; ".join(not_owners))
+    address = operations_address("check-setup")
+    not_owners, not_proposers, _ = check_setup(chain, address, api, {t: getattr(args, t) for t in TARGETS})
+    if not_owners or not_proposers:
+        die("; ".join(([NOT_OWNERS + "; ".join(not_owners)] if not_owners else [])
+                      + ([f"{address} is not a proposer on: " + "; ".join(not_proposers)] if not_proposers else [])))
 
 
 def release_ref(ref_type, ref_name):
@@ -397,18 +401,13 @@ def release_ref(ref_type, ref_name):
     return (ref_type == "branch" and ref_name == "main") or (ref_type == "tag" and ref_name.startswith("v"))
 
 
-ICONS = {True: "✅", False: "❌", None: "ℹ️"}
-
-
-def pregate_report(title, actor, ref_name, ref_type, sha, rows, checks, details=""):
+def pregate_report(title, actor, ref_name, ref_type, sha, rows, checks):
     """The run-summary section a reviewer reads before approving: what was dispatched, then each check as
-    (passed, text), where passed is None for a note that does not fail the run, then `details` (the check-setup output, if any) as a code block."""
+    (passed, text)."""
     lines = [f"## Approving: {title}", "", "| | |", "|---|---|",
              f"| Dispatched by | `{actor}` |", f"| Ref | `{ref_name}` ({ref_type}) |", f"| Commit | `{sha}` |"]
     lines += [f"| {label} | `{value or '(none)'}` |" for label, value in rows]
-    lines += [""] + [f"- {ICONS[ok]} {text}" for ok, text in checks]
-    if details:
-        lines += ["", "```", details.rstrip(), "```"]
+    lines += [""] + [f"- {'✅' if ok else '❌'} {text}" for ok, text in checks]
     return "\n".join(lines) + "\n"
 
 
@@ -426,7 +425,7 @@ def cmd_pregate(args):
         checks.append((False, f"ref `{ref_name}` ({ref_type}) is neither `main` nor a `v*` tag"))
     on_main = subprocess.run(["git", "merge-base", "--is-ancestor", sha, "origin/main"], cwd=ROOT).returncode == 0
     checks.append((on_main, f"commit `{sha[:12]}` is {'' if on_main else 'not '}on `main`"))
-    rows, chain, candidates = [], None, {}
+    rows, chain = [], None
     for label, value in (("SRA", args.sra), ("SWA", args.swa)):
         if not value and not args.require_addresses:
             continue
@@ -441,34 +440,13 @@ def cmd_pregate(args):
             continue
         chain = chain or Chain()
         has_code = len(chain.w3.eth.get_code(addr)) > 0
-        candidates[label.lower()] = addr
         checks.append((has_code, f"{label} `{addr}` {'has' if has_code else 'has no'} code on chain"))
-    details = ""
-    if args.check_setup:
-        address = deployer_address()
-        if not address:
-            checks.append((False, "DEPLOYER_ADDRESS is not set (a repo variable; see the key rotation FAQ in docs/UPGRADE.md)"))
-        else:
-            chain = chain or Chain()
-            _, api = safe_service(chain)
-            out = io.StringIO()
-            with contextlib.redirect_stdout(out):
-                # With the candidates, a rerun does not count the upgrade's own queued proposal as another transaction.
-                not_owners, not_proposers, ahead_of = check_setup(chain, address, api, candidates)
-            details = out.getvalue()
-            checks.append((not not_owners, "every owner Safe in deployments.json is an owner on its proxy"
-                           + (f" (not: {'; '.join(not_owners)})" if not_owners else "")))
-            checks.append((not not_proposers, f"`{address}` is a proposer on every owner Safe"
-                           + (f" (not: {'; '.join(not_proposers)})" if not_proposers else "")))
-            if ahead_of:
-                checks.append((None, "other transactions are queued on " + "; ".join(ahead_of)
-                               + "; their owners must execute or reject them before the upgrade"))
-    report = pregate_report(args.title, actor, ref_name, ref_type, sha, rows, checks, details)
+    report = pregate_report(args.title, actor, ref_name, ref_type, sha, rows, checks)
     print(report)
     if env.get("GITHUB_STEP_SUMMARY"):
         with open(env["GITHUB_STEP_SUMMARY"], "a") as f:
             f.write(report)
-    if any(ok is False for ok, _ in checks):
+    if not all(ok for ok, _ in checks):
         die("a pre-gate check failed; not requesting approval")
 
 
@@ -536,7 +514,6 @@ def record_release(tag):
     mainnet promote the pre-release to the final release. Only for commits on main, since this runs without
     reviewers. The tag is passed explicitly (the workflow passes the dispatched ref) rather than discovered with
     `git describe`, which picks an arbitrary tag when several point at the same commit."""
-    network = os.environ.get("NETWORK_NAME") or die("NETWORK_NAME is required with --record-release")
     sh("git", "fetch", "--quiet", "--tags", "origin", "main")
     head = sh("git", "rev-parse", "HEAD")
     if subprocess.run(["git", "merge-base", "--is-ancestor", head, "origin/main"], cwd=ROOT).returncode != 0:
@@ -551,6 +528,7 @@ def record_release(tag):
         print(f"no release {tag}; nothing to record")
         return
     chain = Chain()
+    network = NETWORK_NAMES[chain.chain_id]
     facts = f"SRA implementation `{chain.current_impl('sra')}`, SWA implementation `{chain.current_impl('swa')}`"
     body = sh("gh", "release", "view", tag, "--json", "body", "-q", ".body")
     # Every successful verification is appended (epoch and run link included), so a rerun and a rollback's
@@ -592,7 +570,9 @@ def main(argv):
         sp.add_argument("--swa", type=address, required=True, help="SWA implementation address")
 
     sub.add_parser("rehearse", help="dry-run both upgrades in a local fork, built from the checked-out source")
-    impls(sub.add_parser("propose", help="check both implementations and queue the upgrades on the owner Safes"))
+    pr = sub.add_parser("propose", help="check both implementations and queue the upgrades on the owner Safes")
+    impls(pr)
+    pr.add_argument("--dry-run", action="store_true", help="build and sign the Safe transactions but do not post them")
     impls(sub.add_parser("status", help="approvals and hold end for both tasks (pass previous addresses to see a prepared rollback)"))
     impls(sub.add_parser("execute", help="send both upgrades once both holds have elapsed"))
     c = sub.add_parser("check-setup", help="report the operations key, owners, proposer registration and Safe queues (sends nothing)")
@@ -604,7 +584,6 @@ def main(argv):
     g.add_argument("--sra", default="", help="SRA implementation address, checked to have code")
     g.add_argument("--swa", default="", help="SWA implementation address, checked to have code")
     g.add_argument("--require-addresses", action="store_true", help="fail if --sra or --swa is missing")
-    g.add_argument("--check-setup", action="store_true", help="also run the check-setup checks for DEPLOYER_ADDRESS")
     v = sub.add_parser("verify", help="run script/Verify.s.sol against the live chain")
     v.add_argument("--record-release", metavar="TAG", help="append the result to the GitHub release for TAG, which must point at HEAD; promote on mainnet")
 
