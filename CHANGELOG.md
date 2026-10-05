@@ -4,7 +4,7 @@ Each version is one tag and one GitHub release covering both SRA and SWA. The re
 
 ## v1.0.2
 
-- Mainnet only: moves the SRA activation epoch (`activationEpoch` in `deployments.json`, the `ACTIVATION_EPOCH` immutable and `quarterStart(0)`) from 6450120 (2026-10-12 13:00 UTC) to 6470280 (2026-10-19 13:00 UTC), the first epoch after the nv29 upgrade height 6470279 in [lotus#13874](https://github.com/filecoin-project/lotus/pull/13874), per the [upgrade timing discussion](https://filecoinproject.slack.com/archives/C05P37R9KQD/p1790910918413659). No other change: the calibration build is identical to v1.0.1, and the mainnet SWA build is identical to v1.0.0.
+- Moves the **Mainnet** SRA `activationEpoch` in `deployments.json` from 6450120 (2026-10-12 13:00 UTC) to 6470280 (2026-10-19 13:00 UTC), the first epoch after the nv29 mainnet upgrade height 6470279 ([network upgrade discussion](https://github.com/filecoin-project/community/discussions/74#discussioncomment-18565956)).
 
 ## v1.0.1
 
