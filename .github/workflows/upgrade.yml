@@ -72,7 +72,7 @@ jobs:
       - uses: ./.github/actions/summary
         if: always()
         with:
-          title: "${{ inputs.operation }} on ${{ inputs.network }} (${{ github.sha }})"
+          title: "${{ inputs.operation }} on ${{ inputs.network }}"
           log: ${{ runner.temp }}/out.txt
 
   verify:
@@ -101,7 +101,7 @@ jobs:
       - uses: ./.github/actions/summary
         if: always()
         with:
-          title: "verify on ${{ inputs.network }} (${{ github.sha }})"
+          title: "verify on ${{ inputs.network }}"
           log: ${{ runner.temp }}/out.txt
 
   # Shows the reviewer what they are approving and checks it, before `signed` asks for approval.
@@ -147,5 +147,5 @@ jobs:
       - uses: ./.github/actions/summary
         if: always()
         with:
-          title: "${{ inputs.operation }} on ${{ inputs.network }} (${{ github.sha }}, by ${{ github.actor }})"
+          title: "${{ inputs.operation }} on ${{ inputs.network }}"
           log: ${{ runner.temp }}/out.txt

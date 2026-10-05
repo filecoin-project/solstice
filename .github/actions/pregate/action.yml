@@ -64,5 +64,5 @@ runs:
         status=0
         uv run --quiet --locked tools/upgrade.py check-setup --sra "$SRA" --swa "$SWA" > "$RUNNER_TEMP/check-setup.txt" 2>&1 || status=$?
         cat "$RUNNER_TEMP/check-setup.txt"
-        { echo "## check-setup"; echo '```'; grep -v '^\s*$' "$RUNNER_TEMP/check-setup.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+        { echo "## check-setup"; echo; cat "$RUNNER_TEMP/check-setup.txt"; } >> "$GITHUB_STEP_SUMMARY"
         exit "$status"

@@ -1,8 +1,10 @@
 name: Job summary
-description: Append the tail of a command log to the job summary.
+description: >-
+  Append a command log to the job summary, as Markdown (tools/upgrade.py writes Markdown), under a heading that
+  names the dispatched ref, its short commit and who dispatched the run.
 inputs:
   title:
-    description: Heading for the summary section
+    description: What ran, e.g. "status on Calibnet"; " at <ref> (<short commit>) by <actor>" is appended
     required: true
   log:
     description: Path to the captured output
@@ -14,10 +16,13 @@ runs:
       env:
         TITLE: ${{ inputs.title }}
         LOG: ${{ inputs.log }}
+        REF_NAME: ${{ github.ref_name }}
+        SHA: ${{ github.sha }}
+        ACTOR: ${{ github.actor }}
       run: |
         {
-          echo "## $TITLE"
-          echo '```'
-          grep -vE '^\s*$|^Compiling|^Solc|^Compiler|^No files' "$LOG" 2>/dev/null
-          echo '```'
+          echo "## $TITLE at \`$REF_NAME\` (\`${SHA:0:7}\`) by $ACTOR"
+          echo
+          # Blank lines are kept: they separate Markdown blocks. Only forge's compiler noise is dropped.
+          grep -vE '^Compiling|^Solc|^Compiler|^No files' "$LOG" 2>/dev/null
         } >> "$GITHUB_STEP_SUMMARY"
