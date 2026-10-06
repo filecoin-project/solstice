@@ -33,7 +33,6 @@ contract RehearseScript is UpgradeBase {
         uint64 orchestratorCount;
         uint64 admittedCount;
         bool initialOrchestratorAdmitted;
-        uint64 activationEpoch;
     }
 
     function run() public returns (address sra, address swa) {
@@ -52,12 +51,13 @@ contract RehearseScript is UpgradeBase {
         address oldSraImpl = _implementationOf(sra);
         address oldSwaImpl = _implementationOf(swa);
         SraSnapshot memory before = _sraSnapshot(sra, config);
+        uint64 activationEpochBefore = Epoch.unwrap(ServiceRewardsActor(sra).quarterStart(0));
 
         _rehearse("SRA", sra, config.sraOwner1, config.sraOwner2, config.hold, _buildImplementation(true, config, sra));
         _rehearse("SWA", swa, config.swaOwner1, config.swaOwner2, config.hold, _buildImplementation(false, config, sra));
 
         console.log("");
-        _checkSraSchedule(sra, config, before);
+        _checkSraSchedule(sra, config, activationEpochBefore);
         _checkSraRegistry(sra, config, before);
         _checkGovernance("SRA", sra, config.sraOwner1, config.sraOwner2, oldSraImpl);
         _checkGovernance("SWA", swa, config.swaOwner1, config.swaOwner2, oldSwaImpl);
@@ -93,12 +93,15 @@ contract RehearseScript is UpgradeBase {
         return SraSnapshot({
             orchestratorCount: actor.orchestratorCount(),
             admittedCount: actor.admittedCount(),
-            initialOrchestratorAdmitted: actor.isAdmitted(config.initialOrchestrator),
-            activationEpoch: Epoch.unwrap(actor.quarterStart(0))
+            initialOrchestratorAdmitted: actor.isAdmitted(config.initialOrchestrator)
         });
     }
 
-    function _checkSraSchedule(address sra, Config memory config, SraSnapshot memory before) internal view {
+    function _equals(SraSnapshot memory a, SraSnapshot memory b) internal pure returns (bool) {
+        return keccak256(abi.encode(a)) == keccak256(abi.encode(b));
+    }
+
+    function _checkSraSchedule(address sra, Config memory config, uint64 activationEpochBefore) internal view {
         ServiceRewardsActor actor = ServiceRewardsActor(sra);
         uint64 start0 = Epoch.unwrap(actor.quarterStart(0));
         require(start0 == Epoch.unwrap(config.activationEpoch), "SRA: quarterStart(0) is not activationEpoch");
@@ -106,18 +109,12 @@ contract RehearseScript is UpgradeBase {
             Epoch.unwrap(actor.quarterStart(1)) - start0 == Epoch.unwrap(config.epochsPerQuarter),
             "SRA: quarter length is not epochsPerQuarter"
         );
-        console.log("[SRA] activation epoch (quarterStart(0)) before upgrade", before.activationEpoch);
+        console.log("[SRA] activation epoch (quarterStart(0)) before upgrade", activationEpochBefore);
         console.log("[SRA] activation epoch (quarterStart(0)) after upgrade ", start0);
     }
 
     function _checkSraRegistry(address sra, Config memory config, SraSnapshot memory before) internal view {
-        SraSnapshot memory afterUpgrade = _sraSnapshot(sra, config);
-        require(afterUpgrade.orchestratorCount == before.orchestratorCount, "SRA: orchestratorCount changed");
-        require(afterUpgrade.admittedCount == before.admittedCount, "SRA: admittedCount changed");
-        require(
-            afterUpgrade.initialOrchestratorAdmitted == before.initialOrchestratorAdmitted,
-            "SRA: initial Orchestrator admission changed"
-        );
+        require(_equals(_sraSnapshot(sra, config), before), "SRA: Orchestrator registry changed");
         console.log("[SRA] registry unchanged: orchestratorCount", before.orchestratorCount);
         console.log("[SRA] registry unchanged: admittedCount", before.admittedCount);
     }
