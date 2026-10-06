@@ -21,16 +21,19 @@ import {UpgradeBase} from "./UpgradeBase.sol";
 ///      early execution is shown to revert with HoldUntil, the hold is rolled past, and the upgrade executes; the
 ///      proxy's implementation slot is then required to point at the new implementation.
 ///
-///      After both upgrades, checks that hold for any upgrade built from the checked-out source: the SRA's schedule
-///      matches `deployments.json` (`quarterStart(0)` is `activationEpoch`, one quarter is `epochsPerQuarter`), the
-///      SRA's Orchestrator registry is unchanged, and on each proxy a non-owner cannot submit while both owners can
-///      still submit and approve a task (a rollback to the previous implementation, left pending in the fork).
+///      After both upgrades, checks against the live state that unit tests (fresh deployments, synthetic state) cannot
+///      make: on each proxy a non-owner cannot submit while both owners can still submit and approve a task (a
+///      rollback to the previous implementation, left pending in the fork), since an upgrade that broke owner
+///      recognition could never be upgraded or rolled back again; and the SRA's Orchestrator registry is unchanged.
+///      It also prints the SRA's activation epoch before and after, for the reviewer to compare with the network
+///      upgrade date, and requires it to match `deployments.json`.
 contract RehearseScript is UpgradeBase {
     /// @dev SRA registry readings that an upgrade must not change.
     struct SraSnapshot {
         uint64 orchestratorCount;
         uint64 admittedCount;
         bool initialOrchestratorAdmitted;
+        uint64 activationEpoch;
     }
 
     function run() public returns (address sra, address swa) {
@@ -54,7 +57,7 @@ contract RehearseScript is UpgradeBase {
         _rehearse("SWA", swa, config.swaOwner1, config.swaOwner2, config.hold, _buildImplementation(false, config, sra));
 
         console.log("");
-        _checkSraSchedule(sra, config);
+        _checkSraSchedule(sra, config, before);
         _checkSraRegistry(sra, config, before);
         _checkGovernance("SRA", sra, config.sraOwner1, config.sraOwner2, oldSraImpl);
         _checkGovernance("SWA", swa, config.swaOwner1, config.swaOwner2, oldSwaImpl);
@@ -90,11 +93,12 @@ contract RehearseScript is UpgradeBase {
         return SraSnapshot({
             orchestratorCount: actor.orchestratorCount(),
             admittedCount: actor.admittedCount(),
-            initialOrchestratorAdmitted: actor.isAdmitted(config.initialOrchestrator)
+            initialOrchestratorAdmitted: actor.isAdmitted(config.initialOrchestrator),
+            activationEpoch: Epoch.unwrap(actor.quarterStart(0))
         });
     }
 
-    function _checkSraSchedule(address sra, Config memory config) internal view {
+    function _checkSraSchedule(address sra, Config memory config, SraSnapshot memory before) internal view {
         ServiceRewardsActor actor = ServiceRewardsActor(sra);
         uint64 start0 = Epoch.unwrap(actor.quarterStart(0));
         require(start0 == Epoch.unwrap(config.activationEpoch), "SRA: quarterStart(0) is not activationEpoch");
@@ -102,7 +106,8 @@ contract RehearseScript is UpgradeBase {
             Epoch.unwrap(actor.quarterStart(1)) - start0 == Epoch.unwrap(config.epochsPerQuarter),
             "SRA: quarter length is not epochsPerQuarter"
         );
-        console.log("[SRA] quarterStart(0) is activationEpoch", start0);
+        console.log("[SRA] activation epoch (quarterStart(0)) before upgrade", before.activationEpoch);
+        console.log("[SRA] activation epoch (quarterStart(0)) after upgrade ", start0);
     }
 
     function _checkSraRegistry(address sra, Config memory config, SraSnapshot memory before) internal view {
