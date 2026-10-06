@@ -38,7 +38,7 @@ The PR carries the code change, the next version in [`version.json`](../version.
 
 ### 2. Rehearse
 
-Dispatch [Upgrade](https://github.com/filecoin-project/solstice/actions/workflows/upgrade.yml) with operation `rehearse`, the network, ref the tag. It runs [`script/Rehearse.s.sol`](../script/Rehearse.s.sol): one local fork in which both implementations are built from source, and for each contract both owner Safes are impersonated to submit and approve, early execution is shown to revert, the hold is rolled past, and the upgrade executes. The summary ends with `REHEARSAL COMPLETE` or the failing step. Nothing is sent. Rehearse on each network before its step 3, since the two networks have different holds and parameters.
+Dispatch [Upgrade](https://github.com/filecoin-project/solstice/actions/workflows/upgrade.yml) with operation `rehearse`, the network, ref the tag. It runs [`script/Rehearse.s.sol`](../script/Rehearse.s.sol): one local fork in which both implementations are built from source, and for each contract both owner Safes are impersonated to submit and approve, early execution is shown to revert, the hold is rolled past, and the upgrade executes. It then checks what must hold after any upgrade: the SRA's `quarterStart(0)` is `activationEpoch` from [`deployments.json`](../deployments.json) and a quarter is `epochsPerQuarter` long, the SRA's Orchestrator registry is unchanged, and on each proxy a non-owner cannot submit while both owners can still submit and approve. The summary ends with `REHEARSAL COMPLETE` or the failing step. Nothing is sent. Rehearse on each network before its step 3, since the two networks have different holds and parameters.
 
 ### 3. Deploy the implementations
 
