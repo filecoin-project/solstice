@@ -80,8 +80,7 @@ def forge_script(script, env=None):
         tail = [l for l in (r.stdout + r.stderr).splitlines() if "Error" in l or "Revert" in l] or r.stdout.splitlines()[-15:]
         print("\n".join(tail), file=sys.stderr)
         die(f"{script} failed")
-    for line in script_logs(r.stdout):
-        print(line)
+    code_block(script_logs(r.stdout))
     return r.stdout
 
 
@@ -98,6 +97,20 @@ def script_logs(stdout):
         if on and line.strip():
             lines.append(line.strip())
     return lines
+
+
+# Output is Markdown, so the workflow can put it straight into the run summary; it still reads in a terminal.
+def heading(text):
+    print()
+    print(f"### {text}")
+    print()
+
+
+def code_block(lines):
+    print("```")
+    for line in lines:
+        print(line)
+    print("```")
 
 
 def deployer_address():
@@ -176,23 +189,26 @@ class Task:
         return modified != 0 and approvals >= 2 and block >= modified + self.chain.hold
 
     def summary(self):
+        heading(f"{self.name} upgrade on chain {self.chain.chain_id}")
+        print(f"- proxy: `{self.proxy}`")
+        print(f"- current implementation: `{self.chain.current_impl(self.target)}`")
+        print(f"- new implementation: `{self.impl}`")
+        print(f"- owner Safes: {', '.join(f'`{o}`' for o in self.chain.owners(self.target))}")
+        print(f"- hold (epochs): {self.chain.hold}")
+        print(f"- governance task id: `0x{self.task_id.hex()}`")
         print()
-        print(f"== {self.name} upgrade on chain {self.chain.chain_id} ==")
-        print(f"proxy                   {self.proxy}")
-        print(f"current implementation  {self.chain.current_impl(self.target)}")
-        print(f"implementation          {self.impl}")
-        print(f"owner Safes             {'  '.join(self.chain.owners(self.target))}")
-        print(f"hold (epochs)           {self.chain.hold}")
-        print(f"task id                 0x{self.task_id.hex()}")
-        print("calldata (to proxy, value 0):")
-        print("0x" + self.calldata.hex())
-        print("veto calldata (either owner, to proxy):")
-        print("0x" + (VETO_SELECTOR + self.task_id).hex())
+        print("Calldata (to the proxy, value 0):")
+        print()
+        code_block(["0x" + self.calldata.hex()])
+        print()
+        print("Veto calldata (either owner, to the proxy):")
+        print()
+        code_block(["0x" + (VETO_SELECTOR + self.task_id).hex()])
 
     def status(self):
         modified, approvals = self.state()
         block = self.chain.w3.eth.block_number
-        print(f"[{self.name} task 0x{self.task_id.hex()[:10]}... -> {self.impl}] ", end="")
+        print(f"- **{self.name}** to new implementation `{self.impl}` (governance task id `0x{self.task_id.hex()[:10]}…`): ", end="")
         if modified != 0:
             end = modified + self.chain.hold
             left = end - block
@@ -259,7 +275,7 @@ def already_queued(queued, on_chain, to, data):
 
 
 def upgrade_calldata(implementation):
-    """`upgradeToAndCall(implementation, "")`, byte-identical for every sender; its keccak is the task id."""
+    """`upgradeToAndCall(implementation, "")`, byte-identical for every sender; its keccak is the governance task id."""
     return UPGRADE_SELECTOR + encode(["address", "bytes"], [to_checksum_address(implementation), b""])
 
 
@@ -268,7 +284,7 @@ def tasks(chain, args):
 
 
 def cmd_rehearse(args):
-    print("== Rehearsing the SRA and SWA upgrades in a local fork (script/Rehearse.s.sol) ==")
+    heading("Rehearsing the SRA and SWA upgrades in a local fork (`script/Rehearse.s.sol`)")
     forge_script("script/Rehearse.s.sol")
 
 
@@ -286,47 +302,45 @@ def cmd_propose(args):
         die(f"{account.address} is not a proposer on: " + "; ".join(not_proposers) + ". An owner of each registers it "
             "once in the Safe app; see the Operations key row in docs/UPGRADE.md. Nothing was posted.")
     if ahead_of:
-        print("NOTE: the upgrade will queue behind other transactions on " + "; ".join(ahead_of) + ". Those owners "
+        print("**Note:** the upgrade will queue behind other transactions on " + "; ".join(ahead_of) + ". Those owners "
               "must execute or reject them before they can execute the upgrade.")
-        print()
-    print("== Checking both candidates against a local build of the checked-out source (script/Verify.s.sol) ==")
+    heading("Checking both candidates against a local build of the checked-out source (`script/Verify.s.sol`)")
     forge_script("script/Verify.s.sol", {f"NEW_IMPLEMENTATION_{t.name}": t.impl for t in todo})
     for task in todo:
         task.summary()
-        print()
-        print(f"== Queuing the {task.name} upgrade on its owner Safes as {account.address} via {base_url} ==")
+        heading(f"Queuing the {task.name} upgrade on its owner Safes as `{account.address}` via {base_url}")
         for owner in chain.owners(task.target):
             if task.approved_by(owner):
-                print(f"Safe {owner}: already approved this task on chain; skipping (a second execution would revert)")
+                print(f"- Safe `{owner}`: already approved this task on chain; skipping (a second execution would revert)")
                 continue
             safe = Safe(owner, chain.client)
             on_chain = safe.retrieve_nonce()
             queued = api.get_transactions(owner, executed="false", limit=100)
             same = already_queued(queued, on_chain, task.proxy, task.calldata)
             if same:
-                print(f"Safe {owner}: already queued at nonce {same['nonce']} (safeTxHash {same['safeTxHash']}); skipping")
+                print(f"- Safe `{owner}`: already queued at nonce {same['nonce']} (safeTxHash `{same['safeTxHash']}`); skipping")
                 continue
             nonce = next_nonce(on_chain, [int(t["nonce"]) for t in queued])
             safe_tx = safe.build_multisig_tx(to=task.proxy, value=0, data=task.calldata, safe_nonce=nonce)
             safe_tx.sign(key)
-            print(f"Safe {owner}: nonce {nonce}, safeTxHash 0x{safe_tx.safe_tx_hash.hex()}")
+            print(f"- Safe `{owner}`: nonce {nonce}, safeTxHash `0x{safe_tx.safe_tx_hash.hex()}`")
             if args.dry_run:
-                print(f"  dry run: would post to {base_url}/api/v2/safes/{owner}/multisig-transactions/")
+                print(f"  - dry run: would post to {base_url}/api/v2/safes/{owner}/multisig-transactions/")
                 continue
             try:
                 api.post_transaction(safe_tx)
             except Exception as e:  # SafeAPIException carries the service's reason
                 die(f"  proposal rejected: {e}\n  Is {account.address} registered as a proposer on {owner}? An owner of that Safe "
                     "registers it once in the Safe app; see the Operations key row in docs/UPGRADE.md.")
-            print(f"  queued; the owners of {owner} confirm and execute it at https://safe.filecoin.io")
+            print(f"  - queued; the owners of `{owner}` confirm and execute it at https://safe.filecoin.io")
     print()
-    print("Next: tell each owner group their Safe has the upgrade queued. The first owner's execution submits it; "
+    print("**Next:** tell each owner group their Safe has the upgrade queued. The first owner's execution submits it; "
           "the second's approves it and starts the hold.")
 
 
 def cmd_status(args):
     chain = Chain()
-    print(f"== Task status on chain {chain.chain_id}, epoch {chain.w3.eth.block_number} ==")
+    heading(f"Governance task status on chain {chain.chain_id}, epoch {chain.w3.eth.block_number}")
     for task in tasks(chain, args):
         task.status()
     for task in tasks(chain, args):
@@ -344,16 +358,15 @@ def check_setup(chain, address, api, candidates):
     the live proxy, whether the operations key's `address` is registered as its proposer, and what is queued at or above its on-chain nonce
     other than the candidate's own upgrade (an upgrade lines up behind those). `candidates` maps a target to an
     implementation address or None; for each given one, also whether the proxy already points at it."""
-    print(f"== Operations key on chain {chain.chain_id} ==")
-    print(f"address: {address}")
-    print(f"balance: {chain.w3.eth.get_balance(address) / 10**18:.4f} FIL")
+    heading(f"Operations key on chain {chain.chain_id}")
+    print(f"- address: `{address}`")
+    print(f"- balance: {chain.w3.eth.get_balance(address) / 10**18:.4f} FIL")
     not_owners, not_proposers, ahead_of = [], [], []
     for target in TARGETS:
         current = chain.current_impl(target)
         candidate = candidates.get(target)
         task = Task(chain, target, candidate) if candidate else None
-        print()
-        print(f"== {target.upper()} proxy {chain.proxy(target)}, implementation {current} ==")
+        heading(f"{target.upper()} proxy `{chain.proxy(target)}`, current implementation `{current}`")
         for n, owner in enumerate(chain.owners(target), 1):
             name = f"{target}Owner{n} {owner}"
             is_owner = chain.owner_bit(target, owner) != 0
@@ -365,15 +378,15 @@ def check_setup(chain, address, api, candidates):
             not_owners += [] if is_owner else [name]
             not_proposers += [] if proposer else [name]
             ahead_of += [f"{name} (nonces {ahead})"] if ahead else []
-            print(f"{name}: "
+            print(f"- {target}Owner{n} `{owner}`: "
                   + ("owner on the proxy" if is_owner else "NOT an owner on the proxy") + "; "
                   + ("key is a proposer" if proposer else "key is NOT a proposer") + "; "
                   + f"nonce {on_chain}, " + (f"other transactions queued at nonces {ahead}" if ahead else "nothing else queued"))
         if task:
             if candidate == current:
-                print(f"candidate {candidate}: the proxy already points at it")
+                print(f"- New implementation `{candidate}`: the proxy already points at it")
             else:
-                print(f"candidate {candidate}: the proxy points elsewhere (upgrade not yet executed)")
+                print(f"- New implementation `{candidate}`: the proxy points elsewhere (upgrade not yet executed)")
                 task.status()
     print()
     return not_owners, not_proposers, ahead_of
@@ -461,6 +474,7 @@ def cmd_execute(args):
     key, account = key_account("execute")
     todo = [t for t in tasks(chain, args) if chain.current_impl(t.target) != t.impl]
     block = chain.w3.eth.block_number
+    heading(f"Governance task status on chain {chain.chain_id}, epoch {block}")
     for task in todo:
         task.status()
     not_ready = []
@@ -476,7 +490,7 @@ def cmd_execute(args):
     # from "pending" once and count up locally, and read results at the receipt's block rather than "latest".
     nonce = chain.w3.eth.get_transaction_count(account.address, "pending")
     for task in todo:
-        print(f"== Executing the {task.name} upgrade from {account.address} ==")
+        heading(f"Executing the {task.name} upgrade from `{account.address}`")
         tx = {
             "from": account.address, "to": task.proxy, "data": task.calldata, "value": 0,
             "chainId": chain.chain_id, "nonce": nonce,
@@ -491,20 +505,20 @@ def cmd_execute(args):
         tx_hash = chain.w3.eth.send_raw_transaction(account.sign_transaction(tx).raw_transaction)
         nonce += 1
         receipt = chain.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=600)
-        print(f"tx 0x{tx_hash.hex()} status {receipt['status']} block {receipt['blockNumber']}")
+        print(f"- tx `0x{tx_hash.hex()}` status {receipt['status']} block {receipt['blockNumber']}")
         if receipt["status"] != 1:
             die("execution transaction reverted; rerun `execute` once the cause is fixed (it skips contracts already upgraded)")
         live = at_block(lambda: chain.current_impl(task.target, receipt["blockNumber"]))
         if live != task.impl:
             die(f"implementation slot at block {receipt['blockNumber']} is {live}, not {task.impl}")
-        print(f"implementation slot now {task.impl}")
-    print()
+        print(f"- implementation slot now `{task.impl}`")
+    heading("Governance task status after execution")
     for task in tasks(chain, args):
         task.status()
 
 
 def cmd_verify(args):
-    print("== script/Verify.s.sol against the live chain ==")
+    heading("`script/Verify.s.sol` against the live chain")
     if "ALL CHECKS PASSED" not in forge_script("script/Verify.s.sol"):
         die("verification did not pass")
     if args.record_release:

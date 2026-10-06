@@ -38,7 +38,7 @@ contract RehearseScript is UpgradeBase {
     {
         console.log(string.concat("[", name, "] built implementation in the fork"), impl);
         bytes memory upgradeCall = abi.encodeCall(UUPSUpgradeable.upgradeToAndCall, (impl, ""));
-        console.log(string.concat("[", name, "] task id"), vm.toString(keccak256(upgradeCall)));
+        console.log(string.concat("[", name, "] governance task id"), vm.toString(keccak256(upgradeCall)));
 
         vm.prank(owner1);
         _call(proxy, upgradeCall, string.concat("[", name, "] owner 1 submit"));
