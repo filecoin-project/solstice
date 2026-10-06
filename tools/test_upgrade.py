@@ -1,4 +1,4 @@
-"""Unit tests for the pure parts of tools/upgrade.py (calldata, task id, Safe nonce and duplicate handling,
+"""Unit tests for the pure parts of tools/upgrade.py (calldata, governance task id, Safe nonce and duplicate handling,
 forge log extraction, the pre-gate ref rule and summary, the operations key's address check).
 
 They need the tool's dependencies, so run them through uv from the tools directory, against the tool's lock:
