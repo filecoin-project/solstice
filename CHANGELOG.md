@@ -4,7 +4,7 @@ Each version is one tag and one GitHub release covering both SRA and SWA. The re
 
 ## v1.0.2
 
-- Moves the **Mainnet** SRA `activationEpoch` in `deployments.json` from 6450120 (2026-10-12 13:00 UTC) to 6470280 (2026-10-19 13:00 UTC), the first epoch after the nv29 mainnet upgrade height 6470279 ([network upgrade discussion](https://github.com/filecoin-project/community/discussions/74#discussioncomment-18565956)).
+- Sets the **Mainnet** SRA `activationEpoch` in `deployments.json` to 6470280 (2026-10-19 13:00 UTC), the first epoch after the nv29 mainnet upgrade height 6470279 ([network upgrade discussion](https://github.com/filecoin-project/community/discussions/74#discussioncomment-18565956)).
 
 ## v1.0.1
 
