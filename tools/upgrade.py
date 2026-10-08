@@ -63,6 +63,9 @@ SAFE_SERVICES = {
     314: "https://transaction.safe.filecoin.io",
     314159: "https://transaction-testnet.safe.filecoin.io",
 }
+# The Safe app serves both networks; a transaction's page is keyed by the network's short name.
+SAFE_APP = "https://safe.filecoin.io"
+SAFE_SHORT_NAMES = {314: "filecoin", 314159: "filecoin-calibration"}
 
 
 def die(msg):
@@ -208,19 +211,20 @@ class Task:
     def status(self):
         modified, approvals = self.state()
         block = self.chain.w3.eth.block_number
-        print(f"- **{self.name}** to new implementation `{self.impl}` (governance task id `0x{self.task_id.hex()[:10]}…`): ", end="")
+        print(f"- **{self.name}** upgrade to `{self.impl}` (governance task id `0x{self.task_id.hex()[:10]}…`): ", end="")
         if modified != 0:
             end = modified + self.chain.hold
             left = end - block
             if approvals >= 2:
-                print(f"approved by both owners at epoch {modified}; "
+                print(f"2 of 2 owner approvals on chain, the second at epoch {modified}; "
                       + (f"hold ends at epoch {end} ({left} epochs, about {epochs_to_text(left)})" if left > 0 else "executable now by anyone"))
             else:
-                print(f"{approvals} approval(s), last at epoch {modified}; the hold starts on the second approval")
+                print(f"{approvals} of 2 owner approvals on chain, at epoch {modified}; the hold starts on the second")
         elif self.chain.current_impl(self.target) == self.impl:
             print("live: the proxy points at this implementation")
         else:
-            print("no pending task (not submitted, or already executed or vetoed)")
+            print("0 of 2 owner approvals on chain: no owner Safe has executed it yet (a transaction queued in the Safe "
+                  "app reaches the chain only when that Safe executes it), or it was vetoed")
 
 
 def approval_set(task_word, bit_id):
@@ -319,6 +323,7 @@ def cmd_propose(args):
             same = already_queued(queued, on_chain, task.proxy, task.calldata)
             if same:
                 print(f"- Safe `{owner}`: already queued at nonce {same['nonce']} (safeTxHash `{same['safeTxHash']}`); skipping")
+                print(f"  - the owners of `{owner}` confirm and execute it at {safe_tx_url(chain, owner, same['safeTxHash'])}")
                 continue
             nonce = next_nonce(on_chain, [int(t["nonce"]) for t in queued])
             safe_tx = safe.build_multisig_tx(to=task.proxy, value=0, data=task.calldata, safe_nonce=nonce)
@@ -332,7 +337,8 @@ def cmd_propose(args):
             except Exception as e:  # SafeAPIException carries the service's reason
                 die(f"  proposal rejected: {e}\n  Is {account.address} registered as a proposer on {owner}? An owner of that Safe "
                     "registers it once in the Safe app; see the Operations key row in docs/UPGRADE.md.")
-            print(f"  - queued; the owners of `{owner}` confirm and execute it at https://safe.filecoin.io")
+            print(f"  - queued; the owners of `{owner}` confirm and execute it at "
+                  f"{safe_tx_url(chain, owner, '0x' + safe_tx.safe_tx_hash.hex())}")
     print()
     print("**Next:** tell each owner group their Safe has the upgrade queued. The first owner's execution submits it; "
           "the second's approves it and starts the hold.")
@@ -345,6 +351,11 @@ def cmd_status(args):
         task.status()
     for task in tasks(chain, args):
         task.summary()
+
+
+def safe_tx_url(chain, safe, safe_tx_hash):
+    """One-click link to a queued transaction in the Safe app, where its owners confirm and execute it."""
+    return f"{SAFE_APP}/transactions/tx?safe={SAFE_SHORT_NAMES[chain.chain_id]}:{safe}&id=multisig_{safe}_{safe_tx_hash}"
 
 
 def safe_service(chain):
@@ -383,11 +394,7 @@ def check_setup(chain, address, api, candidates):
                   + ("key is a proposer" if proposer else "key is NOT a proposer") + "; "
                   + f"nonce {on_chain}, " + (f"other transactions queued at nonces {ahead}" if ahead else "nothing else queued"))
         if task:
-            if candidate == current:
-                print(f"- New implementation `{candidate}`: the proxy already points at it")
-            else:
-                print(f"- New implementation `{candidate}`: the proxy points elsewhere (upgrade not yet executed)")
-                task.status()
+            task.status()
     print()
     return not_owners, not_proposers, ahead_of
 
@@ -481,7 +488,7 @@ def cmd_execute(args):
     for t in todo:
         modified, _ = t.state()
         if modified == 0:
-            not_ready.append(f"{t.name} has no pending task (never submitted, or vetoed)")
+            not_ready.append(f"{t.name} has 0 of 2 owner approvals on chain (no owner Safe has executed it, or it was vetoed)")
         elif not t.executable(block):
             not_ready.append(f"{t.name} not yet executable")
     if not_ready:

@@ -16,7 +16,7 @@ from eth_utils import keccak
 from eth_account import Account
 
 from upgrade import (VETO_SELECTOR, already_queued, approval_set, at_block, epochs_to_text, key_account, next_nonce,
-                     operations_address, pregate_report, release_ref, script_logs, upgrade_calldata)
+                     operations_address, pregate_report, release_ref, safe_tx_url, script_logs, upgrade_calldata)
 
 
 class Calldata(unittest.TestCase):
@@ -126,6 +126,14 @@ class EpochsToText(unittest.TestCase):
         self.assertEqual(epochs_to_text(17), "8 min")
         self.assertEqual(epochs_to_text(720), "6.0 h")
         self.assertEqual(epochs_to_text(20160), "7.0 days")
+
+
+class SafeTxUrl(unittest.TestCase):
+    def test_per_network_short_name(self):
+        safe, h = "0xFb1B58925947E52B3f75BAc3D9fB5325cfb36371", "0x5e9f" + "00" * 30
+        self.assertEqual(safe_tx_url(mock.Mock(chain_id=314), safe, h),
+                         f"https://safe.filecoin.io/transactions/tx?safe=filecoin:{safe}&id=multisig_{safe}_{h}")
+        self.assertIn("safe=filecoin-calibration:", safe_tx_url(mock.Mock(chain_id=314159), safe, h))
 
 
 class ScriptLogs(unittest.TestCase):
